@@ -46,4 +46,5 @@ idf_component_register(
         nvs_flash
         driver
         esp_lcd
+        mqtt
 )

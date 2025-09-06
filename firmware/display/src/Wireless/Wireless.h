@@ -13,6 +13,8 @@
 #include "esp_gap_ble_api.h"
 #include "esp_bt_main.h"
 
+#include "mqtt_client.h"
+
 
 
 extern uint16_t BLE_NUM;
@@ -24,3 +26,8 @@ void WIFI_Init(void *arg);
 uint16_t WIFI_Scan(void);
 void BLE_Init(void *arg);
 uint16_t BLE_Scan(void);
+
+// MQTT
+void MQTT_Start(void);
+esp_mqtt_client_handle_t MQTT_GetClient(void);
+int MQTT_Publish(const char *topic, const char *payload, int qos, bool retain);

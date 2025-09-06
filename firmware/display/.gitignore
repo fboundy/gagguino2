@@ -7,3 +7,5 @@
 components/demos/
 components/examples/
 components/
+src/secrets.h
+secrets.h

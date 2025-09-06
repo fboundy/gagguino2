@@ -1,10 +1,16 @@
 #include "ST7701S.h"
+#include "freertos/semphr.h"
 
 #define SPI_WriteComm(cmd) ST7701S_WriteCommand(St7701S_handle, cmd)
 #define SPI_WriteData(data) ST7701S_WriteData(St7701S_handle, data)
 #define Delay(ms) vTaskDelay(ms / portTICK_PERIOD_MS)
 
 static const char *LCD_TAG = "LCD";
+
+#if CONFIG_EXAMPLE_AVOID_TEAR_EFFECT_WITH_SEM
+static SemaphoreHandle_t sem_vsync_end;
+static SemaphoreHandle_t sem_gui_ready;
+#endif
 
 void ioexpander_init(){};
 void ioexpander_write_cmd(){};
