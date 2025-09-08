@@ -32,4 +32,3 @@ void MQTT_Start(void);
 esp_mqtt_client_handle_t MQTT_GetClient(void);
 int MQTT_Publish(const char *topic, const char *payload, int qos, bool retain);
 float MQTT_GetCurrentTemp(void);
-float MQTT_GetSetTemp(void);

@@ -37,7 +37,7 @@ static lv_timer_t * auto_step_timer;
 
 static lv_timer_t * meter2_timer;
 
-lv_obj_t * Temp_gauge;
+lv_obj_t * Current_Temp;
 lv_obj_t * FlashSize;
 lv_obj_t * Board_angle;
 lv_obj_t * Wireless_Scan;
@@ -223,11 +223,10 @@ static void Onboard_create(lv_obj_t * parent)
   lv_label_set_text(Temp_label, "Current Temp");
   lv_obj_add_style(Temp_label, &style_text_muted, 0);
 
-  static lv_color_t needle_colors[] = { lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED) };
-  Temp_gauge = lv_gauge_create(panel1);
-  lv_gauge_set_range(Temp_gauge, 60, 110);
-  lv_gauge_set_needle_count(Temp_gauge, 2, needle_colors);
-  lv_obj_set_size(Temp_gauge, 120, 120);
+  Current_Temp = lv_textarea_create(panel1);
+  lv_textarea_set_one_line(Current_Temp, true);
+  lv_textarea_set_placeholder_text(Current_Temp, "0 C");
+  lv_obj_add_event_cb(Current_Temp, ta_event_cb, LV_EVENT_ALL, NULL);
 
   lv_obj_t * Flash_label = lv_label_create(panel1);
   lv_label_set_text(Flash_label, "Flash Size");
@@ -331,7 +330,7 @@ static void Onboard_create(lv_obj_t * parent)
   lv_obj_set_grid_dsc_array(panel1, grid_2_col_dsc, grid_2_row_dsc);
   lv_obj_set_grid_cell(panel1_title, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);
   lv_obj_set_grid_cell(Temp_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 2, 1);
-  lv_obj_set_grid_cell(Temp_gauge, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_CENTER, 3, 1);
+  lv_obj_set_grid_cell(Current_Temp, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 3, 1);
   lv_obj_set_grid_cell(Flash_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 4, 1);
   lv_obj_set_grid_cell(FlashSize, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 5, 1);
   lv_obj_set_grid_cell(angle_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 6, 1);
@@ -355,8 +354,8 @@ void example1_increase_lvgl_tick(lv_timer_t * t)
 {
   char buf[100];
 
-  lv_gauge_set_value(Temp_gauge, 0, MQTT_GetCurrentTemp());
-  lv_gauge_set_value(Temp_gauge, 1, MQTT_GetSetTemp());
+  snprintf(buf, sizeof(buf), "%.1f C\r\n", MQTT_GetCurrentTemp());
+  lv_textarea_set_placeholder_text(Current_Temp, buf);
   snprintf(buf, sizeof(buf), "%ld MB\r\n", Flash_Size);
   lv_textarea_set_placeholder_text(FlashSize, buf);
   snprintf(buf, sizeof(buf), "X:%.2f  Y:%.2f  Z:%.2f\r\n", Accel.x, Accel.y, Accel.z);
