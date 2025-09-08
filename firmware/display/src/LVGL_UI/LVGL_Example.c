@@ -14,7 +14,7 @@ typedef enum {
 /**********************
  *  STATIC PROTOTYPES
  **********************/
-static void Onboard_create(lv_obj_t * parent);
+static void Status_create(lv_obj_t * parent);
 
 static void ta_event_cb(lv_event_t * e);
 void example1_increase_lvgl_tick(lv_timer_t * t);
@@ -91,7 +91,11 @@ void Lvgl_Example1(void){
     #else
       LV_LOG_WARN("LV_FONT_MONTSERRAT_12 is not enabled for the widgets demo. Using LV_FONT_DEFAULT instead.");
     #endif
-  }         // 设置字体
+  }
+  // Enlarge the tab header to provide more space at the top of the screen
+  tab_h = tab_h * 5 / 2;
+
+  // 设置字体
   
   lv_style_init(&style_text_muted);
   lv_style_set_text_opa(&style_text_muted, LV_OPA_90);
@@ -109,48 +113,26 @@ void Lvgl_Example1(void){
 
   tv = lv_tabview_create(lv_scr_act(), LV_DIR_TOP, tab_h);
 
+  // Stretch the tab button matrix and center the tab text
+  lv_obj_t * tab_btns = lv_tabview_get_tab_btns(tv);
+  lv_obj_set_width(tab_btns, LV_PCT(100));
+  lv_btnmatrix_set_button_width(tab_btns, 0, 8);
+  lv_obj_set_style_pad_all(tab_btns, 0, 0);
+  lv_obj_set_style_text_align(tab_btns, LV_TEXT_ALIGN_CENTER, 0);
+
   lv_obj_set_style_text_font(lv_scr_act(), font_normal, 0);
 
   if(disp_size == DISP_LARGE) {
-    lv_obj_t * tab_btns = lv_tabview_get_tab_btns(tv);
-    lv_obj_set_style_pad_left(tab_btns, LV_HOR_RES / 2, 0);
-    #if LV_USE_DEMO_WIDGETS
-    lv_obj_t * logo = lv_img_create(tab_btns);
-    LV_IMG_DECLARE(img_lvgl_logo);
-    lv_img_set_src(logo, &img_lvgl_logo);
-    lv_obj_align(logo, LV_ALIGN_LEFT_MID, -LV_HOR_RES / 2 + 25, 0);
-    #endif
-
-    lv_obj_t * label = lv_label_create(tab_btns);
-    lv_obj_add_style(label, &style_title, 0);
-    lv_label_set_text(label, "LVGL v8");
-    #if LV_USE_DEMO_WIDGETS
-    lv_obj_align_to(label, logo, LV_ALIGN_OUT_RIGHT_TOP, 10, 0);
-    #else
-    lv_obj_align(label, LV_ALIGN_LEFT_MID, -LV_HOR_RES / 2 + 60, -12);
-    #endif
-
-    label = lv_label_create(tab_btns);
-    #if LV_USE_DEMO_WIDGETS
-    lv_label_set_text(label, "Widgets demo");
-    #else
-    lv_label_set_text(label, "LVGL");
-    #endif
-    lv_obj_add_style(label, &style_text_muted, 0);
-    #if LV_USE_DEMO_WIDGETS
-    lv_obj_align_to(label, logo, LV_ALIGN_OUT_RIGHT_BOTTOM, 10, 0);
-    #else
-    lv_obj_align(label, LV_ALIGN_LEFT_MID, -LV_HOR_RES / 2 + 60, 12);
-    #endif
+    /* Large displays do not require additional header content. */
   }
 
-  lv_obj_t * t1 = lv_tabview_add_tab(tv, "Onboard");
+  lv_obj_t * t1 = lv_tabview_add_tab(tv, "Status");
   // lv_obj_t * t2 = lv_tabview_add_tab(tv, "Buzzer");
   // lv_obj_t * t3 = lv_tabview_add_tab(tv, "Shop");
   
   // lv_coord_t screen_width = lv_obj_get_width(lv_scr_act());
   // lv_obj_set_width(t1, screen_width);
-  Onboard_create(t1);
+  Status_create(t1);
   // Buzzer_create(t2);
   // shop_create(t3);
 
@@ -208,7 +190,7 @@ void Lvgl_Example1_close(void)
 *   STATIC FUNCTIONS
 **********************/
 
-static void Onboard_create(lv_obj_t * parent)
+static void Status_create(lv_obj_t * parent)
 {
 
   /*Create a panel*/
@@ -216,7 +198,7 @@ static void Onboard_create(lv_obj_t * parent)
   lv_obj_set_height(panel1, LV_SIZE_CONTENT);
 
   lv_obj_t * panel1_title = lv_label_create(panel1);
-  lv_label_set_text(panel1_title, "Onboard parameter");
+  lv_label_set_text(panel1_title, "Status parameter");
   lv_obj_add_style(panel1_title, &style_title, 0);
 
   lv_obj_t * Temp_label = lv_label_create(panel1);
