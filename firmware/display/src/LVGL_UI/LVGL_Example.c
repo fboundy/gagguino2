@@ -39,9 +39,7 @@ static lv_timer_t * meter2_timer;
 
 lv_obj_t * Current_Temp;
 lv_obj_t * FlashSize;
-lv_obj_t * BAT_Volts;
 lv_obj_t * Board_angle;
-lv_obj_t * RTC_Time;
 lv_obj_t * Wireless_Scan;
 lv_obj_t * Backlight_slider;
 
@@ -239,15 +237,6 @@ static void Onboard_create(lv_obj_t * parent)
   lv_textarea_set_placeholder_text(FlashSize, "Flash Size");
   lv_obj_add_event_cb(FlashSize, ta_event_cb, LV_EVENT_ALL, NULL);
 
-  lv_obj_t * BAT_label = lv_label_create(panel1);
-  lv_label_set_text(BAT_label, "Battery Voltage");
-  lv_obj_add_style(BAT_label, &style_text_muted, 0);
-
-  BAT_Volts = lv_textarea_create(panel1);
-  lv_textarea_set_one_line(BAT_Volts, true);
-  lv_textarea_set_placeholder_text(BAT_Volts, "BAT Volts");
-  lv_obj_add_event_cb(BAT_Volts, ta_event_cb, LV_EVENT_ALL, NULL);
-
   lv_obj_t * angle_label = lv_label_create(panel1);
   lv_label_set_text(angle_label, "Angular deflection");
   lv_obj_add_style(angle_label, &style_text_muted, 0);
@@ -256,15 +245,6 @@ static void Onboard_create(lv_obj_t * parent)
   lv_textarea_set_one_line(Board_angle, true);
   lv_textarea_set_placeholder_text(Board_angle, "Board angle");
   lv_obj_add_event_cb(Board_angle, ta_event_cb, LV_EVENT_ALL, NULL);
-
-  lv_obj_t * Time_label = lv_label_create(panel1);
-  lv_label_set_text(Time_label, "RTC Time");
-  lv_obj_add_style(Time_label, &style_text_muted, 0);
-
-  RTC_Time = lv_textarea_create(panel1);
-  lv_textarea_set_one_line(RTC_Time, true);
-  lv_textarea_set_placeholder_text(RTC_Time, "Display time");
-  lv_obj_add_event_cb(RTC_Time, ta_event_cb, LV_EVENT_ALL, NULL);
 
   lv_obj_t * Wireless_label = lv_label_create(panel1);
   lv_label_set_text(Wireless_label, "Wireless scan");
@@ -340,12 +320,6 @@ static void Onboard_create(lv_obj_t * parent)
     40,               /*Box*/
     LV_GRID_CONTENT,  /*Box title*/
     40,               /*Box*/
-    LV_GRID_CONTENT,  /*Box title*/
-    40,               /*Box*/
-    LV_GRID_CONTENT,  /*Box title*/
-    40,               /*Box*/
-    LV_GRID_CONTENT,  /*Box title*/
-    40,               /*Box*/
     LV_GRID_TEMPLATE_LAST
   };
 
@@ -359,16 +333,12 @@ static void Onboard_create(lv_obj_t * parent)
   lv_obj_set_grid_cell(Current_Temp, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 3, 1);
   lv_obj_set_grid_cell(Flash_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 4, 1);
   lv_obj_set_grid_cell(FlashSize, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 5, 1);
-  lv_obj_set_grid_cell(BAT_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 6, 1);
-  lv_obj_set_grid_cell(BAT_Volts, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 7, 1);
-  lv_obj_set_grid_cell(angle_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 8, 1);
-  lv_obj_set_grid_cell(Board_angle, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 9, 1);
-  lv_obj_set_grid_cell(Time_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 10, 1);
-  lv_obj_set_grid_cell(RTC_Time, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 11, 1);
-  lv_obj_set_grid_cell(Wireless_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 12, 1);
-  lv_obj_set_grid_cell(Wireless_Scan, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 13, 1);
-  lv_obj_set_grid_cell(Backlight_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 14, 1);
-  lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 15, 1);
+  lv_obj_set_grid_cell(angle_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 6, 1);
+  lv_obj_set_grid_cell(Board_angle, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 7, 1);
+  lv_obj_set_grid_cell(Wireless_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 8, 1);
+  lv_obj_set_grid_cell(Wireless_Scan, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 9, 1);
+  lv_obj_set_grid_cell(Backlight_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 10, 1);
+  lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 11, 1);
 
   lv_obj_set_grid_cell(panel2, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_STRETCH, 1, 1);
   lv_obj_set_grid_dsc_array(panel2, grid_1_col_dsc, grid_1_row_dsc);
@@ -388,12 +358,8 @@ void example1_increase_lvgl_tick(lv_timer_t * t)
   lv_textarea_set_placeholder_text(Current_Temp, buf);
   snprintf(buf, sizeof(buf), "%ld MB\r\n", Flash_Size);
   lv_textarea_set_placeholder_text(FlashSize, buf);
-  snprintf(buf, sizeof(buf), "%.2f V\r\n", BAT_analogVolts);
-  lv_textarea_set_placeholder_text(BAT_Volts, buf);
   snprintf(buf, sizeof(buf), "X:%.2f  Y:%.2f  Z:%.2f\r\n", Accel.x, Accel.y, Accel.z);
   lv_textarea_set_placeholder_text(Board_angle, buf);
-  snprintf(buf, sizeof(buf), "%d.%d.%d   %d:%d:%d\r\n",datetime.year,datetime.month,datetime.day,datetime.hour,datetime.minute,datetime.second);
-  lv_textarea_set_placeholder_text(RTC_Time, buf);
   if(Scan_finish)
     snprintf(buf, sizeof(buf), "WIFI: %d    BLE: %d    ..Scan Finish.\r\n",WIFI_NUM,BLE_NUM);
   else
