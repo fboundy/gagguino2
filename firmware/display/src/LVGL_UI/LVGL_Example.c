@@ -116,7 +116,7 @@ void Lvgl_Example1(void){
   // Stretch the tab button matrix and center the tab text
   lv_obj_t * tab_btns = lv_tabview_get_tab_btns(tv);
   lv_obj_set_width(tab_btns, LV_PCT(100));
-  lv_btnmatrix_set_button_width(tab_btns, 0, 8);
+  lv_btnmatrix_set_btn_width(tab_btns, 0, 8);
   lv_obj_set_style_pad_all(tab_btns, 0, 0);
   lv_obj_set_style_text_align(tab_btns, LV_TEXT_ALIGN_CENTER, 0);
 
