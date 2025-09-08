@@ -255,6 +255,7 @@ uint16_t BLE_Scan(void)
 static esp_mqtt_client_handle_t s_mqtt = NULL;
 static TimerHandle_t s_mqtt_update_timer = NULL;
 static float s_current_temp = 0.0f;
+static float s_set_temp = 0.0f;
 static const char *s_mqtt_topics[] = {
     "brew_setpoint",
     "steam_setpoint",
@@ -321,6 +322,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             printf("MQTT state [%s] = %s\r\n", t_copy, d_copy);
             if (strstr(t_copy, "current_temp")) {
                 s_current_temp = strtof(d_copy, NULL);
+            } else if (strstr(t_copy, "set_temp")) {
+                s_set_temp = strtof(d_copy, NULL);
             }
         }
         break;
@@ -377,6 +380,11 @@ void MQTT_Start(void)
 float MQTT_GetCurrentTemp(void)
 {
     return s_current_temp;
+}
+
+float MQTT_GetSetTemp(void)
+{
+    return s_set_temp;
 }
 
 esp_mqtt_client_handle_t MQTT_GetClient(void)
