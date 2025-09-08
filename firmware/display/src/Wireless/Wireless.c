@@ -3,6 +3,7 @@
 #include "esp_netif.h"
 #include "secrets.h"
 #include "mqtt_client.h"
+#include "freertos/timers.h"
 
 uint16_t BLE_NUM = 0;
 uint16_t WIFI_NUM = 0;
@@ -251,34 +252,51 @@ uint16_t BLE_Scan(void)
 
 // -------------------- MQTT client (subscriber/publisher) --------------------
 static esp_mqtt_client_handle_t s_mqtt = NULL;
+static TimerHandle_t s_mqtt_update_timer = NULL;
+static const char *s_mqtt_topics[] = {
+    "brew_setpoint",
+    "steam_setpoint",
+    "heater",
+    "shot_volume",
+    "set_temp",
+    "current_temp",
+    "pressure",
+    "shot_state",
+    "steam_state",
+};
+
+static void mqtt_subscribe_all(bool log)
+{
+    if (!s_mqtt) return;
+    char topic_buf[128];
+    for (size_t i = 0; i < (sizeof(s_mqtt_topics) / sizeof(s_mqtt_topics[0])); ++i) {
+        int n = snprintf(topic_buf, sizeof(topic_buf), "gaggia_classic/%s/%s/state", GAGGIA_ID, s_mqtt_topics[i]);
+        if (n > 0 && n < (int)sizeof(topic_buf)) {
+            esp_mqtt_client_subscribe(s_mqtt, topic_buf, 1);
+            if (log) {
+                printf("MQTT subscribed: %s\r\n", topic_buf);
+            }
+        }
+    }
+}
+
+static void mqtt_update_timer_cb(TimerHandle_t xTimer)
+{
+    (void)xTimer;
+    mqtt_subscribe_all(false);
+}
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
-    static const char *k_topics[] = {
-        "brew_setpoint",
-        "steam_setpoint",
-        "heater",
-        "shot_volume",
-        "set_temp",
-        "current_temp",
-        "pressure",
-        "shot_state",
-        "steam_state",
-    };
-    char topic_buf[128];
     char t_copy[128];
     char d_copy[256];
     switch (event->event_id) {
     case MQTT_EVENT_CONNECTED:
         printf("MQTT connected\r\n");
-        // Subscribe to all required state topics under gaggia_classic/{GAGGIA_ID}/.../state
-        for (size_t i = 0; i < (sizeof(k_topics) / sizeof(k_topics[0])); ++i) {
-            int n = snprintf(topic_buf, sizeof(topic_buf), "gaggia_classic/%s/%s/state", GAGGIA_ID, k_topics[i]);
-            if (n > 0 && n < (int)sizeof(topic_buf)) {
-                esp_mqtt_client_subscribe(event->client, topic_buf, 1);
-                printf("MQTT subscribed: %s\r\n", topic_buf);
-            }
+        mqtt_subscribe_all(true);
+        if (s_mqtt_update_timer) {
+            xTimerStart(s_mqtt_update_timer, 0);
         }
         #ifdef MQTT_LWT_TOPIC
         // Optionally clear retained LWT by publishing online
@@ -287,6 +305,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         break;
     case MQTT_EVENT_DISCONNECTED:
         printf("MQTT disconnected\r\n");
+        if (s_mqtt_update_timer) {
+            xTimerStop(s_mqtt_update_timer, 0);
+        }
         break;
     case MQTT_EVENT_DATA:
         // Copy topic and data into local, null-terminated buffers for safe printing
@@ -338,6 +359,9 @@ void MQTT_Start(void)
     }
     ESP_ERROR_CHECK(esp_mqtt_client_register_event(s_mqtt, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL));
     ESP_ERROR_CHECK(esp_mqtt_client_start(s_mqtt));
+    if (!s_mqtt_update_timer) {
+        s_mqtt_update_timer = xTimerCreate("mqtt_update", pdMS_TO_TICKS(1000), pdTRUE, NULL, mqtt_update_timer_cb);
+    }
 #else
     (void)s_mqtt;
     if (!s_wifi_got_ip) return;
