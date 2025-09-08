@@ -4,6 +4,7 @@
 #include "secrets.h"
 #include "mqtt_client.h"
 #include "freertos/timers.h"
+#include <stdlib.h>
 
 uint16_t BLE_NUM = 0;
 uint16_t WIFI_NUM = 0;
@@ -253,6 +254,7 @@ uint16_t BLE_Scan(void)
 // -------------------- MQTT client (subscriber/publisher) --------------------
 static esp_mqtt_client_handle_t s_mqtt = NULL;
 static TimerHandle_t s_mqtt_update_timer = NULL;
+static float s_current_temp = 0.0f;
 static const char *s_mqtt_topics[] = {
     "brew_setpoint",
     "steam_setpoint",
@@ -317,6 +319,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             memcpy(t_copy, event->topic, tl); t_copy[tl] = '\0';
             memcpy(d_copy, event->data, dl); d_copy[dl] = '\0';
             printf("MQTT state [%s] = %s\r\n", t_copy, d_copy);
+            if (strstr(t_copy, "current_temp")) {
+                s_current_temp = strtof(d_copy, NULL);
+            }
         }
         break;
     default:
@@ -367,6 +372,11 @@ void MQTT_Start(void)
     if (!s_wifi_got_ip) return;
     printf("MQTT: MQTT_URI not defined in secrets.h; disabled\r\n");
 #endif
+}
+
+float MQTT_GetCurrentTemp(void)
+{
+    return s_current_temp;
 }
 
 esp_mqtt_client_handle_t MQTT_GetClient(void)

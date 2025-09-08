@@ -1,4 +1,5 @@
 #include "LVGL_Example.h"
+#include "SD_MMC.h"
 
 
 /**********************
@@ -36,7 +37,7 @@ static lv_timer_t * auto_step_timer;
 
 static lv_timer_t * meter2_timer;
 
-lv_obj_t * SD_Size;
+lv_obj_t * Current_Temp;
 lv_obj_t * FlashSize;
 lv_obj_t * BAT_Volts;
 lv_obj_t * Board_angle;
@@ -220,14 +221,14 @@ static void Onboard_create(lv_obj_t * parent)
   lv_label_set_text(panel1_title, "Onboard parameter");
   lv_obj_add_style(panel1_title, &style_title, 0);
 
-  lv_obj_t * SD_label = lv_label_create(panel1);
-  lv_label_set_text(SD_label, "SD Card");
-  lv_obj_add_style(SD_label, &style_text_muted, 0);
+  lv_obj_t * Temp_label = lv_label_create(panel1);
+  lv_label_set_text(Temp_label, "Current Temp");
+  lv_obj_add_style(Temp_label, &style_text_muted, 0);
 
-  SD_Size = lv_textarea_create(panel1);
-  lv_textarea_set_one_line(SD_Size, true);
-  lv_textarea_set_placeholder_text(SD_Size, "SD Size");
-  lv_obj_add_event_cb(SD_Size, ta_event_cb, LV_EVENT_ALL, NULL);
+  Current_Temp = lv_textarea_create(panel1);
+  lv_textarea_set_one_line(Current_Temp, true);
+  lv_textarea_set_placeholder_text(Current_Temp, "0 C");
+  lv_obj_add_event_cb(Current_Temp, ta_event_cb, LV_EVENT_ALL, NULL);
 
   lv_obj_t * Flash_label = lv_label_create(panel1);
   lv_label_set_text(Flash_label, "Flash Size");
@@ -354,8 +355,8 @@ static void Onboard_create(lv_obj_t * parent)
   lv_obj_set_grid_cell(panel1, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_START, 0, 1);
   lv_obj_set_grid_dsc_array(panel1, grid_2_col_dsc, grid_2_row_dsc);
   lv_obj_set_grid_cell(panel1_title, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);
-  lv_obj_set_grid_cell(SD_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 2, 1);
-  lv_obj_set_grid_cell(SD_Size, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 3, 1);
+  lv_obj_set_grid_cell(Temp_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 2, 1);
+  lv_obj_set_grid_cell(Current_Temp, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 3, 1);
   lv_obj_set_grid_cell(Flash_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 4, 1);
   lv_obj_set_grid_cell(FlashSize, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 5, 1);
   lv_obj_set_grid_cell(BAT_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 6, 1);
@@ -381,10 +382,10 @@ static void Onboard_create(lv_obj_t * parent)
 
 void example1_increase_lvgl_tick(lv_timer_t * t)
 {
-  char buf[100]; 
-  
-  snprintf(buf, sizeof(buf), "%ld MB\r\n", SDCard_Size);
-  lv_textarea_set_placeholder_text(SD_Size, buf);
+  char buf[100];
+
+  snprintf(buf, sizeof(buf), "%.1f C\r\n", MQTT_GetCurrentTemp());
+  lv_textarea_set_placeholder_text(Current_Temp, buf);
   snprintf(buf, sizeof(buf), "%ld MB\r\n", Flash_Size);
   lv_textarea_set_placeholder_text(FlashSize, buf);
   snprintf(buf, sizeof(buf), "%.2f V\r\n", BAT_analogVolts);
