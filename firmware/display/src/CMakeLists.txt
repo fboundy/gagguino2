@@ -14,6 +14,7 @@ set(app_sources
     ${DEMO_MAIN_DIR}/LVGL_UI/LVGL_Example.c
     ${DEMO_MAIN_DIR}/Wireless/Wireless.c
     ${DEMO_MAIN_DIR}/Buzzer/Buzzer.c
+    ${DEMO_MAIN_DIR}/fonts/mdi_icons_40.c
 )
 
 idf_component_register(
@@ -31,6 +32,7 @@ idf_component_register(
         ${DEMO_MAIN_DIR}/LVGL_UI
         ${DEMO_MAIN_DIR}/Wireless
         ${DEMO_MAIN_DIR}/Buzzer
+        ${DEMO_MAIN_DIR}/fonts
     REQUIRES
         lvgl__lvgl
         bt
