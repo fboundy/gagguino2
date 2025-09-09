@@ -99,8 +99,8 @@ void Lvgl_Example1(void){
       LV_LOG_WARN("LV_FONT_MONTSERRAT_12 is not enabled for the widgets demo. Using LV_FONT_DEFAULT instead.");
     #endif
   }
-  // Enlarge the tab header to provide more space at the top of the screen
-  tab_h = tab_h * 5 / 2;
+  /* Adjust the tab header so the common footer is 80% of its previous height */
+  tab_h = tab_h * 2;
   tab_h_global = tab_h;
 
   // 设置字体
@@ -130,6 +130,7 @@ void Lvgl_Example1(void){
   lv_btnmatrix_set_btn_width(tab_btns, 0, 8);
   lv_obj_set_style_pad_all(tab_btns, 0, 0);
   lv_obj_set_style_text_align(tab_btns, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_border_side(tab_btns, LV_BORDER_SIDE_TOP, 0);
 
   lv_obj_set_style_text_font(lv_scr_act(), font_normal, 0);
 
@@ -175,10 +176,14 @@ static void open_settings_event_cb(lv_event_t * e) {
 static void Settings_create(void) {
   settings_scr = lv_obj_create(NULL);
   lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(settings_scr, LV_OPA_COVER, 0);
 
   lv_obj_t * tvs = lv_tabview_create(settings_scr, LV_DIR_BOTTOM, tab_h_global);
+  lv_obj_set_style_bg_color(tvs, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(tvs, LV_OPA_COVER, 0);
   lv_obj_t * t = lv_tabview_add_tab(tvs, "Settings");
   lv_obj_set_style_bg_color(t, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(t, LV_OPA_COVER, 0);
 
   static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
   static lv_coord_t grid_main_row_dsc[] = {
