@@ -304,17 +304,6 @@ static void Status_create(lv_obj_t *parent) {
   lv_obj_set_style_border_width(parent, 0, 0);
 
   lv_coord_t meter_size = lv_obj_get_content_width(parent) + tab_h_global;
-  lv_obj_t *scale = lv_scale_create(parent);
-  lv_obj_set_size(scale, meter_size, meter_size);
-  lv_obj_center(scale);
-  lv_obj_set_y(scale, tab_h_global / 2);
-  lv_obj_set_style_pad_all(scale, 0, 0);
-  lv_obj_set_style_bg_color(scale, lv_color_black(), 0);
-  lv_obj_set_style_bg_opa(scale, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(scale, 0, 0);
-  lv_scale_set_range(scale, 60, 160);
-  lv_scale_set_angle_range(scale, 270);
-  lv_scale_set_rotation(scale, 135);
 
   set_temp_arc = lv_arc_create(parent);
   lv_obj_set_size(set_temp_arc, meter_size, meter_size);
