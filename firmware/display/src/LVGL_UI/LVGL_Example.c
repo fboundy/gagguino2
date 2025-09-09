@@ -81,6 +81,8 @@ static lv_obj_t *pressure_units_label;
 static lv_obj_t *shot_time_units_label;
 static lv_obj_t *shot_volume_units_label;
 lv_obj_t *Backlight_slider;
+static lv_obj_t *conn_label;
+static int last_conn_type = -1;
 
 void Lvgl_Example1(void)
 {
@@ -307,6 +309,15 @@ void Lvgl_Example1_close(void)
 static void Status_create(lv_obj_t *parent)
 {
   lv_obj_set_style_border_width(parent, 0, 0);
+
+  conn_label = lv_label_create(parent);
+#if LV_FONT_MONTSERRAT_24
+  lv_obj_set_style_text_font(conn_label, &lv_font_montserrat_24, 0);
+#else
+  lv_obj_set_style_text_font(conn_label, LV_FONT_DEFAULT, 0);
+#endif
+  lv_obj_align(conn_label, LV_ALIGN_TOP_MID, 0, 0);
+  lv_label_set_text(conn_label, "");
 
   const lv_coord_t current_arc_width = 20;
   lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
@@ -593,6 +604,37 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   float shot_vol = MQTT_GetShotVolume();
   bool heater = MQTT_GetHeaterState();
   bool steam = MQTT_GetSteamState();
+
+  enum
+  {
+    CONN_NONE,
+    CONN_MQTT,
+    CONN_ESPNOW
+  };
+  int conn = CONN_NONE;
+  if (Wireless_UsingEspNow())
+    conn = CONN_ESPNOW;
+  else if (Wireless_IsMQTTConnected())
+    conn = CONN_MQTT;
+
+  if (conn_label && conn != last_conn_type)
+  {
+    switch (conn)
+    {
+    case CONN_MQTT:
+      lv_label_set_text(conn_label, "MQTT");
+      lv_obj_set_style_text_color(conn_label, lv_palette_main(LV_PALETTE_ORANGE), 0);
+      break;
+    case CONN_ESPNOW:
+      lv_label_set_text(conn_label, "ESP-NOW");
+      lv_obj_set_style_text_color(conn_label, lv_palette_main(LV_PALETTE_CYAN), 0);
+      break;
+    default:
+      lv_label_set_text(conn_label, "");
+      break;
+    }
+    last_conn_type = conn;
+  }
 
   if (isnan(current_p) || current_p < 0.0f)
     current_p = 0.0f;
