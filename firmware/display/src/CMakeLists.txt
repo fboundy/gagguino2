@@ -10,7 +10,6 @@ set(app_sources
     ${DEMO_MAIN_DIR}/Touch_Driver/esp_lcd_touch/esp_lcd_touch.c
     ${DEMO_MAIN_DIR}/LVGL_Driver/LVGL_Driver.c
     ${DEMO_MAIN_DIR}/I2C_Driver/I2C_Driver.c
-    ${DEMO_MAIN_DIR}/QMI8658/QMI8658.c
     ${DEMO_MAIN_DIR}/SD_Card/SD_MMC.c
     ${DEMO_MAIN_DIR}/LVGL_UI/LVGL_Example.c
     ${DEMO_MAIN_DIR}/Wireless/Wireless.c
@@ -28,7 +27,6 @@ idf_component_register(
         ${DEMO_MAIN_DIR}/Touch_Driver/esp_lcd_touch
         ${DEMO_MAIN_DIR}/LVGL_Driver
         ${DEMO_MAIN_DIR}/I2C_Driver
-        ${DEMO_MAIN_DIR}/QMI8658
         ${DEMO_MAIN_DIR}/SD_Card
         ${DEMO_MAIN_DIR}/LVGL_UI
         ${DEMO_MAIN_DIR}/Wireless

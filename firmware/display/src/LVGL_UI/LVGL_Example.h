@@ -5,7 +5,6 @@
 
 #include "LVGL_Driver.h"
 #include "TCA9554PWR.h"
-#include "QMI8658.h"
 #include "Wireless.h"
 #include "Buzzer.h"
 #include "ST7701S.h"
