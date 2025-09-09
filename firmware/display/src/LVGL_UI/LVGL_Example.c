@@ -407,7 +407,8 @@ static void Status_create(lv_obj_t *parent)
 
   /* Icons for temperature and pressure */
   temp_icon = lv_label_create(parent);
-  lv_label_set_text(temp_icon, LV_SYMBOL_TEMPERATURE);
+  lv_label_set_text(temp_icon, MDI_THERMOMETER);
+  lv_obj_set_style_text_font(temp_icon, &mdi_icons_40, 0);
   lv_obj_set_style_text_color(temp_icon, lv_color_white(), 0);
   lv_obj_align_to(temp_icon, temp_label, LV_ALIGN_OUT_LEFT_MID, -10, 0);
 
@@ -420,7 +421,7 @@ static void Status_create(lv_obj_t *parent)
   shot_time_label = lv_label_create(parent);
   lv_obj_set_style_text_color(shot_time_label, lv_color_white(), 0);
   lv_obj_set_style_text_font(shot_time_label, &lv_font_montserrat_40, 0);
-  lv_obj_align(shot_time_label, LV_ALIGN_CENTER, 20, 0);
+  lv_obj_align_to(shot_time_label, temp_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
   set_label_value(shot_time_label, 0.0f, "s");
 
   shot_time_icon = lv_label_create(parent);
@@ -432,7 +433,8 @@ static void Status_create(lv_obj_t *parent)
   shot_volume_label = lv_label_create(parent);
   lv_obj_set_style_text_color(shot_volume_label, lv_color_white(), 0);
   lv_obj_set_style_text_font(shot_volume_label, &lv_font_montserrat_40, 0);
-  lv_obj_align(shot_volume_label, LV_ALIGN_CENTER, 20, 40);
+  lv_obj_align_to(shot_volume_label, pressure_label, LV_ALIGN_OUT_BOTTOM_MID, 0,
+                  10);
   set_label_value(shot_volume_label, 0.0f, "ml");
 
   shot_volume_icon = lv_label_create(parent);
