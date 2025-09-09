@@ -78,20 +78,11 @@ void WIFI_Init(void *arg)
 
     vTaskDelete(NULL);
 }
-uint16_t WIFI_Scan(void)
-{
-    uint16_t ap_count = 0;
-    esp_wifi_scan_start(NULL, true);
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
-    return ap_count;
-}
-
 // -------------------- MQTT client (subscriber/publisher) --------------------
 static esp_mqtt_client_handle_t s_mqtt = NULL;
 static TimerHandle_t s_mqtt_update_timer = NULL;
 static float s_current_temp = 0.0f;
 static float s_set_temp = 0.0f;
-static float s_pressure = 0.0f;
 static const char *s_mqtt_topics[] = {
     "brew_setpoint",
     "steam_setpoint",
@@ -99,7 +90,6 @@ static const char *s_mqtt_topics[] = {
     "shot_volume",
     "set_temp",
     "current_temp",
-    "pressure",
     "shot",
     "steam",
 };
@@ -173,10 +163,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             {
                 s_set_temp = strtof(d_copy, NULL);
             }
-            else if (strstr(t_copy, "pressure"))
-            {
-                s_pressure = strtof(d_copy, NULL);
-            }
         }
         break;
     default:
@@ -241,11 +227,6 @@ float MQTT_GetCurrentTemp(void)
 float MQTT_GetSetTemp(void)
 {
     return s_set_temp;
-}
-
-float MQTT_GetPressure(void)
-{
-    return s_pressure;
 }
 
 esp_mqtt_client_handle_t MQTT_GetClient(void)
