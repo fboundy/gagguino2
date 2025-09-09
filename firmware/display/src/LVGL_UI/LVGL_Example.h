@@ -16,6 +16,12 @@
 #define TEMP_ARC_MAX 160
 #define TEMP_ARC_TICK 10
 
+#define PRESSURE_ARC_START 300
+#define PRESSURE_ARC_SIZE 120
+#define PRESSURE_ARC_MIN 0
+#define PRESSURE_ARC_MAX 10
+#define PRESSURE_ARC_TICK 1
+
 void Backlight_adjustment_event_cb(lv_event_t *e);
 
 void Lvgl_Example1(void);
