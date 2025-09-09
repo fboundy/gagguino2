@@ -9,3 +9,4 @@ components/examples/
 components/
 src/secrets.h
 secrets.h
+sdkconfig.esp32-s3-devkitc-1
