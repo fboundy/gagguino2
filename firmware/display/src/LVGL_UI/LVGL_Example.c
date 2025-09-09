@@ -3,6 +3,21 @@
 #include <math.h>
 #include <stdio.h>
 
+/* Fallback symbol definitions for environments where newer LVGL symbols are
+ * not provided. These values correspond to Font Awesome code points and allow
+ * the project to compile even with older LVGL releases. */
+#ifndef LV_SYMBOL_TEMPERATURE
+#define LV_SYMBOL_TEMPERATURE "\xEF\x8B\x89"
+#endif
+
+#ifndef LV_SYMBOL_SPEED
+#define LV_SYMBOL_SPEED "\xEF\x8F\xBD"
+#endif
+
+#ifndef LV_SYMBOL_TIMER
+#define LV_SYMBOL_TIMER "\xEF\x80\x97"
+#endif
+
 /**********************
  *      TYPEDEFS
  **********************/
