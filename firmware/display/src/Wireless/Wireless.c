@@ -42,7 +42,6 @@ static inline bool parse_bool_str(const char *s)
 }
 
 static bool espnow_try_connect(void);
-static void espnow_poll_task(void *arg);
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
                            int data_len);
 
@@ -349,31 +348,16 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
     s_espnow_packet = true;
 }
 
-static void espnow_poll_task(void *arg)
-{
-    const TickType_t delay = pdMS_TO_TICKS(1000);
-    uint8_t ping = 0;
-    while (true)
-    {
-        esp_now_send(s_espnow_peer, &ping, sizeof(ping));
-        vTaskDelay(delay);
-    }
-}
-
 static bool espnow_try_connect(void)
 {
     if (esp_now_init() != ESP_OK)
         return false;
     esp_now_register_recv_cb(espnow_recv_cb);
-    uint8_t broadcast[ESP_NOW_ETH_ALEN];
-    memset(broadcast, 0xFF, sizeof(broadcast));
-    uint8_t ping = 0;
     for (int ch = 1; ch <= 13; ++ch)
     {
         s_espnow_packet = false;
         esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-        esp_now_send(broadcast, &ping, sizeof(ping));
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(2000));
         if (s_espnow_packet)
         {
             s_use_espnow = true;
@@ -385,7 +369,6 @@ static bool espnow_try_connect(void)
             peer.encrypt = false;
             esp_now_add_peer(&peer);
             printf("ESP-NOW peer found on channel %d\r\n", ch);
-            xTaskCreate(espnow_poll_task, "espnow_poll", 2048, NULL, 3, NULL);
             return true;
         }
     }
