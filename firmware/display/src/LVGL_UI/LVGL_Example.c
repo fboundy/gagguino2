@@ -102,8 +102,8 @@ void Lvgl_Example1(void) {
                 "Using LV_FONT_DEFAULT instead.");
 #endif
   }
-  /* Adjust the tab header so the common footer is 80% of its previous height */
-  tab_h = tab_h * 2;
+  /* Reduce the tab header so the common footer is 25% shorter */
+  tab_h = (tab_h * 3) / 2;
   tab_h_global = tab_h;
 
   // 设置字体
@@ -304,10 +304,17 @@ static void Status_create(lv_obj_t *parent) {
   lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(parent, 0, 0);
 
+  const lv_coord_t current_arc_width = 20;
+
   lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
                                  lv_obj_get_content_height(parent)) -
                           20;
-  lv_coord_t meter_size = meter_base + (meter_base * 30) / 100;
+  lv_coord_t meter_size =
+      meter_base + (meter_base * 30) / 100 + current_arc_width; /* Add arc
+                                                                   thickness to
+                                                                   radius to
+                                                                   align the
+                                                                   outer edge */
 
   set_temp_arc = lv_arc_create(parent);
   lv_obj_set_size(set_temp_arc, meter_size, meter_size);
@@ -335,8 +342,9 @@ static void Status_create(lv_obj_t *parent) {
   lv_arc_set_bg_angles(current_temp_arc, 0, 270);
   lv_obj_remove_style(current_temp_arc, NULL, LV_PART_KNOB);
   lv_obj_clear_flag(current_temp_arc, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_arc_width(current_temp_arc, 20, LV_PART_MAIN);
-  lv_obj_set_style_arc_width(current_temp_arc, 20, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(current_temp_arc, current_arc_width, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(current_temp_arc, current_arc_width,
+                             LV_PART_INDICATOR);
   lv_obj_set_style_arc_color(
       current_temp_arc, lv_palette_darken(LV_PALETTE_GREY, 2), LV_PART_MAIN);
   lv_obj_set_style_arc_color(
