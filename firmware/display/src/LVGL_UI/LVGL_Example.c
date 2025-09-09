@@ -1,5 +1,4 @@
 #include "LVGL_Example.h"
-#include "SD_MMC.h"
 
 
 /**********************
@@ -44,10 +43,9 @@ static lv_obj_t * main_screen;
 static lv_obj_t * settings_scr;
 static lv_coord_t tab_h_global;
 
-lv_obj_t * Current_Temp;
-lv_obj_t * FlashSize;
-lv_obj_t * Board_angle;
-lv_obj_t * Wireless_Scan;
+static lv_obj_t * temp_meter;
+static lv_meter_indicator_t * current_temp_indic;
+static lv_meter_indicator_t * set_temp_indic;
 lv_obj_t * Backlight_slider;
 
 
@@ -121,6 +119,8 @@ void Lvgl_Example1(void){
 
   tv = lv_tabview_create(lv_scr_act(), LV_DIR_BOTTOM, tab_h);
   main_screen = lv_scr_act();
+  lv_obj_set_style_bg_color(main_screen, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(main_screen, LV_OPA_COVER, 0);
   settings_scr = NULL;
   Backlight_slider = NULL;
 
@@ -139,6 +139,8 @@ void Lvgl_Example1(void){
   }
 
   lv_obj_t * t1 = lv_tabview_add_tab(tv, "Status");
+  lv_obj_set_style_bg_color(t1, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(t1, LV_OPA_COVER, 0);
   // lv_obj_t * t2 = lv_tabview_add_tab(tv, "Buzzer");
   // lv_obj_t * t3 = lv_tabview_add_tab(tv, "Shop");
   
@@ -279,8 +281,10 @@ void Lvgl_Example1_close(void)
 static void Status_create(lv_obj_t * parent)
 {
   static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t grid_main_row_dsc[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t grid_main_row_dsc[] = {LV_GRID_CONTENT, LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
 
+  lv_obj_set_style_bg_color(parent, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
   lv_obj_set_grid_dsc_array(parent, grid_main_col_dsc, grid_main_row_dsc);
 
   lv_obj_t * settings_btn = lv_btn_create(parent);
@@ -290,75 +294,16 @@ static void Status_create(lv_obj_t * parent)
   lv_obj_center(settings_label);
   lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED, NULL);
 
-  lv_obj_t * panel1 = lv_obj_create(parent);
-  lv_obj_set_height(panel1, LV_SIZE_CONTENT);
-  lv_obj_set_grid_cell(panel1, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_START, 1, 1);
+  temp_meter = lv_meter_create(parent);
+  lv_obj_set_size(temp_meter, 200, 200);
+  lv_obj_set_grid_cell(temp_meter, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_CENTER, 1, 1);
 
-  lv_obj_t * panel1_title = lv_label_create(panel1);
-  lv_label_set_text(panel1_title, "Status parameter");
-  lv_obj_add_style(panel1_title, &style_title, 0);
-
-  lv_obj_t * Temp_label = lv_label_create(panel1);
-  lv_label_set_text(Temp_label, "Current Temp");
-  lv_obj_add_style(Temp_label, &style_text_muted, 0);
-
-  Current_Temp = lv_textarea_create(panel1);
-  lv_textarea_set_one_line(Current_Temp, true);
-  lv_textarea_set_placeholder_text(Current_Temp, "0 C");
-  lv_obj_add_event_cb(Current_Temp, ta_event_cb, LV_EVENT_ALL, NULL);
-
-  lv_obj_t * Flash_label = lv_label_create(panel1);
-  lv_label_set_text(Flash_label, "Flash Size");
-  lv_obj_add_style(Flash_label, &style_text_muted, 0);
-
-  FlashSize = lv_textarea_create(panel1);
-  lv_textarea_set_one_line(FlashSize, true);
-  lv_textarea_set_placeholder_text(FlashSize, "Flash Size");
-  lv_obj_add_event_cb(FlashSize, ta_event_cb, LV_EVENT_ALL, NULL);
-
-  lv_obj_t * angle_label = lv_label_create(panel1);
-  lv_label_set_text(angle_label, "Angular deflection");
-  lv_obj_add_style(angle_label, &style_text_muted, 0);
-
-  Board_angle = lv_textarea_create(panel1);
-  lv_textarea_set_one_line(Board_angle, true);
-  lv_textarea_set_placeholder_text(Board_angle, "Board angle");
-  lv_obj_add_event_cb(Board_angle, ta_event_cb, LV_EVENT_ALL, NULL);
-
-  lv_obj_t * Wireless_label = lv_label_create(panel1);
-  lv_label_set_text(Wireless_label, "Wireless scan");
-  lv_obj_add_style(Wireless_label, &style_text_muted, 0);
-
-  Wireless_Scan = lv_textarea_create(panel1);
-  lv_textarea_set_one_line(Wireless_Scan, true);
-  lv_textarea_set_placeholder_text(Wireless_Scan, "Wireless number");
-  lv_obj_add_event_cb(Wireless_Scan, ta_event_cb, LV_EVENT_ALL, NULL);
-
-  static lv_coord_t grid_2_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(5), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t grid_2_row_dsc[] = {
-    LV_GRID_CONTENT,  /*Title*/
-    5,                /*Separator*/
-    LV_GRID_CONTENT,  /*Box title*/
-    40,               /*Box*/
-    LV_GRID_CONTENT,  /*Box title*/
-    40,               /*Box*/
-    LV_GRID_CONTENT,  /*Box title*/
-    40,               /*Box*/
-    LV_GRID_CONTENT,  /*Box title*/
-    40,               /*Box*/
-    LV_GRID_TEMPLATE_LAST
-  };
-
-  lv_obj_set_grid_dsc_array(panel1, grid_2_col_dsc, grid_2_row_dsc);
-  lv_obj_set_grid_cell(panel1_title, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);
-  lv_obj_set_grid_cell(Temp_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 2, 1);
-  lv_obj_set_grid_cell(Current_Temp, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 3, 1);
-  lv_obj_set_grid_cell(Flash_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 4, 1);
-  lv_obj_set_grid_cell(FlashSize, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 5, 1);
-  lv_obj_set_grid_cell(angle_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 6, 1);
-  lv_obj_set_grid_cell(Board_angle, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 7, 1);
-  lv_obj_set_grid_cell(Wireless_label, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_START, 8, 1);
-  lv_obj_set_grid_cell(Wireless_Scan, LV_GRID_ALIGN_STRETCH, 1, 1, LV_GRID_ALIGN_CENTER, 9, 1);
+  lv_meter_scale_t * scale = lv_meter_add_scale(temp_meter);
+  lv_meter_set_scale_ticks(temp_meter, scale, 51, 1, 10, lv_palette_main(LV_PALETTE_GREY));
+  lv_meter_set_scale_major_ticks(temp_meter, scale, 5, 2, 15, lv_color_hex3(0xeee), 10);
+  lv_meter_set_scale_range(temp_meter, scale, 0, 150, 270, 135);
+  current_temp_indic = lv_meter_add_needle_line(temp_meter, scale, 4, lv_palette_main(LV_PALETTE_RED), -10);
+  set_temp_indic = lv_meter_add_needle_line(temp_meter, scale, 4, lv_palette_main(LV_PALETTE_BLUE), 10);
 
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
 }
@@ -366,19 +311,12 @@ static void Status_create(lv_obj_t * parent)
 
 void example1_increase_lvgl_tick(lv_timer_t * t)
 {
-  char buf[100];
-
-  snprintf(buf, sizeof(buf), "%.1f C\r\n", MQTT_GetCurrentTemp());
-  lv_textarea_set_placeholder_text(Current_Temp, buf);
-  snprintf(buf, sizeof(buf), "%ld MB\r\n", Flash_Size);
-  lv_textarea_set_placeholder_text(FlashSize, buf);
-  snprintf(buf, sizeof(buf), "X:%.2f  Y:%.2f  Z:%.2f\r\n", Accel.x, Accel.y, Accel.z);
-  lv_textarea_set_placeholder_text(Board_angle, buf);
-  if(Scan_finish)
-    snprintf(buf, sizeof(buf), "WIFI: %d    BLE: %d    ..Scan Finish.\r\n",WIFI_NUM,BLE_NUM);
-  else
-    snprintf(buf, sizeof(buf), "WIFI: %d    BLE: %d\r\n",WIFI_NUM,BLE_NUM);
-  lv_textarea_set_placeholder_text(Wireless_Scan, buf);
+  float current = MQTT_GetCurrentTemp();
+  float set = MQTT_GetSetTemp();
+  if(temp_meter) {
+    lv_meter_set_indicator_value(temp_meter, current_temp_indic, (int32_t)current);
+    lv_meter_set_indicator_value(temp_meter, set_temp_indic, (int32_t)set);
+  }
   if(Backlight_slider)
     lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
   LVGL_Backlight_adjustment(LCD_Backlight);
