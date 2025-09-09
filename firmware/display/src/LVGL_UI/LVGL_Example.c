@@ -26,7 +26,6 @@ void example1_increase_lvgl_tick(lv_timer_t *t);
  **********************/
 static disp_size_t disp_size;
 
-static lv_obj_t *tv;
 lv_style_t style_text_muted;
 lv_style_t style_title;
 static lv_style_t style_icon;
@@ -60,10 +59,8 @@ void Lvgl_Example1(void)
   font_large = LV_FONT_DEFAULT;
   font_normal = LV_FONT_DEFAULT;
 
-  lv_coord_t tab_h;
   if (disp_size == DISP_LARGE)
   {
-    tab_h = 70;
 #if LV_FONT_MONTSERRAT_24
     font_large = &lv_font_montserrat_24;
 #else
@@ -79,7 +76,6 @@ void Lvgl_Example1(void)
   }
   else if (disp_size == DISP_MEDIUM)
   {
-    tab_h = 45;
 #if LV_FONT_MONTSERRAT_20
     font_large = &lv_font_montserrat_20;
 #else
@@ -95,7 +91,6 @@ void Lvgl_Example1(void)
   }
   else
   { /* disp_size == DISP_SMALL */
-    tab_h = 45;
 #if LV_FONT_MONTSERRAT_18
     font_large = &lv_font_montserrat_18;
 #else
@@ -109,9 +104,7 @@ void Lvgl_Example1(void)
                 "Using LV_FONT_DEFAULT instead.");
 #endif
   }
-  /* Reduce the tab header so the common footer is 25% shorter */
-  tab_h = (tab_h * 3) / 2;
-  tab_h_global = tab_h;
+  tab_h_global = 0;
 
   // 设置字体
 
@@ -129,22 +122,11 @@ void Lvgl_Example1(void)
   lv_style_set_border_width(&style_bullet, 0);
   lv_style_set_radius(&style_bullet, LV_RADIUS_CIRCLE);
 
-  tv = lv_tabview_create(lv_scr_act(), LV_DIR_BOTTOM, tab_h);
-  lv_obj_set_style_bg_opa(tv, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(tv, 0, 0);
   main_screen = lv_scr_act();
   lv_obj_set_style_bg_color(main_screen, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(main_screen, LV_OPA_COVER, 0);
   settings_scr = NULL;
   Backlight_slider = NULL;
-
-  // Stretch the tab button matrix and center the tab text
-  lv_obj_t *tab_btns = lv_tabview_get_tab_btns(tv);
-  lv_obj_set_width(tab_btns, LV_PCT(100));
-  lv_btnmatrix_set_btn_width(tab_btns, 0, 8);
-  lv_obj_set_style_pad_all(tab_btns, 0, 0);
-  lv_obj_set_style_text_align(tab_btns, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_style_border_side(tab_btns, LV_BORDER_SIDE_TOP, 0);
 
   lv_obj_set_style_text_font(lv_scr_act(), font_normal, 0);
 
@@ -153,20 +135,7 @@ void Lvgl_Example1(void)
     /* Large displays do not require additional header content. */
   }
 
-  lv_obj_t *t1 = lv_tabview_add_tab(tv, "Status");
-  lv_obj_set_style_bg_color(t1, lv_color_hex(0x000000), 0);
-  lv_obj_set_style_bg_opa(t1, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(t1, 0, 0);
-  // lv_obj_t * t2 = lv_tabview_add_tab(tv, "Buzzer");
-  // lv_obj_t * t3 = lv_tabview_add_tab(tv, "Shop");
-
-  // lv_coord_t screen_width = lv_obj_get_width(lv_scr_act());
-  // lv_obj_set_width(t1, screen_width);
-  Status_create(t1);
-  // Buzzer_create(t2);
-  // shop_create(t3);
-
-  // color_changer_create(tv);
+  Status_create(main_screen);
 }
 
 static void led_event_cb(lv_event_t *e)
@@ -200,24 +169,15 @@ static void Settings_create(void)
   lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(settings_scr, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(settings_scr, 0, 0);
-
-  lv_obj_t *tvs = lv_tabview_create(settings_scr, LV_DIR_BOTTOM, tab_h_global);
-  lv_obj_set_style_bg_color(tvs, lv_color_hex(0x000000), 0);
-  lv_obj_set_style_bg_opa(tvs, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(tvs, 0, 0);
-  lv_obj_t *t = lv_tabview_add_tab(tvs, "Settings");
-  lv_obj_set_style_bg_color(t, lv_color_hex(0x000000), 0);
-  lv_obj_set_style_bg_opa(t, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(t, 0, 0);
-
+ 
   static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1),
                                            LV_GRID_TEMPLATE_LAST};
   static lv_coord_t grid_main_row_dsc[] = {
       LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT,
       LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  lv_obj_set_grid_dsc_array(t, grid_main_col_dsc, grid_main_row_dsc);
+  lv_obj_set_grid_dsc_array(settings_scr, grid_main_col_dsc, grid_main_row_dsc);
 
-  lv_obj_t *back_btn = lv_btn_create(t);
+  lv_obj_t *back_btn = lv_btn_create(settings_scr);
   lv_obj_set_size(back_btn, 80, 80);
   lv_obj_set_grid_cell(back_btn, LV_GRID_ALIGN_CENTER, 0, 2,
                        LV_GRID_ALIGN_CENTER, 5, 1);
@@ -226,13 +186,13 @@ static void Settings_create(void)
   lv_obj_center(back_label);
   lv_obj_add_event_cb(back_btn, back_event_cb, LV_EVENT_CLICKED, NULL);
 
-  lv_obj_t *Backlight_label = lv_label_create(t);
+  lv_obj_t *Backlight_label = lv_label_create(settings_scr);
   lv_label_set_text(Backlight_label, "Backlight brightness");
   lv_obj_add_style(Backlight_label, &style_text_muted, 0);
   lv_obj_set_grid_cell(Backlight_label, LV_GRID_ALIGN_CENTER, 0, 2,
                        LV_GRID_ALIGN_START, 0, 1);
 
-  Backlight_slider = lv_slider_create(t);
+  Backlight_slider = lv_slider_create(settings_scr);
   lv_obj_add_flag(Backlight_slider, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_size(Backlight_slider, 200, 35);
   lv_obj_set_style_radius(Backlight_slider, 3, LV_PART_KNOB);
@@ -251,19 +211,19 @@ static void Settings_create(void)
   lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_CENTER, 0, 2,
                        LV_GRID_ALIGN_START, 1, 1);
 
-  lv_obj_t *panel2_title = lv_label_create(t);
+  lv_obj_t *panel2_title = lv_label_create(settings_scr);
   lv_label_set_text(panel2_title, "The buzzer tes");
   lv_obj_add_style(panel2_title, &style_title, 0);
   lv_obj_set_grid_cell(panel2_title, LV_GRID_ALIGN_CENTER, 0, 2,
                        LV_GRID_ALIGN_START, 2, 1);
 
-  lv_obj_t *led = lv_led_create(t);
+  lv_obj_t *led = lv_led_create(settings_scr);
   lv_obj_set_size(led, 50, 50);
   lv_led_off(led);
   lv_obj_set_grid_cell(led, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_START, 3,
                        1);
 
-  lv_obj_t *sw = lv_switch_create(t);
+  lv_obj_t *sw = lv_switch_create(settings_scr);
   lv_obj_set_size(sw, 65, 40);
   lv_obj_add_event_cb(sw, led_event_cb, LV_EVENT_VALUE_CHANGED, led);
   lv_obj_set_grid_cell(sw, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 3,
