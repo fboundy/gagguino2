@@ -301,8 +301,9 @@ static void Status_create(lv_obj_t * parent)
   lv_obj_center(temp_meter);
   lv_obj_set_y(temp_meter, tab_h_global / 2);
   lv_obj_set_style_pad_all(temp_meter, 0, 0);
-  lv_obj_set_style_bg_color(temp_meter, lv_palette_main(LV_PALETTE_YELLOW), 0);
-  lv_obj_set_style_bg_opa(temp_meter, LV_OPA_COVER, 0);
+  /* Use a transparent background so only the arc itself is visible */
+  lv_obj_set_style_bg_color(temp_meter, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(temp_meter, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(temp_meter, 0, 0);
 
   lv_meter_scale_t * scale = lv_meter_add_scale(temp_meter);
