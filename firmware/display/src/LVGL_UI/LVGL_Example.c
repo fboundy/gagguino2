@@ -308,7 +308,7 @@ static void Status_create(lv_obj_t *parent) {
 
   set_temp_arc = lv_arc_create(parent);
   lv_obj_set_size(set_temp_arc, meter_size, meter_size);
-  lv_obj_center(set_temp_arc);
+  lv_obj_align(set_temp_arc, LV_ALIGN_CENTER, 0, tab_h_global / 2);
   lv_arc_set_range(set_temp_arc, 60, 160);
   lv_arc_set_rotation(set_temp_arc, 135);
   lv_arc_set_bg_angles(set_temp_arc, 0, 270);
@@ -326,7 +326,7 @@ static void Status_create(lv_obj_t *parent) {
 
   current_temp_arc = lv_arc_create(parent);
   lv_obj_set_size(current_temp_arc, meter_size, meter_size);
-  lv_obj_center(current_temp_arc);
+  lv_obj_align(current_temp_arc, LV_ALIGN_CENTER, 0, tab_h_global / 2);
   lv_arc_set_range(current_temp_arc, 60, 160);
   lv_arc_set_rotation(current_temp_arc, 135);
   lv_arc_set_bg_angles(current_temp_arc, 0, 270);
