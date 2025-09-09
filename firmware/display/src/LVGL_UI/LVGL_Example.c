@@ -67,11 +67,14 @@ void Lvgl_Example1(void)
 
   if (disp_size == DISP_LARGE)
   {
-#if LV_FONT_MONTSERRAT_24
+#if LV_FONT_MONTSERRAT_28
+    font_large = &lv_font_montserrat_28;
+#elif LV_FONT_MONTSERRAT_24
     font_large = &lv_font_montserrat_24;
 #else
-    LV_LOG_WARN("LV_FONT_MONTSERRAT_24 is not enabled for the widgets demo. "
-                "Using LV_FONT_DEFAULT instead.");
+    LV_LOG_WARN(
+        "LV_FONT_MONTSERRAT_28 and LV_FONT_MONTSERRAT_24 are not enabled for the widgets demo. "
+        "Using LV_FONT_DEFAULT instead.");
 #endif
 #if LV_FONT_MONTSERRAT_16
     font_normal = &lv_font_montserrat_16;
@@ -322,7 +325,7 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_border_width(current_temp_arc, 0, 0);
   lv_arc_set_value(current_temp_arc, 80);
 
-    current_pressure_arc = lv_arc_create(parent);
+  current_pressure_arc = lv_arc_create(parent);
   lv_obj_set_size(current_pressure_arc, meter_size, meter_size);
   lv_obj_align(current_pressure_arc, LV_ALIGN_CENTER, 0, tab_h_global / 2);
   lv_arc_set_range(current_pressure_arc, PRESSURE_ARC_MIN, PRESSURE_ARC_MAX);
@@ -342,7 +345,7 @@ static void Status_create(lv_obj_t *parent)
                              LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(current_pressure_arc, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(current_pressure_arc, 0, 0);
-  lv_arc_set_value(current_pressure_arc, PRESSURE_ARC_MAX - 5);
+  lv_arc_set_value(current_pressure_arc, PRESSURE_ARC_MAX - 50);
 
   lv_obj_t *tick_layer = lv_obj_create(parent);
   lv_obj_set_size(tick_layer, LV_PCT(100), LV_PCT(100));
@@ -462,7 +465,7 @@ static void draw_ticks_cb(lv_event_t *e)
       lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
 
       char buf[8];
-      lv_snprintf(buf, sizeof(buf), "%d", val);
+      lv_snprintf(buf, sizeof(buf), "%d", val / 10);
       lv_coord_t text_r = radius - len - 10;
       lv_point_t tp = {cx + (lv_coord_t)(text_r * cosf(rad)),
                        cy + (lv_coord_t)(text_r * sinf(rad))};
@@ -502,7 +505,7 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   }
   if (current_pressure_arc)
   {
-    int32_t current_val = LV_MIN(LV_MAX((int32_t)current_p, PRESSURE_ARC_MIN),
+    int32_t current_val = LV_MIN(LV_MAX((int32_t)current_p * 10.0f, PRESSURE_ARC_MIN),
                                  PRESSURE_ARC_MAX);
     lv_arc_set_value(current_pressure_arc, PRESSURE_ARC_MAX - current_val);
   }
