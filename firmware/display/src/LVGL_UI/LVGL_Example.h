@@ -21,7 +21,7 @@
 #define PRESSURE_ARC_START 300
 #define PRESSURE_ARC_SIZE 120
 #define PRESSURE_ARC_MIN 0
-#define PRESSURE_ARC_MAX 100
+#define PRESSURE_ARC_MAX 120
 #define PRESSURE_ARC_TICK 10
 
 void Backlight_adjustment_event_cb(lv_event_t *e);
