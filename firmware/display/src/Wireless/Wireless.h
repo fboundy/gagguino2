@@ -25,3 +25,6 @@ float MQTT_GetShotTime(void);
 float MQTT_GetShotVolume(void);
 bool MQTT_GetHeaterState(void);
 bool MQTT_GetSteamState(void);
+
+bool Wireless_UsingEspNow(void);
+bool Wireless_IsMQTTConnected(void);

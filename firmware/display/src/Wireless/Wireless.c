@@ -128,6 +128,7 @@ static float s_shot_volume = 0.0f;
 static bool s_heater = false;
 static bool s_steam = false;
 static bool s_use_espnow = false;
+static bool s_mqtt_connected = false;
 static uint8_t s_espnow_peer[ESP_NOW_ETH_ALEN];
 static volatile bool s_espnow_packet = false;
 static int s_espnow_channel = 0;
@@ -185,6 +186,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     {
     case MQTT_EVENT_CONNECTED:
         printf("MQTT connected\r\n");
+        s_mqtt_connected = true;
         mqtt_subscribe_all(true);
 #ifdef MQTT_LWT_TOPIC
         esp_mqtt_client_publish(event->client, MQTT_LWT_TOPIC, "online", 0, 1, true);
@@ -193,6 +195,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
 
     case MQTT_EVENT_DISCONNECTED:
         printf("MQTT disconnected\r\n");
+        s_mqtt_connected = false;
         break;
 
     case MQTT_EVENT_DATA:
@@ -364,4 +367,14 @@ static bool espnow_try_connect(void)
     }
     esp_now_deinit();
     return false;
+}
+
+bool Wireless_UsingEspNow(void)
+{
+    return s_use_espnow;
+}
+
+bool Wireless_IsMQTTConnected(void)
+{
+    return s_mqtt_connected;
 }
