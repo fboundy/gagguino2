@@ -395,32 +395,32 @@ static void Status_create(lv_obj_t *parent)
 
 /* Create one field (icon | value | units) in ROW at column COL (0 or 1) */
 #define MAKE_FIELD(ROW, COL, ICON_TXT, OUT_ICON, OUT_VAL, OUT_UNITS, INIT_VAL_TXT, UNITS_TXT) \
-  do                                                                                         \
-  {                                                                                          \
-    lv_obj_t *cell = lv_obj_create(ROW);                                                     \
-    lv_obj_set_style_bg_opa(cell, LV_OPA_TRANSP, 0);                                         \
-    lv_obj_set_style_border_width(cell, 0, 0);                                               \
-    lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);                                         \
-    lv_obj_set_grid_dsc_array(cell, field_cols, field_rows);                                 \
-    lv_obj_set_grid_cell(cell, LV_GRID_ALIGN_STRETCH, (COL), 1, LV_GRID_ALIGN_CENTER, 0, 1); \
-    /* icon (left) */                                                                        \
-    OUT_ICON = lv_label_create(cell);                                                        \
-    lv_label_set_text(OUT_ICON, (ICON_TXT));                                                 \
-    lv_obj_set_style_text_font(OUT_ICON, font_icon, 0);                                      \
-    lv_obj_set_style_text_color(OUT_ICON, lv_color_white(), 0);                              \
-    lv_obj_set_grid_cell(OUT_ICON, LV_GRID_ALIGN_START, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);   \
-    /* value (right) */                                                                      \
-    OUT_VAL = lv_label_create(cell);                                                         \
-    lv_label_set_text(OUT_VAL, (INIT_VAL_TXT));                                              \
-    lv_obj_set_style_text_font(OUT_VAL, font_val, 0);                                        \
-    lv_obj_set_style_text_color(OUT_VAL, lv_color_white(), 0);                               \
-    lv_obj_set_grid_cell(OUT_VAL, LV_GRID_ALIGN_END, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);      \
-    /* units (left in column) */                                                             \
-    OUT_UNITS = lv_label_create(cell);                                                       \
-    lv_label_set_text(OUT_UNITS, (UNITS_TXT));                                               \
-    lv_obj_set_style_text_font(OUT_UNITS, font_units, 0);                                    \
-    lv_obj_set_style_text_color(OUT_UNITS, lv_color_white(), 0);                             \
-    lv_obj_set_grid_cell(OUT_UNITS, LV_GRID_ALIGN_START, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);  \
+  do                                                                                          \
+  {                                                                                           \
+    lv_obj_t *cell = lv_obj_create(ROW);                                                      \
+    lv_obj_set_style_bg_opa(cell, LV_OPA_TRANSP, 0);                                          \
+    lv_obj_set_style_border_width(cell, 0, 0);                                                \
+    lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);                                          \
+    lv_obj_set_grid_dsc_array(cell, field_cols, field_rows);                                  \
+    lv_obj_set_grid_cell(cell, LV_GRID_ALIGN_STRETCH, (COL), 1, LV_GRID_ALIGN_CENTER, 0, 1);  \
+    /* icon (left) */                                                                         \
+    OUT_ICON = lv_label_create(cell);                                                         \
+    lv_label_set_text(OUT_ICON, (ICON_TXT));                                                  \
+    lv_obj_set_style_text_font(OUT_ICON, font_icon, 0);                                       \
+    lv_obj_set_style_text_color(OUT_ICON, lv_color_white(), 0);                               \
+    lv_obj_set_grid_cell(OUT_ICON, LV_GRID_ALIGN_START, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);    \
+    /* value (right) */                                                                       \
+    OUT_VAL = lv_label_create(cell);                                                          \
+    lv_label_set_text(OUT_VAL, (INIT_VAL_TXT));                                               \
+    lv_obj_set_style_text_font(OUT_VAL, font_val, 0);                                         \
+    lv_obj_set_style_text_color(OUT_VAL, lv_color_white(), 0);                                \
+    lv_obj_set_grid_cell(OUT_VAL, LV_GRID_ALIGN_END, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);       \
+    /* units (left in column) */                                                              \
+    OUT_UNITS = lv_label_create(cell);                                                        \
+    lv_label_set_text(OUT_UNITS, (UNITS_TXT));                                                \
+    lv_obj_set_style_text_font(OUT_UNITS, font_units, 0);                                     \
+    lv_obj_set_style_text_color(OUT_UNITS, lv_color_white(), 0);                              \
+    lv_obj_set_grid_cell(OUT_UNITS, LV_GRID_ALIGN_START, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);   \
   } while (0)
 
   const lv_coord_t H = lv_disp_get_ver_res(NULL);
@@ -582,17 +582,6 @@ static void draw_ticks_cb(lv_event_t *e)
       lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
     }
   }
-}
-
-static void set_label_value(lv_obj_t *label, float value, const char *suffix)
-{
-  if (!label)
-    return;
-  char buf[16];
-  int32_t whole = (int32_t)value;
-  int32_t frac = (int32_t)(fabsf(value) * 10.0f + 0.5f) % 10;
-  snprintf(buf, sizeof(buf), "%" PRId32 ".%" PRId32 "%s", whole, frac, suffix);
-  lv_label_set_text(label, buf);
 }
 
 void example1_increase_lvgl_tick(lv_timer_t *t)
