@@ -88,12 +88,12 @@ void Lvgl_Example1(void)
 
   if (disp_size == DISP_LARGE)
   {
-#if LV_FONT_MONTSERRAT_28
-    font_large = &lv_font_montserrat_28;
+#if LV_FONT_MONTSERRAT_40
+    font_large = &lv_font_montserrat_40;
 #elif LV_FONT_MONTSERRAT_24
     font_large = &lv_font_montserrat_24;
 #else
-    LV_LOG_WARN("LV_FONT_MONTSERRAT_28 and LV_FONT_MONTSERRAT_24 are not "
+    LV_LOG_WARN("LV_FONT_MONTSERRAT_40 and LV_FONT_MONTSERRAT_24 are not "
                 "enabled for the widgets demo. "
                 "Using LV_FONT_DEFAULT instead.");
 #endif
@@ -396,8 +396,8 @@ static void Status_create(lv_obj_t *parent)
   pressure_label = lv_label_create(parent);
   lv_obj_set_style_text_color(temp_label, lv_color_white(), 0);
   lv_obj_set_style_text_color(pressure_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_28, 0);
-  lv_obj_set_style_text_font(pressure_label, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_40, 0);
+  lv_obj_set_style_text_font(pressure_label, &lv_font_montserrat_40, 0);
   lv_coord_t y_offset = -(lv_obj_get_height(parent) / 5);
   lv_coord_t x_offset = meter_size / 5;
   lv_obj_align(temp_label, LV_ALIGN_CENTER, -x_offset, y_offset);
@@ -419,7 +419,7 @@ static void Status_create(lv_obj_t *parent)
   /* Shot time and volume labels */
   shot_time_label = lv_label_create(parent);
   lv_obj_set_style_text_color(shot_time_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(shot_time_label, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(shot_time_label, &lv_font_montserrat_40, 0);
   lv_obj_align(shot_time_label, LV_ALIGN_CENTER, 20, 0);
   set_label_value(shot_time_label, 0.0f, "s");
 
@@ -431,7 +431,7 @@ static void Status_create(lv_obj_t *parent)
 
   shot_volume_label = lv_label_create(parent);
   lv_obj_set_style_text_color(shot_volume_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(shot_volume_label, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(shot_volume_label, &lv_font_montserrat_40, 0);
   lv_obj_align(shot_volume_label, LV_ALIGN_CENTER, 20, 40);
   set_label_value(shot_volume_label, 0.0f, "ml");
 
