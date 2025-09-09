@@ -298,7 +298,10 @@ static lv_coord_t grid_main_row_dsc[] = {LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID
   lv_meter_set_scale_range(temp_meter, scale, 60, 160, 270, 225);
   current_temp_indic = lv_meter_add_arc(temp_meter, scale, 10, lv_palette_main(LV_PALETTE_RED), 0);
   lv_meter_set_indicator_start_value(temp_meter, current_temp_indic, 60);
-  set_temp_indic = lv_meter_add_scale_lines(temp_meter, scale, lv_palette_main(LV_PALETTE_BLUE), 2, 15, 0, 0);
+  set_temp_indic = lv_meter_add_scale_lines(temp_meter, scale,
+                                            lv_palette_main(LV_PALETTE_BLUE),
+                                            lv_palette_main(LV_PALETTE_BLUE),
+                                            false, 2);
 
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
 
