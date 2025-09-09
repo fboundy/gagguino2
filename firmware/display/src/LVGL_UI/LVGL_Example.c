@@ -369,8 +369,8 @@ static void Status_create(lv_obj_t *parent)
   pressure_label = lv_label_create(parent);
   lv_obj_set_style_text_color(temp_label, lv_color_white(), 0);
   lv_obj_set_style_text_color(pressure_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_28, 0);
-  lv_obj_set_style_text_font(pressure_label, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(temp_label, font_large, 0);
+  lv_obj_set_style_text_font(pressure_label, font_large, 0);
   lv_coord_t y_offset = -(lv_obj_get_height(parent) / 4);
   lv_coord_t x_offset = meter_size / 4;
   lv_obj_align(temp_label, LV_ALIGN_CENTER, -x_offset, y_offset);
