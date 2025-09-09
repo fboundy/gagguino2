@@ -518,7 +518,7 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   if (temp_label)
     set_label_value(temp_label, current, "\u00B0C");
   if (pressure_label)
-    set_label_value(pressure_label, current_p, "bar");
+    set_label_value(pressure_label, current_p, " bar");
   if (Backlight_slider)
     lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
   LVGL_Backlight_adjustment(LCD_Backlight);
