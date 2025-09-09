@@ -193,13 +193,15 @@ static void Settings_create(void) {
     LV_GRID_CONTENT,
     LV_GRID_CONTENT,
     LV_GRID_CONTENT,
+    LV_GRID_FR(1),
     LV_GRID_CONTENT,
     LV_GRID_TEMPLATE_LAST
   };
   lv_obj_set_grid_dsc_array(t, grid_main_col_dsc, grid_main_row_dsc);
 
   lv_obj_t * back_btn = lv_btn_create(t);
-  lv_obj_set_grid_cell(back_btn, LV_GRID_ALIGN_CENTER, 0, 2, LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_set_size(back_btn, 80, 80);
+  lv_obj_set_grid_cell(back_btn, LV_GRID_ALIGN_CENTER, 0, 2, LV_GRID_ALIGN_CENTER, 5, 1);
   lv_obj_t * back_label = lv_label_create(back_btn);
   lv_label_set_text(back_label, LV_SYMBOL_LEFT);
   lv_obj_center(back_label);
@@ -208,7 +210,7 @@ static void Settings_create(void) {
   lv_obj_t * Backlight_label = lv_label_create(t);
   lv_label_set_text(Backlight_label, "Backlight brightness");
   lv_obj_add_style(Backlight_label, &style_text_muted, 0);
-  lv_obj_set_grid_cell(Backlight_label, LV_GRID_ALIGN_CENTER, 0, 2, LV_GRID_ALIGN_START, 1, 1);
+  lv_obj_set_grid_cell(Backlight_label, LV_GRID_ALIGN_CENTER, 0, 2, LV_GRID_ALIGN_START, 0, 1);
 
   Backlight_slider = lv_slider_create(t);
   lv_obj_add_flag(Backlight_slider, LV_OBJ_FLAG_CLICKABLE);
@@ -222,22 +224,22 @@ static void Settings_create(void) {
   lv_slider_set_range(Backlight_slider, 5, Backlight_MAX);
   lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
   lv_obj_add_event_cb(Backlight_slider, Backlight_adjustment_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-  lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_CENTER, 0, 2, LV_GRID_ALIGN_START, 2, 1);
+  lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_CENTER, 0, 2, LV_GRID_ALIGN_START, 1, 1);
 
   lv_obj_t * panel2_title = lv_label_create(t);
   lv_label_set_text(panel2_title, "The buzzer tes");
   lv_obj_add_style(panel2_title, &style_title, 0);
-  lv_obj_set_grid_cell(panel2_title, LV_GRID_ALIGN_CENTER, 0, 2, LV_GRID_ALIGN_START, 3, 1);
+  lv_obj_set_grid_cell(panel2_title, LV_GRID_ALIGN_CENTER, 0, 2, LV_GRID_ALIGN_START, 2, 1);
 
   lv_obj_t *led = lv_led_create(t);
   lv_obj_set_size(led, 50, 50);
   lv_led_off(led);
-  lv_obj_set_grid_cell(led, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_START, 4, 1);
+  lv_obj_set_grid_cell(led, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_START, 3, 1);
 
   lv_obj_t *sw = lv_switch_create(t);
   lv_obj_set_size(sw, 65, 40);
   lv_obj_add_event_cb(sw, led_event_cb, LV_EVENT_VALUE_CHANGED, led);
-  lv_obj_set_grid_cell(sw, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 4, 1);
+  lv_obj_set_grid_cell(sw, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 3, 1);
 }
 // static void Buzzer_create(lv_obj_t * parent)
 // {
@@ -281,31 +283,32 @@ void Lvgl_Example1_close(void)
 static void Status_create(lv_obj_t * parent)
 {
   static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t grid_main_row_dsc[] = {LV_GRID_CONTENT, LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+static lv_coord_t grid_main_row_dsc[] = {LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
 
   lv_obj_set_style_bg_color(parent, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
   lv_obj_set_grid_dsc_array(parent, grid_main_col_dsc, grid_main_row_dsc);
 
+  temp_meter = lv_meter_create(parent);
+  lv_obj_set_size(temp_meter, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_grid_cell(temp_meter, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+
+  lv_meter_scale_t * scale = lv_meter_add_scale(temp_meter);
+  lv_meter_set_scale_ticks(temp_meter, scale, 11, 2, 10, lv_palette_main(LV_PALETTE_GREY));
+  lv_meter_set_scale_range(temp_meter, scale, 60, 160, 270, 225);
+  current_temp_indic = lv_meter_add_arc(temp_meter, scale, 10, lv_palette_main(LV_PALETTE_RED), 0);
+  lv_meter_set_indicator_start_value(temp_meter, current_temp_indic, 60);
+  set_temp_indic = lv_meter_add_scale_lines(temp_meter, scale, lv_palette_main(LV_PALETTE_BLUE), 2, 15, 0, 0);
+
+  auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
+
   lv_obj_t * settings_btn = lv_btn_create(parent);
-  lv_obj_set_grid_cell(settings_btn, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_set_size(settings_btn, 80, 80);
+  lv_obj_set_grid_cell(settings_btn, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_CENTER, 1, 1);
   lv_obj_t * settings_label = lv_label_create(settings_btn);
   lv_label_set_text(settings_label, LV_SYMBOL_SETTINGS);
   lv_obj_center(settings_label);
   lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED, NULL);
-
-  temp_meter = lv_meter_create(parent);
-  lv_obj_set_size(temp_meter, 200, 200);
-  lv_obj_set_grid_cell(temp_meter, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_CENTER, 1, 1);
-
-  lv_meter_scale_t * scale = lv_meter_add_scale(temp_meter);
-  lv_meter_set_scale_ticks(temp_meter, scale, 51, 1, 10, lv_palette_main(LV_PALETTE_GREY));
-  lv_meter_set_scale_major_ticks(temp_meter, scale, 5, 2, 15, lv_color_hex3(0xeee), 10);
-  lv_meter_set_scale_range(temp_meter, scale, 0, 150, 270, 135);
-  current_temp_indic = lv_meter_add_needle_line(temp_meter, scale, 4, lv_palette_main(LV_PALETTE_RED), -10);
-  set_temp_indic = lv_meter_add_needle_line(temp_meter, scale, 4, lv_palette_main(LV_PALETTE_BLUE), 10);
-
-  auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
 }
 
 
@@ -314,8 +317,9 @@ void example1_increase_lvgl_tick(lv_timer_t * t)
   float current = MQTT_GetCurrentTemp();
   float set = MQTT_GetSetTemp();
   if(temp_meter) {
-    lv_meter_set_indicator_value(temp_meter, current_temp_indic, (int32_t)current);
-    lv_meter_set_indicator_value(temp_meter, set_temp_indic, (int32_t)set);
+    lv_meter_set_indicator_end_value(temp_meter, current_temp_indic, (int32_t)current);
+    lv_meter_set_indicator_start_value(temp_meter, set_temp_indic, (int32_t)set);
+    lv_meter_set_indicator_end_value(temp_meter, set_temp_indic, (int32_t)set);
   }
   if(Backlight_slider)
     lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
