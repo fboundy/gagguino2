@@ -1,7 +1,7 @@
 #pragma once
 
 #include "lvgl.h"
-#include "demos/lv_demos.h"
+// #include "demos/lv_demos.h"
 
 #include "LVGL_Driver.h"
 #include "TCA9554PWR.h"
@@ -19,7 +19,7 @@
 #define PRESSURE_ARC_START 300
 #define PRESSURE_ARC_SIZE 120
 #define PRESSURE_ARC_MIN 0
-#define PRESSURE_ARC_MAX 10
+#define PRESSURE_ARC_MAX 12
 #define PRESSURE_ARC_TICK 1
 
 void Backlight_adjustment_event_cb(lv_event_t *e);

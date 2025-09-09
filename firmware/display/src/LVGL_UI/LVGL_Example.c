@@ -49,7 +49,6 @@ static lv_coord_t tab_h_global;
 static lv_obj_t *current_temp_arc;
 static lv_obj_t *set_temp_arc;
 static lv_obj_t *current_pressure_arc;
-static lv_obj_t *set_pressure_arc;
 static lv_obj_t *temp_label;
 static lv_obj_t *pressure_label;
 lv_obj_t *Backlight_slider;
@@ -250,7 +249,6 @@ void Lvgl_Example1_close(void)
   current_temp_arc = NULL;
   set_temp_arc = NULL;
   current_pressure_arc = NULL;
-  set_pressure_arc = NULL;
   temp_label = NULL;
   pressure_label = NULL;
 
@@ -324,25 +322,7 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_border_width(current_temp_arc, 0, 0);
   lv_arc_set_value(current_temp_arc, 80);
 
-  set_pressure_arc = lv_arc_create(parent);
-  lv_obj_set_size(set_pressure_arc, meter_size, meter_size);
-  lv_obj_align(set_pressure_arc, LV_ALIGN_CENTER, 0, tab_h_global / 2);
-  lv_arc_set_range(set_pressure_arc, PRESSURE_ARC_MIN, PRESSURE_ARC_MAX);
-  lv_arc_set_rotation(set_pressure_arc, PRESSURE_ARC_START);
-  lv_arc_set_bg_angles(set_pressure_arc, 0, PRESSURE_ARC_SIZE);
-  lv_obj_remove_style(set_pressure_arc, NULL, LV_PART_KNOB);
-  lv_obj_clear_flag(set_pressure_arc, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_arc_width(set_pressure_arc, 4, LV_PART_MAIN);
-  lv_obj_set_style_arc_width(set_pressure_arc, 4, LV_PART_INDICATOR);
-  lv_obj_set_style_arc_color(
-      set_pressure_arc, lv_palette_darken(LV_PALETTE_GREY, 2), LV_PART_MAIN);
-  lv_obj_set_style_arc_color(set_pressure_arc, lv_palette_main(LV_PALETTE_BLUE),
-                             LV_PART_INDICATOR);
-  lv_obj_set_style_bg_opa(set_pressure_arc, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(set_pressure_arc, 0, 0);
-  lv_arc_set_value(set_pressure_arc, PRESSURE_ARC_MAX - 5);
-
-  current_pressure_arc = lv_arc_create(parent);
+    current_pressure_arc = lv_arc_create(parent);
   lv_obj_set_size(current_pressure_arc, meter_size, meter_size);
   lv_obj_align(current_pressure_arc, LV_ALIGN_CENTER, 0, tab_h_global / 2);
   lv_arc_set_range(current_pressure_arc, PRESSURE_ARC_MIN, PRESSURE_ARC_MAX);
@@ -379,7 +359,6 @@ static void Status_create(lv_obj_t *parent)
 
   lv_obj_move_foreground(set_temp_arc);
   lv_obj_move_foreground(current_temp_arc);
-  lv_obj_move_foreground(set_pressure_arc);
   lv_obj_move_foreground(current_pressure_arc);
   lv_obj_move_foreground(tick_layer);
 
@@ -489,7 +468,7 @@ static void draw_ticks_cb(lv_event_t *e)
                        cy + (lv_coord_t)(text_r * sinf(rad))};
       lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
       lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
-  }
+    }
   }
 }
 
@@ -509,7 +488,6 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   float current = MQTT_GetCurrentTemp();
   float set = MQTT_GetSetTemp();
   float current_p = MQTT_GetCurrentPressure();
-  float set_p = MQTT_GetSetPressure();
   if (isnan(current_p) || current_p < 0.0f)
     current_p = 0.0f;
   if (current_temp_arc)
@@ -525,14 +503,8 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   if (current_pressure_arc)
   {
     int32_t current_val = LV_MIN(LV_MAX((int32_t)current_p, PRESSURE_ARC_MIN),
-                                  PRESSURE_ARC_MAX);
+                                 PRESSURE_ARC_MAX);
     lv_arc_set_value(current_pressure_arc, PRESSURE_ARC_MAX - current_val);
-  }
-  if (set_pressure_arc)
-  {
-    int32_t set_val = LV_MIN(LV_MAX((int32_t)set_p, PRESSURE_ARC_MIN),
-                              PRESSURE_ARC_MAX);
-    lv_arc_set_value(set_pressure_arc, PRESSURE_ARC_MAX - set_val);
   }
   if (temp_label)
     set_label_value(temp_label, current, "\u00B0C");
