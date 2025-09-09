@@ -102,8 +102,8 @@ void Lvgl_Example1(void) {
                 "Using LV_FONT_DEFAULT instead.");
 #endif
   }
-  /* Reduce the tab header so the common footer is 25% shorter */
-  tab_h = (tab_h * 3) / 2;
+  /* Reduce the tab header so the common footer is 15% shorter */
+  tab_h = (tab_h * 85) / 100;
   tab_h_global = tab_h;
 
   // 设置字体
@@ -401,6 +401,9 @@ static void draw_ticks_cb(lv_event_t *e) {
   lv_coord_t cy = lv_obj_get_y(current_temp_arc) +
                   lv_obj_get_height(current_temp_arc) / 2;
   lv_coord_t radius = lv_obj_get_width(current_temp_arc) / 2;
+  lv_coord_t arc_width =
+      lv_obj_get_style_arc_width(current_temp_arc, LV_PART_MAIN);
+  lv_coord_t inner_radius = radius - arc_width;
 
   lv_draw_line_dsc_t line_dsc;
   lv_draw_line_dsc_init(&line_dsc);
@@ -418,17 +421,17 @@ static void draw_ticks_cb(lv_event_t *e) {
     float rad = angle * 3.14159265f / 180.0f;
     lv_coord_t len = (val % 20 == 0) ? 20 : 10;
 
-    lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
-                     cy + (lv_coord_t)((radius - len) * sinf(rad))};
-    lv_point_t p2 = {cx + (lv_coord_t)(radius * cosf(rad)),
-                     cy + (lv_coord_t)(radius * sinf(rad))};
+    lv_point_t p1 = {cx + (lv_coord_t)((inner_radius - len) * cosf(rad)),
+                     cy + (lv_coord_t)((inner_radius - len) * sinf(rad))};
+    lv_point_t p2 = {cx + (lv_coord_t)(inner_radius * cosf(rad)),
+                     cy + (lv_coord_t)(inner_radius * sinf(rad))};
 
     lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
 
     if (val % 20 == 0) {
       char buf[8];
       lv_snprintf(buf, sizeof(buf), "%d", val);
-      lv_coord_t text_r = radius - len - 10;
+      lv_coord_t text_r = inner_radius - len - 5;
       lv_point_t tp = {cx + (lv_coord_t)(text_r * cosf(rad)),
                        cy + (lv_coord_t)(text_r * sinf(rad))};
       lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
