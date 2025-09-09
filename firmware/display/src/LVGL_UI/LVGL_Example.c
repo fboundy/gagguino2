@@ -309,7 +309,9 @@ static void Status_create(lv_obj_t * parent)
   lv_meter_scale_t * scale = lv_meter_add_scale(temp_meter);
   lv_meter_set_scale_ticks(temp_meter, scale, 11, 2, 10, lv_palette_main(LV_PALETTE_GREY));
   lv_meter_set_scale_range(temp_meter, scale, 60, 160, 270, 135);
-  current_temp_indic = lv_meter_add_arc(temp_meter, scale, 10, lv_palette_main(LV_PALETTE_YELLOW), 0);
+  /* Draw the current temperature arc slightly inside the scale so it remains visible */
+  current_temp_indic = lv_meter_add_arc(temp_meter, scale, 10,
+                                       lv_palette_main(LV_PALETTE_YELLOW), -10);
   lv_meter_set_indicator_start_value(temp_meter, current_temp_indic, 60);
   lv_meter_set_indicator_end_value(temp_meter, current_temp_indic, 60);
   set_temp_indic = lv_meter_add_scale_lines(temp_meter, scale,
