@@ -14,6 +14,7 @@
 
 // --- B: exact topic strings ---------------------------------------------------
 static char TOPIC_HEATER[128];
+static char TOPIC_HEATER_SET[128];
 static char TOPIC_STEAM[128];
 static char TOPIC_CURTEMP[128];
 static char TOPIC_SETTEMP[128];
@@ -24,6 +25,8 @@ static char TOPIC_SHOT[128];
 static inline void build_topics(void)
 {
     snprintf(TOPIC_HEATER, sizeof TOPIC_HEATER, "gaggia_classic/%s/heater/state", GAGGIA_ID);
+    snprintf(TOPIC_HEATER_SET, sizeof TOPIC_HEATER_SET,
+             "gaggia_classic/%s/heater/set", GAGGIA_ID);
     snprintf(TOPIC_STEAM, sizeof TOPIC_STEAM, "gaggia_classic/%s/steam/state", GAGGIA_ID);
     snprintf(TOPIC_CURTEMP, sizeof TOPIC_CURTEMP, "gaggia_classic/%s/current_temp/state", GAGGIA_ID);
     snprintf(TOPIC_SETTEMP, sizeof TOPIC_SETTEMP, "gaggia_classic/%s/set_temp/state", GAGGIA_ID);
@@ -300,7 +303,7 @@ void MQTT_SetHeaterState(bool heater)
         s_heater = heater;
         if (s_mqtt)
         {
-            MQTT_Publish(TOPIC_HEATER, s_heater ? "on" : "off", 1, true);
+            MQTT_Publish(TOPIC_HEATER_SET, s_heater ? "ON" : "OFF", 1, true);
         }
     }
 }
@@ -329,7 +332,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
             s_heater = heater;
             if (s_mqtt)
             {
-                MQTT_Publish(TOPIC_HEATER, s_heater ? "on" : "off", 1, true);
+                MQTT_Publish(TOPIC_HEATER_SET, s_heater ? "ON" : "OFF", 1, true);
             }
         }
         s_steam = pkt->steamFlag != 0;
