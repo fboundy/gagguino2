@@ -293,6 +293,18 @@ float MQTT_GetShotVolume(void) { return s_shot_volume; }
 
 bool MQTT_GetHeaterState(void) { return s_heater; }
 
+void MQTT_SetHeaterState(bool heater)
+{
+    if (heater != s_heater)
+    {
+        s_heater = heater;
+        if (s_mqtt)
+        {
+            MQTT_Publish(TOPIC_HEATER, s_heater ? "on" : "off", 1, true);
+        }
+    }
+}
+
 bool MQTT_GetSteamState(void) { return s_steam; }
 
 esp_mqtt_client_handle_t MQTT_GetClient(void) { return s_mqtt; }
