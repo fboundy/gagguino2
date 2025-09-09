@@ -325,13 +325,17 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_center(set_temp_arc);
   lv_obj_set_y(set_temp_arc, tab_h_global / 2);
   lv_arc_set_range(set_temp_arc, 60, 160);
-  lv_arc_set_bg_angles(set_temp_arc, 135, 45);
+  lv_arc_set_rotation(set_temp_arc, 135);
+  lv_arc_set_bg_angles(set_temp_arc, 0, 270);
   lv_obj_remove_style(set_temp_arc, NULL, LV_PART_KNOB);
   lv_obj_clear_flag(set_temp_arc, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_arc_width(set_temp_arc, 2, LV_PART_MAIN);
   lv_obj_set_style_arc_width(set_temp_arc, 2, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(set_temp_arc,
+                             lv_palette_darken(LV_PALETTE_GREY, 2),
+                             LV_PART_MAIN);
   lv_obj_set_style_arc_color(set_temp_arc, lv_palette_main(LV_PALETTE_BLUE),
                              LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(set_temp_arc, lv_color_black(), 0);
   lv_obj_set_style_bg_opa(set_temp_arc, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(set_temp_arc, 0, 0);
   lv_arc_set_value(set_temp_arc, 60);
@@ -341,13 +345,18 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_center(current_temp_arc);
   lv_obj_set_y(current_temp_arc, tab_h_global / 2);
   lv_arc_set_range(current_temp_arc, 60, 160);
-  lv_arc_set_bg_angles(current_temp_arc, 135, 45);
+  lv_arc_set_rotation(current_temp_arc, 135);
+  lv_arc_set_bg_angles(current_temp_arc, 0, 270);
   lv_obj_remove_style(current_temp_arc, NULL, LV_PART_KNOB);
   lv_obj_clear_flag(current_temp_arc, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_arc_width(current_temp_arc, 10, LV_PART_MAIN);
   lv_obj_set_style_arc_width(current_temp_arc, 10, LV_PART_INDICATOR);
-  lv_obj_set_style_arc_color(
-      current_temp_arc, lv_palette_main(LV_PALETTE_YELLOW), LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(current_temp_arc, lv_color_black(), 0);
+  lv_obj_set_style_arc_color(current_temp_arc,
+                             lv_palette_darken(LV_PALETTE_GREY, 2),
+                             LV_PART_MAIN);
+  lv_obj_set_style_arc_color(current_temp_arc,
+                             lv_palette_main(LV_PALETTE_YELLOW),
+                             LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(current_temp_arc, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(current_temp_arc, 0, 0);
   lv_arc_set_value(current_temp_arc, 60);
