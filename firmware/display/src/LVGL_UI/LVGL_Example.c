@@ -118,6 +118,8 @@ void Lvgl_Example1(void){
   lv_style_set_radius(&style_bullet, LV_RADIUS_CIRCLE);
 
   tv = lv_tabview_create(lv_scr_act(), LV_DIR_BOTTOM, tab_h);
+  lv_obj_set_style_bg_opa(tv, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(tv, 0, 0);
   main_screen = lv_scr_act();
   lv_obj_set_style_bg_color(main_screen, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(main_screen, LV_OPA_COVER, 0);
@@ -141,6 +143,7 @@ void Lvgl_Example1(void){
   lv_obj_t * t1 = lv_tabview_add_tab(tv, "Status");
   lv_obj_set_style_bg_color(t1, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(t1, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(t1, 0, 0);
   // lv_obj_t * t2 = lv_tabview_add_tab(tv, "Buzzer");
   // lv_obj_t * t3 = lv_tabview_add_tab(tv, "Shop");
   
@@ -179,13 +182,16 @@ static void Settings_create(void) {
   settings_scr = lv_obj_create(NULL);
   lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(settings_scr, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(settings_scr, 0, 0);
 
   lv_obj_t * tvs = lv_tabview_create(settings_scr, LV_DIR_BOTTOM, tab_h_global);
   lv_obj_set_style_bg_color(tvs, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(tvs, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(tvs, 0, 0);
   lv_obj_t * t = lv_tabview_add_tab(tvs, "Settings");
   lv_obj_set_style_bg_color(t, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(t, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(t, 0, 0);
 
   static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
   static lv_coord_t grid_main_row_dsc[] = {
@@ -287,6 +293,7 @@ static void Status_create(lv_obj_t * parent)
 
   lv_obj_set_style_bg_color(parent, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(parent, 0, 0);
 
   lv_coord_t meter_size = lv_obj_get_content_width(parent) + tab_h_global;
   temp_meter = lv_meter_create(parent);
@@ -294,6 +301,8 @@ static void Status_create(lv_obj_t * parent)
   lv_obj_center(temp_meter);
   lv_obj_set_y(temp_meter, tab_h_global / 2);
   lv_obj_set_style_pad_all(temp_meter, 0, 0);
+  lv_obj_set_style_bg_opa(temp_meter, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(temp_meter, 0, 0);
 
   lv_meter_scale_t * scale = lv_meter_add_scale(temp_meter);
   lv_meter_set_scale_ticks(temp_meter, scale, 11, 2, 10, lv_palette_main(LV_PALETTE_GREY));
@@ -308,17 +317,20 @@ static void Status_create(lv_obj_t * parent)
   lv_obj_t * overlay = lv_obj_create(parent);
   lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(overlay, 0, 0);
   lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_grid_dsc_array(overlay, grid_main_col_dsc, grid_main_row_dsc);
 
   lv_obj_t * status_area = lv_obj_create(overlay);
   lv_obj_set_style_bg_opa(status_area, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(status_area, 0, 0);
   lv_obj_clear_flag(status_area, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_grid_cell(status_area, LV_GRID_ALIGN_STRETCH, 0, 1,
                        LV_GRID_ALIGN_STRETCH, 0, 1);
 
   lv_obj_t * settings_btn = lv_btn_create(overlay);
   lv_obj_set_size(settings_btn, 80, 80);
+  lv_obj_set_style_border_width(settings_btn, 0, 0);
   lv_obj_set_grid_cell(settings_btn, LV_GRID_ALIGN_CENTER, 0, 1,
                        LV_GRID_ALIGN_CENTER, 1, 1);
   lv_obj_t * settings_label = lv_label_create(settings_btn);
