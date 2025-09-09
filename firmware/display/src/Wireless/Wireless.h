@@ -9,6 +9,7 @@
 #include <string.h> // For memcpy
 
 #include "mqtt_client.h"
+#include <stdbool.h>
 
 void Wireless_Init(void);
 void WIFI_Init(void *arg);
@@ -22,3 +23,5 @@ float MQTT_GetCurrentPressure(void);
 float MQTT_GetSetPressure(void);
 float MQTT_GetShotTime(void);
 float MQTT_GetShotVolume(void);
+bool MQTT_GetHeaterState(void);
+bool MQTT_GetSteamState(void);
