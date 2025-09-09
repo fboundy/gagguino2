@@ -288,16 +288,16 @@ static void Status_create(lv_obj_t * parent)
   lv_obj_set_style_bg_color(parent, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
 
-  lv_coord_t meter_size = LV_MIN(lv_obj_get_content_width(parent),
-                                 lv_obj_get_content_height(parent));
+  lv_coord_t meter_size = lv_obj_get_content_width(parent) + tab_h_global;
   temp_meter = lv_meter_create(parent);
   lv_obj_set_size(temp_meter, meter_size, meter_size);
   lv_obj_center(temp_meter);
+  lv_obj_set_y(temp_meter, tab_h_global / 2);
   lv_obj_set_style_pad_all(temp_meter, 0, 0);
 
   lv_meter_scale_t * scale = lv_meter_add_scale(temp_meter);
   lv_meter_set_scale_ticks(temp_meter, scale, 11, 2, 10, lv_palette_main(LV_PALETTE_GREY));
-  lv_meter_set_scale_range(temp_meter, scale, 60, 160, 270, 225);
+  lv_meter_set_scale_range(temp_meter, scale, 60, 160, 270, 135);
   current_temp_indic = lv_meter_add_arc(temp_meter, scale, 10, lv_palette_main(LV_PALETTE_RED), 0);
   lv_meter_set_indicator_start_value(temp_meter, current_temp_indic, 60);
   set_temp_indic = lv_meter_add_scale_lines(temp_meter, scale,
