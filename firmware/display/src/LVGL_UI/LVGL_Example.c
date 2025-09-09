@@ -378,7 +378,7 @@ static void draw_ticks_cb(lv_event_t *e)
   {
     int angle = TEMP_ARC_START + (val - TEMP_ARC_MIN) * TEMP_ARC_SIZE / 100;
     float rad = angle * 3.14159265f / 180.0f;
-    lv_coord_t len = (val % 20 == 0) ? 20 : 10;
+    lv_coord_t len = 20;
 
     lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
                      cy + (lv_coord_t)((radius - len) * sinf(rad))};
