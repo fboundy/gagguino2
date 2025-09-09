@@ -408,7 +408,6 @@ void example1_increase_lvgl_tick(lv_timer_t * t)
 
 static void ta_event_cb(lv_event_t * e)
 {
-  LV_UNUSED(e);
 }
 
 
