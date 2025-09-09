@@ -1,6 +1,7 @@
 #include "Wireless.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_now.h"
 #include "freertos/timers.h"
 #include "mqtt_client.h"
 #include "secrets.h"
@@ -8,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>  // strcmp, memcpy, strncpy
 #include <strings.h> // strcasecmp
+
+#include "EspNowPacket.h"
 
 // --- B: exact topic strings ---------------------------------------------------
 static char TOPIC_HEATER[128];
@@ -34,6 +37,11 @@ static inline bool parse_bool_str(const char *s)
 {
     return (strcmp(s, "1") == 0) || (strcasecmp(s, "true") == 0) || (strcasecmp(s, "on") == 0);
 }
+
+static bool espnow_try_connect(void);
+static void espnow_poll_task(void *arg);
+static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
+                           int data_len);
 
 void Wireless_Init(void)
 {
@@ -84,6 +92,13 @@ void WIFI_Init(void *arg)
         IP_EVENT, IP_EVENT_STA_GOT_IP, &on_got_ip, NULL, NULL));
 
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    if (espnow_try_connect())
+    {
+        vTaskDelete(NULL);
+        return;
+    }
+
     ESP_ERROR_CHECK(esp_wifi_connect());
 
     // Wait up to ~10s for IP
@@ -112,6 +127,10 @@ static float s_shot_time = 0.0f;
 static float s_shot_volume = 0.0f;
 static bool s_heater = false;
 static bool s_steam = false;
+static bool s_use_espnow = false;
+static uint8_t s_espnow_peer[ESP_NOW_ETH_ALEN];
+static volatile bool s_espnow_packet = false;
+static int s_espnow_channel = 0;
 static const char *s_mqtt_topics[] = {
     "brew_setpoint",
     "steam_setpoint",
@@ -280,4 +299,69 @@ int MQTT_Publish(const char *topic, const char *payload, int qos, bool retain)
     if (!s_mqtt)
         return -1;
     return esp_mqtt_client_publish(s_mqtt, topic, payload, 0, qos, retain);
+}
+
+static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
+                           int data_len)
+{
+    if (data_len == sizeof(struct EspNowPacket))
+    {
+        const struct EspNowPacket *pkt = (const struct EspNowPacket *)data;
+        s_heater = pkt->heaterSwitch != 0;
+        s_steam = pkt->steamFlag != 0;
+        s_shot_time = (float)pkt->shotTimeMs / 1000.0f;
+        s_shot_volume = pkt->shotVolumeMl;
+        s_set_temp = pkt->setTempC;
+        s_current_temp = pkt->currentTempC;
+        s_pressure = pkt->pressureBar;
+    }
+    if (info)
+    {
+        memcpy(s_espnow_peer, info->src_addr, ESP_NOW_ETH_ALEN);
+    }
+    s_espnow_packet = true;
+}
+
+static void espnow_poll_task(void *arg)
+{
+    const TickType_t delay = pdMS_TO_TICKS(1000);
+    uint8_t ping = 0;
+    while (true)
+    {
+        esp_now_send(s_espnow_peer, &ping, sizeof(ping));
+        vTaskDelay(delay);
+    }
+}
+
+static bool espnow_try_connect(void)
+{
+    if (esp_now_init() != ESP_OK)
+        return false;
+    esp_now_register_recv_cb(espnow_recv_cb);
+    uint8_t broadcast[ESP_NOW_ETH_ALEN];
+    memset(broadcast, 0xFF, sizeof(broadcast));
+    uint8_t ping = 0;
+    for (int ch = 1; ch <= 13; ++ch)
+    {
+        s_espnow_packet = false;
+        esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+        esp_now_send(broadcast, &ping, sizeof(ping));
+        vTaskDelay(pdMS_TO_TICKS(100));
+        if (s_espnow_packet)
+        {
+            s_use_espnow = true;
+            s_espnow_channel = ch;
+            esp_now_peer_info_t peer = {0};
+            memcpy(peer.peer_addr, s_espnow_peer, ESP_NOW_ETH_ALEN);
+            peer.ifidx = ESP_IF_WIFI_STA;
+            peer.channel = ch;
+            peer.encrypt = false;
+            esp_now_add_peer(&peer);
+            printf("ESP-NOW peer found on channel %d\r\n", ch);
+            xTaskCreate(espnow_poll_task, "espnow_poll", 2048, NULL, 3, NULL);
+            return true;
+        }
+    }
+    esp_now_deinit();
+    return false;
 }
