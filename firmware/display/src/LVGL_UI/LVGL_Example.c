@@ -1,6 +1,7 @@
 #include "LVGL_Example.h"
 #include <inttypes.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 
 /* Fallback symbol definitions for environments where newer LVGL symbols are
@@ -21,8 +22,7 @@
 /**********************
  *      TYPEDEFS
  **********************/
-typedef enum
-{
+typedef enum {
   DISP_SMALL,
   DISP_MEDIUM,
   DISP_LARGE,
@@ -59,6 +59,9 @@ static lv_timer_t *meter2_timer;
 
 static lv_obj_t *main_screen;
 static lv_obj_t *settings_scr;
+static lv_obj_t *heater_btn;
+static lv_obj_t *steam_btn;
+static lv_obj_t *settings_btn;
 static lv_coord_t tab_h_global;
 
 static lv_obj_t *current_temp_arc;
@@ -74,8 +77,7 @@ static lv_obj_t *shot_time_icon;
 static lv_obj_t *shot_volume_icon;
 lv_obj_t *Backlight_slider;
 
-void Lvgl_Example1(void)
-{
+void Lvgl_Example1(void) {
 
   if (LV_HOR_RES <= 320)
     disp_size = DISP_SMALL;
@@ -86,8 +88,7 @@ void Lvgl_Example1(void)
   font_large = LV_FONT_DEFAULT;
   font_normal = LV_FONT_DEFAULT;
 
-  if (disp_size == DISP_LARGE)
-  {
+  if (disp_size == DISP_LARGE) {
 #if LV_FONT_MONTSERRAT_40
     font_large = &lv_font_montserrat_40;
 #elif LV_FONT_MONTSERRAT_24
@@ -103,9 +104,7 @@ void Lvgl_Example1(void)
     LV_LOG_WARN("LV_FONT_MONTSERRAT_16 is not enabled for the widgets demo. "
                 "Using LV_FONT_DEFAULT instead.");
 #endif
-  }
-  else if (disp_size == DISP_MEDIUM)
-  {
+  } else if (disp_size == DISP_MEDIUM) {
 #if LV_FONT_MONTSERRAT_20
     font_large = &lv_font_montserrat_20;
 #else
@@ -118,9 +117,7 @@ void Lvgl_Example1(void)
     LV_LOG_WARN("LV_FONT_MONTSERRAT_14 is not enabled for the widgets demo. "
                 "Using LV_FONT_DEFAULT instead.");
 #endif
-  }
-  else
-  { /* disp_size == DISP_SMALL */
+  } else { /* disp_size == DISP_SMALL */
 #if LV_FONT_MONTSERRAT_18
     font_large = &lv_font_montserrat_18;
 #else
@@ -160,25 +157,20 @@ void Lvgl_Example1(void)
 
   lv_obj_set_style_text_font(lv_scr_act(), font_normal, 0);
 
-  if (disp_size == DISP_LARGE)
-  {
+  if (disp_size == DISP_LARGE) {
     /* Large displays do not require additional header content. */
   }
 
   Status_create(main_screen);
 }
 
-static void led_event_cb(lv_event_t *e)
-{
+static void led_event_cb(lv_event_t *e) {
   lv_obj_t *led = (lv_obj_t *)lv_event_get_user_data(e);
   lv_obj_t *sw = lv_event_get_target(e);
-  if (lv_obj_get_state(sw) & LV_STATE_CHECKED)
-  {
+  if (lv_obj_get_state(sw) & LV_STATE_CHECKED) {
     lv_led_on(led);
     Buzzer_On();
-  }
-  else
-  {
+  } else {
     lv_led_off(led);
     Buzzer_Off();
   }
@@ -186,15 +178,13 @@ static void led_event_cb(lv_event_t *e)
 
 static void back_event_cb(lv_event_t *e) { lv_scr_load(main_screen); }
 
-static void open_settings_event_cb(lv_event_t *e)
-{
+static void open_settings_event_cb(lv_event_t *e) {
   if (!settings_scr)
     Settings_create();
   lv_scr_load(settings_scr);
 }
 
-static void Settings_create(void)
-{
+static void Settings_create(void) {
   settings_scr = lv_obj_create(NULL);
   lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(settings_scr, LV_OPA_COVER, 0);
@@ -203,8 +193,8 @@ static void Settings_create(void)
   static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1),
                                            LV_GRID_TEMPLATE_LAST};
   static lv_coord_t grid_main_row_dsc[] = {
-      LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT,
-      LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+      LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT,      LV_GRID_CONTENT,
+      LV_GRID_FR(1),   LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
   lv_obj_set_grid_dsc_array(settings_scr, grid_main_col_dsc, grid_main_row_dsc);
 
   lv_obj_t *back_btn = lv_btn_create(settings_scr);
@@ -260,8 +250,7 @@ static void Settings_create(void)
                        1);
 }
 
-void Lvgl_Example1_close(void)
-{
+void Lvgl_Example1_close(void) {
   /*Delete all animation*/
   lv_anim_del(NULL, NULL);
 
@@ -292,8 +281,7 @@ void Lvgl_Example1_close(void)
  *   STATIC FUNCTIONS
  **********************/
 
-static void Status_create(lv_obj_t *parent)
-{
+static void Status_create(lv_obj_t *parent) {
   static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1),
                                            LV_GRID_TEMPLATE_LAST};
   static lv_coord_t grid_main_row_dsc[] = {LV_GRID_FR(1), LV_GRID_CONTENT,
@@ -450,24 +438,60 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_grid_cell(status_area, LV_GRID_ALIGN_STRETCH, 0, 1,
                        LV_GRID_ALIGN_STRETCH, 0, 1);
 
-  lv_obj_t *settings_btn = lv_btn_create(overlay);
+  lv_obj_t *ctrl_container = lv_obj_create(overlay);
+  lv_obj_set_size(ctrl_container, LV_PCT(100), 80);
+  lv_obj_set_style_bg_opa(ctrl_container, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ctrl_container, 0, 0);
+  lv_obj_clear_flag(ctrl_container, LV_OBJ_FLAG_SCROLLABLE);
+
+  static lv_coord_t btn_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1),
+                                     LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t btn_row_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+  lv_obj_set_grid_dsc_array(ctrl_container, btn_col_dsc, btn_row_dsc);
+  lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0,
+               (lv_obj_get_height(parent) * 30) / 100);
+
+  heater_btn = lv_btn_create(ctrl_container);
+  lv_obj_set_size(heater_btn, 80, 80);
+  lv_obj_set_style_border_width(heater_btn, 0, 0);
+  lv_obj_set_style_bg_color(heater_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_grid_cell(heater_btn, LV_GRID_ALIGN_CENTER, 0, 1,
+                       LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_t *heater_label = lv_label_create(heater_btn);
+  lv_obj_set_style_text_font(heater_label, &mdi_icons_40, 0);
+  lv_label_set_text(heater_label, MDI_POWER);
+  lv_obj_center(heater_label);
+
+  steam_btn = lv_btn_create(ctrl_container);
+  lv_obj_set_size(steam_btn, 80, 80);
+  lv_obj_set_style_border_width(steam_btn, 0, 0);
+  lv_obj_set_style_bg_color(steam_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_grid_cell(steam_btn, LV_GRID_ALIGN_CENTER, 1, 1,
+                       LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_t *steam_label = lv_label_create(steam_btn);
+  lv_obj_set_style_text_font(steam_label, &mdi_icons_40, 0);
+  lv_label_set_text(steam_label, MDI_STEAM);
+  lv_obj_center(steam_label);
+
+  settings_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(settings_btn, 80, 80);
   lv_obj_set_style_border_width(settings_btn, 0, 0);
-  lv_obj_set_grid_cell(settings_btn, LV_GRID_ALIGN_CENTER, 0, 1,
-                       LV_GRID_ALIGN_CENTER, 1, 1);
+  lv_obj_set_style_bg_color(settings_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_grid_cell(settings_btn, LV_GRID_ALIGN_CENTER, 2, 1,
+                       LV_GRID_ALIGN_CENTER, 0, 1);
   lv_obj_t *settings_label = lv_label_create(settings_btn);
-  lv_label_set_text(settings_label, LV_SYMBOL_SETTINGS);
+  lv_obj_set_style_text_font(settings_label, &mdi_icons_40, 0);
+  lv_label_set_text(settings_label, MDI_COG);
   lv_obj_center(settings_label);
   lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED,
                       NULL);
-  /* Ensure the settings button is above overlay layers like tick_layer */
-  lv_obj_move_foreground(settings_btn);
+
+  lv_obj_move_foreground(ctrl_container);
 
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
 }
 
-static void draw_ticks_cb(lv_event_t *e)
-{
+static void draw_ticks_cb(lv_event_t *e) {
   if (!current_temp_arc && !current_pressure_arc)
     return;
 
@@ -488,10 +512,8 @@ static void draw_ticks_cb(lv_event_t *e)
   label_dsc.font = font_normal;
   label_dsc.align = LV_TEXT_ALIGN_CENTER;
 
-  if (current_temp_arc)
-  {
-    for (int val = TEMP_ARC_MIN; val <= TEMP_ARC_MAX; val += TEMP_ARC_TICK)
-    {
+  if (current_temp_arc) {
+    for (int val = TEMP_ARC_MIN; val <= TEMP_ARC_MAX; val += TEMP_ARC_TICK) {
       int angle = TEMP_ARC_START + (val - TEMP_ARC_MIN) * TEMP_ARC_SIZE /
                                        (TEMP_ARC_MAX - TEMP_ARC_MIN);
       float rad = angle * 3.14159265f / 180.0f;
@@ -514,11 +536,9 @@ static void draw_ticks_cb(lv_event_t *e)
     }
   }
 
-  if (current_pressure_arc)
-  {
+  if (current_pressure_arc) {
     for (int val = PRESSURE_ARC_MIN; val <= PRESSURE_ARC_MAX;
-         val += PRESSURE_ARC_TICK)
-    {
+         val += PRESSURE_ARC_TICK) {
       int angle = PRESSURE_ARC_START + PRESSURE_ARC_SIZE -
                   (val - PRESSURE_ARC_MIN) * PRESSURE_ARC_SIZE /
                       (PRESSURE_ARC_MAX - PRESSURE_ARC_MIN);
@@ -543,8 +563,7 @@ static void draw_ticks_cb(lv_event_t *e)
   }
 }
 
-static void set_label_value(lv_obj_t *label, float value, const char *suffix)
-{
+static void set_label_value(lv_obj_t *label, float value, const char *suffix) {
   if (!label)
     return;
   char buf[16];
@@ -554,31 +573,30 @@ static void set_label_value(lv_obj_t *label, float value, const char *suffix)
   lv_label_set_text(label, buf);
 }
 
-void example1_increase_lvgl_tick(lv_timer_t *t)
-{
+void example1_increase_lvgl_tick(lv_timer_t *t) {
   float current = MQTT_GetCurrentTemp();
   float set = MQTT_GetSetTemp();
   float current_p = MQTT_GetCurrentPressure();
   float shot_time = MQTT_GetShotTime();
   float shot_vol = MQTT_GetShotVolume();
+  bool heater = MQTT_GetHeaterState();
+  bool steam = MQTT_GetSteamState();
   if (isnan(current_p) || current_p < 0.0f)
     current_p = 0.0f;
-  if (current_temp_arc)
-  {
+  if (current_temp_arc) {
     int32_t current_val =
         LV_MIN(LV_MAX((int32_t)current, TEMP_ARC_MIN), TEMP_ARC_MAX);
     lv_arc_set_value(current_temp_arc, current_val);
   }
-  if (set_temp_arc)
-  {
+  if (set_temp_arc) {
     int32_t set_val = LV_MIN(LV_MAX((int32_t)set, TEMP_ARC_MIN), TEMP_ARC_MAX);
     lv_arc_set_value(set_temp_arc, set_val);
   }
 
-  if (current_pressure_arc)
-  {
+  if (current_pressure_arc) {
     int32_t scaled = (int32_t)lroundf(current_p * 10.0f);
-    int32_t clamped = LV_MIN(LV_MAX(scaled, PRESSURE_ARC_MIN), PRESSURE_ARC_MAX);
+    int32_t clamped =
+        LV_MIN(LV_MAX(scaled, PRESSURE_ARC_MIN), PRESSURE_ARC_MAX);
     int32_t reversed = PRESSURE_ARC_MAX - clamped + PRESSURE_ARC_MIN;
     lv_arc_set_value(current_pressure_arc, reversed);
   }
@@ -593,18 +611,24 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   if (Backlight_slider)
     lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
   LVGL_Backlight_adjustment(LCD_Backlight);
+
+  lv_color_t off = lv_palette_main(LV_PALETTE_GREY);
+  lv_color_t on = lv_palette_main(LV_PALETTE_YELLOW);
+  if (heater_btn)
+    lv_obj_set_style_bg_color(heater_btn, heater ? on : off, 0);
+  if (steam_btn)
+    lv_obj_set_style_bg_color(steam_btn, steam ? on : off, 0);
+  if (settings_btn)
+    lv_obj_set_style_bg_color(settings_btn, off, 0);
 }
 
-void Backlight_adjustment_event_cb(lv_event_t *e)
-{
+void Backlight_adjustment_event_cb(lv_event_t *e) {
   uint8_t Backlight = lv_slider_get_value(lv_event_get_target(e));
-  if (Backlight <= Backlight_MAX)
-  {
+  if (Backlight <= Backlight_MAX) {
     lv_slider_set_value(Backlight_slider, Backlight, LV_ANIM_ON);
     LCD_Backlight = Backlight;
     LVGL_Backlight_adjustment(Backlight);
-  }
-  else
+  } else
     printf("Volume out of range: %d\n", Backlight);
 }
 

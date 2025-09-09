@@ -4,6 +4,7 @@
 #include "freertos/timers.h"
 #include "mqtt_client.h"
 #include "secrets.h"
+#include <stdbool.h>
 #include <stdlib.h>
 
 void Wireless_Init(void) {
@@ -75,6 +76,8 @@ static float s_set_temp = 0.0f;
 static float s_pressure = 0.0f;
 static float s_shot_time = 0.0f;
 static float s_shot_volume = 0.0f;
+static bool s_heater = false;
+static bool s_steam = false;
 static const char *s_mqtt_topics[] = {
     "brew_setpoint", "steam_setpoint", "heater", "shot_volume", "set_temp",
     "current_temp",  "shot",           "steam",  "pressure",
@@ -150,6 +153,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         s_shot_volume = strtof(d_copy, NULL);
       } else if (strstr(t_copy, "shot")) {
         s_shot_time = strtof(d_copy, NULL);
+      } else if (strstr(t_copy, "heater")) {
+        s_heater = strtol(d_copy, NULL, 10) != 0;
+      } else if (strstr(t_copy, "steam")) {
+        s_steam = strtol(d_copy, NULL, 10) != 0;
       }
     }
     break;
@@ -217,6 +224,10 @@ float MQTT_GetCurrentPressure(void) { return s_pressure; }
 float MQTT_GetShotTime(void) { return s_shot_time; }
 
 float MQTT_GetShotVolume(void) { return s_shot_volume; }
+
+bool MQTT_GetHeaterState(void) { return s_heater; }
+
+bool MQTT_GetSteamState(void) { return s_steam; }
 
 esp_mqtt_client_handle_t MQTT_GetClient(void) { return s_mqtt; }
 
