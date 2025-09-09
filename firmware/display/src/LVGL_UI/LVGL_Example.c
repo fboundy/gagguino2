@@ -1,5 +1,6 @@
 #include "LVGL_Example.h"
 #include <math.h>
+#include <stdio.h>
 
 /**********************
  *      TYPEDEFS
@@ -19,6 +20,7 @@ static void Settings_create(void);
 static void open_settings_event_cb(lv_event_t *e);
 static void back_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
+static void set_label_value(lv_obj_t *label, float value, const char *suffix);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -384,12 +386,12 @@ static void Status_create(lv_obj_t *parent)
   pressure_label = lv_label_create(parent);
   lv_obj_set_style_text_color(temp_label, lv_color_white(), 0);
   lv_obj_set_style_text_color(pressure_label, lv_color_white(), 0);
-  lv_coord_t y_offset = lv_obj_get_height(parent) / 4;
+  lv_coord_t y_offset = -(lv_obj_get_height(parent) / 4);
   lv_coord_t x_offset = meter_size / 4;
   lv_obj_align(temp_label, LV_ALIGN_CENTER, -x_offset, y_offset);
   lv_obj_align(pressure_label, LV_ALIGN_CENTER, x_offset, y_offset);
-  lv_label_set_text(temp_label, "0.0\u00B0C");
-  lv_label_set_text(pressure_label, "0.0bar");
+  set_label_value(temp_label, 0.0f, "\u00B0C");
+  set_label_value(pressure_label, 0.0f, "bar");
 
   lv_obj_t *status_area = lv_obj_create(overlay);
   lv_obj_set_style_bg_opa(status_area, LV_OPA_TRANSP, 0);
@@ -486,8 +488,19 @@ static void draw_ticks_cb(lv_event_t *e)
                        cy + (lv_coord_t)(text_r * sinf(rad))};
       lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
       lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
-    }
   }
+  }
+}
+
+static void set_label_value(lv_obj_t *label, float value, const char *suffix)
+{
+  if (!label)
+    return;
+  char buf[16];
+  int32_t whole = (int32_t)value;
+  int32_t frac = (int32_t)(fabsf(value) * 10.0f + 0.5f) % 10;
+  snprintf(buf, sizeof(buf), "%d.%d%s", whole, frac, suffix);
+  lv_label_set_text(label, buf);
 }
 
 void example1_increase_lvgl_tick(lv_timer_t *t)
@@ -496,6 +509,8 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   float set = MQTT_GetSetTemp();
   float current_p = MQTT_GetCurrentPressure();
   float set_p = MQTT_GetSetPressure();
+  if (isnan(current_p) || current_p < 0.0f)
+    current_p = 0.0f;
   if (current_temp_arc)
   {
     int32_t current_val = LV_MIN(LV_MAX((int32_t)current, TEMP_ARC_MIN), TEMP_ARC_MAX);
@@ -519,9 +534,9 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     lv_arc_set_value(set_pressure_arc, PRESSURE_ARC_MAX - set_val);
   }
   if (temp_label)
-    lv_label_set_text_fmt(temp_label, "%.1f\u00B0C", current);
+    set_label_value(temp_label, current, "\u00B0C");
   if (pressure_label)
-    lv_label_set_text_fmt(pressure_label, "%.1fbar", current_p);
+    set_label_value(pressure_label, current_p, "bar");
   if (Backlight_slider)
     lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
   LVGL_Backlight_adjustment(LCD_Backlight);
