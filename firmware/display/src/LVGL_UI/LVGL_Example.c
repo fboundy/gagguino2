@@ -169,7 +169,7 @@ static void Settings_create(void)
   lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(settings_scr, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(settings_scr, 0, 0);
- 
+
   static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1),
                                            LV_GRID_TEMPLATE_LAST};
   static lv_coord_t grid_main_row_dsc[] = {
@@ -374,7 +374,7 @@ static void draw_ticks_cb(lv_event_t *e)
   label_dsc.font = font_normal;
   label_dsc.align = LV_TEXT_ALIGN_CENTER;
 
-  for (int val = TEMP_ARC_MIN; val <= TEMP_ARC_MAX; val += 10)
+  for (int val = TEMP_ARC_MIN; val <= TEMP_ARC_MAX; val += TEMP_ARC_TICK)
   {
     int angle = TEMP_ARC_START + (val - TEMP_ARC_MIN) * TEMP_ARC_SIZE / 100;
     float rad = angle * 3.14159265f / 180.0f;
@@ -387,16 +387,13 @@ static void draw_ticks_cb(lv_event_t *e)
 
     lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
 
-    if (val % 20 == 0)
-    {
-      char buf[8];
-      lv_snprintf(buf, sizeof(buf), "%d", val);
-      lv_coord_t text_r = radius - len - 10;
-      lv_point_t tp = {cx + (lv_coord_t)(text_r * cosf(rad)),
-                       cy + (lv_coord_t)(text_r * sinf(rad))};
-      lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
-      lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
-    }
+    char buf[8];
+    lv_snprintf(buf, sizeof(buf), "%d", val);
+    lv_coord_t text_r = radius - len - 10;
+    lv_point_t tp = {cx + (lv_coord_t)(text_r * cosf(rad)),
+                     cy + (lv_coord_t)(text_r * sinf(rad))};
+    lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
+    lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
   }
 }
 
