@@ -372,8 +372,8 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_text_color(pressure_label, lv_color_white(), 0);
   lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_28, 0);
   lv_obj_set_style_text_font(pressure_label, &lv_font_montserrat_28, 0);
-  lv_coord_t y_offset = -(lv_obj_get_height(parent) / 4);
-  lv_coord_t x_offset = meter_size / 4;
+  lv_coord_t y_offset = -(lv_obj_get_height(parent) / 5);
+  lv_coord_t x_offset = meter_size / 5;
   lv_obj_align(temp_label, LV_ALIGN_CENTER, -x_offset, y_offset);
   lv_obj_align(pressure_label, LV_ALIGN_CENTER, x_offset, y_offset);
   set_label_value(temp_label, 0.0f, "\u00B0C");
@@ -510,9 +510,10 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   }
   if (current_pressure_arc)
   {
-    int32_t current_val = LV_MIN(LV_MAX((int32_t)current_p * 10.0f, PRESSURE_ARC_MIN),
-                                 PRESSURE_ARC_MAX);
-    lv_arc_set_value(current_pressure_arc, current_val);
+    int32_t scaled = (int32_t)lroundf(current_p * 10.0f);
+    int32_t clamped = LV_MIN(LV_MAX(scaled, PRESSURE_ARC_MIN), PRESSURE_ARC_MAX);
+    int32_t reversed = PRESSURE_ARC_MAX - clamped + PRESSURE_ARC_MIN;
+    lv_arc_set_value(current_pressure_arc, reversed);
   }
   if (temp_label)
     set_label_value(temp_label, current, "\u00B0C");
