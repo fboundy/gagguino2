@@ -83,6 +83,8 @@ static esp_mqtt_client_handle_t s_mqtt = NULL;
 static TimerHandle_t s_mqtt_update_timer = NULL;
 static float s_current_temp = 0.0f;
 static float s_set_temp = 0.0f;
+static float s_current_pressure = 0.0f;
+static float s_set_pressure = 0.0f;
 static const char *s_mqtt_topics[] = {
     "brew_setpoint",
     "steam_setpoint",
@@ -92,6 +94,8 @@ static const char *s_mqtt_topics[] = {
     "current_temp",
     "shot",
     "steam",
+    "current_pressure",
+    "set_pressure",
 };
 
 static void mqtt_subscribe_all(bool log)
@@ -163,6 +167,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             {
                 s_set_temp = strtof(d_copy, NULL);
             }
+            else if (strstr(t_copy, "current_pressure"))
+            {
+                s_current_pressure = strtof(d_copy, NULL);
+            }
+            else if (strstr(t_copy, "set_pressure"))
+            {
+                s_set_pressure = strtof(d_copy, NULL);
+            }
         }
         break;
     default:
@@ -227,6 +239,16 @@ float MQTT_GetCurrentTemp(void)
 float MQTT_GetSetTemp(void)
 {
     return s_set_temp;
+}
+
+float MQTT_GetCurrentPressure(void)
+{
+    return s_current_pressure;
+}
+
+float MQTT_GetSetPressure(void)
+{
+    return s_set_pressure;
 }
 
 esp_mqtt_client_handle_t MQTT_GetClient(void)

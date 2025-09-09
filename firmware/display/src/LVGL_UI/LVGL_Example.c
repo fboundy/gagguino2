@@ -45,6 +45,8 @@ static lv_coord_t tab_h_global;
 
 static lv_obj_t *current_temp_arc;
 static lv_obj_t *set_temp_arc;
+static lv_obj_t *current_pressure_arc;
+static lv_obj_t *set_pressure_arc;
 lv_obj_t *Backlight_slider;
 
 void Lvgl_Example1(void)
@@ -242,6 +244,8 @@ void Lvgl_Example1_close(void)
 
   current_temp_arc = NULL;
   set_temp_arc = NULL;
+  current_pressure_arc = NULL;
+  set_pressure_arc = NULL;
 
   lv_style_reset(&style_text_muted);
   lv_style_reset(&style_title);
@@ -313,6 +317,46 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_border_width(current_temp_arc, 0, 0);
   lv_arc_set_value(current_temp_arc, 80);
 
+  set_pressure_arc = lv_arc_create(parent);
+  lv_obj_set_size(set_pressure_arc, meter_size, meter_size);
+  lv_obj_align(set_pressure_arc, LV_ALIGN_CENTER, 0, tab_h_global / 2);
+  lv_arc_set_range(set_pressure_arc, PRESSURE_ARC_MIN, PRESSURE_ARC_MAX);
+  lv_arc_set_rotation(set_pressure_arc, PRESSURE_ARC_START);
+  lv_arc_set_bg_angles(set_pressure_arc, 0, PRESSURE_ARC_SIZE);
+  lv_obj_remove_style(set_pressure_arc, NULL, LV_PART_KNOB);
+  lv_obj_clear_flag(set_pressure_arc, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_arc_width(set_pressure_arc, 4, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(set_pressure_arc, 4, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(
+      set_pressure_arc, lv_palette_darken(LV_PALETTE_GREY, 2), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(set_pressure_arc, lv_palette_main(LV_PALETTE_BLUE),
+                             LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(set_pressure_arc, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(set_pressure_arc, 0, 0);
+  lv_arc_set_value(set_pressure_arc, 5);
+
+  current_pressure_arc = lv_arc_create(parent);
+  lv_obj_set_size(current_pressure_arc, meter_size, meter_size);
+  lv_obj_align(current_pressure_arc, LV_ALIGN_CENTER, 0, tab_h_global / 2);
+  lv_arc_set_range(current_pressure_arc, PRESSURE_ARC_MIN, PRESSURE_ARC_MAX);
+  lv_arc_set_rotation(current_pressure_arc, PRESSURE_ARC_START);
+  lv_arc_set_bg_angles(current_pressure_arc, 0, PRESSURE_ARC_SIZE);
+  lv_obj_remove_style(current_pressure_arc, NULL, LV_PART_KNOB);
+  lv_obj_clear_flag(current_pressure_arc, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_arc_width(current_pressure_arc, current_arc_width,
+                             LV_PART_MAIN);
+  lv_obj_set_style_arc_width(current_pressure_arc, current_arc_width,
+                             LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(
+      current_pressure_arc, lv_palette_darken(LV_PALETTE_GREY, 2),
+      LV_PART_MAIN);
+  lv_obj_set_style_arc_color(current_pressure_arc,
+                             lv_palette_main(LV_PALETTE_RED),
+                             LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(current_pressure_arc, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(current_pressure_arc, 0, 0);
+  lv_arc_set_value(current_pressure_arc, 5);
+
   lv_obj_t *tick_layer = lv_obj_create(parent);
   lv_obj_set_size(tick_layer, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_bg_opa(tick_layer, LV_OPA_TRANSP, 0);
@@ -328,6 +372,8 @@ static void Status_create(lv_obj_t *parent)
 
   lv_obj_move_foreground(set_temp_arc);
   lv_obj_move_foreground(current_temp_arc);
+  lv_obj_move_foreground(set_pressure_arc);
+  lv_obj_move_foreground(current_pressure_arc);
   lv_obj_move_foreground(tick_layer);
 
   lv_obj_t *status_area = lv_obj_create(overlay);
@@ -353,15 +399,14 @@ static void Status_create(lv_obj_t *parent)
 
 static void draw_ticks_cb(lv_event_t *e)
 {
-  if (!current_temp_arc)
+  if (!current_temp_arc && !current_pressure_arc)
     return;
 
+  lv_obj_t *ref = current_temp_arc ? current_temp_arc : current_pressure_arc;
   lv_draw_ctx_t *draw_ctx = lv_event_get_draw_ctx(e);
-  lv_coord_t cx = lv_obj_get_x(current_temp_arc) +
-                  lv_obj_get_width(current_temp_arc) / 2;
-  lv_coord_t cy = lv_obj_get_y(current_temp_arc) +
-                  lv_obj_get_height(current_temp_arc) / 2;
-  lv_coord_t radius = lv_obj_get_width(current_temp_arc) / 2;
+  lv_coord_t cx = lv_obj_get_x(ref) + lv_obj_get_width(ref) / 2;
+  lv_coord_t cy = lv_obj_get_y(ref) + lv_obj_get_height(ref) / 2;
+  lv_coord_t radius = lv_obj_get_width(ref) / 2;
 
   lv_draw_line_dsc_t line_dsc;
   lv_draw_line_dsc_init(&line_dsc);
@@ -374,26 +419,59 @@ static void draw_ticks_cb(lv_event_t *e)
   label_dsc.font = font_normal;
   label_dsc.align = LV_TEXT_ALIGN_CENTER;
 
-  for (int val = TEMP_ARC_MIN; val <= TEMP_ARC_MAX; val += TEMP_ARC_TICK)
+  if (current_temp_arc)
   {
-    int angle = TEMP_ARC_START + (val - TEMP_ARC_MIN) * TEMP_ARC_SIZE / 100;
-    float rad = angle * 3.14159265f / 180.0f;
-    lv_coord_t len = 20;
+    for (int val = TEMP_ARC_MIN; val <= TEMP_ARC_MAX; val += TEMP_ARC_TICK)
+    {
+      int angle = TEMP_ARC_START +
+                  (val - TEMP_ARC_MIN) * TEMP_ARC_SIZE /
+                      (TEMP_ARC_MAX - TEMP_ARC_MIN);
+      float rad = angle * 3.14159265f / 180.0f;
+      lv_coord_t len = 20;
 
-    lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
-                     cy + (lv_coord_t)((radius - len) * sinf(rad))};
-    lv_point_t p2 = {cx + (lv_coord_t)(radius * cosf(rad)),
-                     cy + (lv_coord_t)(radius * sinf(rad))};
+      lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
+                       cy + (lv_coord_t)((radius - len) * sinf(rad))};
+      lv_point_t p2 = {cx + (lv_coord_t)(radius * cosf(rad)),
+                       cy + (lv_coord_t)(radius * sinf(rad))};
 
-    lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
+      lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
 
-    char buf[8];
-    lv_snprintf(buf, sizeof(buf), "%d", val);
-    lv_coord_t text_r = radius - len - 10;
-    lv_point_t tp = {cx + (lv_coord_t)(text_r * cosf(rad)),
-                     cy + (lv_coord_t)(text_r * sinf(rad))};
-    lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
-    lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
+      char buf[8];
+      lv_snprintf(buf, sizeof(buf), "%d", val);
+      lv_coord_t text_r = radius - len - 10;
+      lv_point_t tp = {cx + (lv_coord_t)(text_r * cosf(rad)),
+                       cy + (lv_coord_t)(text_r * sinf(rad))};
+      lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
+      lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
+    }
+  }
+
+  if (current_pressure_arc)
+  {
+    for (int val = PRESSURE_ARC_MIN; val <= PRESSURE_ARC_MAX;
+         val += PRESSURE_ARC_TICK)
+    {
+      int angle = PRESSURE_ARC_START +
+                  (val - PRESSURE_ARC_MIN) * PRESSURE_ARC_SIZE /
+                      (PRESSURE_ARC_MAX - PRESSURE_ARC_MIN);
+      float rad = angle * 3.14159265f / 180.0f;
+      lv_coord_t len = 20;
+
+      lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
+                       cy + (lv_coord_t)((radius - len) * sinf(rad))};
+      lv_point_t p2 = {cx + (lv_coord_t)(radius * cosf(rad)),
+                       cy + (lv_coord_t)(radius * sinf(rad))};
+
+      lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
+
+      char buf[8];
+      lv_snprintf(buf, sizeof(buf), "%d", val);
+      lv_coord_t text_r = radius - len - 10;
+      lv_point_t tp = {cx + (lv_coord_t)(text_r * cosf(rad)),
+                       cy + (lv_coord_t)(text_r * sinf(rad))};
+      lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
+      lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
+    }
   }
 }
 
@@ -401,6 +479,8 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
 {
   float current = MQTT_GetCurrentTemp();
   float set = MQTT_GetSetTemp();
+  float current_p = MQTT_GetCurrentPressure();
+  float set_p = MQTT_GetSetPressure();
   if (current_temp_arc)
   {
     int32_t current_val = LV_MIN(LV_MAX((int32_t)current, TEMP_ARC_MIN), TEMP_ARC_MAX);
@@ -410,6 +490,18 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   {
     int32_t set_val = LV_MIN(LV_MAX((int32_t)set, TEMP_ARC_MIN), TEMP_ARC_MAX);
     lv_arc_set_value(set_temp_arc, set_val);
+  }
+  if (current_pressure_arc)
+  {
+    int32_t current_val = LV_MIN(LV_MAX((int32_t)current_p, PRESSURE_ARC_MIN),
+                                  PRESSURE_ARC_MAX);
+    lv_arc_set_value(current_pressure_arc, current_val);
+  }
+  if (set_pressure_arc)
+  {
+    int32_t set_val = LV_MIN(LV_MAX((int32_t)set_p, PRESSURE_ARC_MIN),
+                              PRESSURE_ARC_MAX);
+    lv_arc_set_value(set_pressure_arc, set_val);
   }
   if (Backlight_slider)
     lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
