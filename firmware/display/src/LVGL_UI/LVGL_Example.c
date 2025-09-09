@@ -331,14 +331,6 @@ void example1_increase_lvgl_tick(lv_timer_t * t)
 
 
 
-
-
-static void ta_event_cb(lv_event_t * e)
-{
-}
-
-
-
 void Backlight_adjustment_event_cb(lv_event_t * e) {
   uint8_t Backlight = lv_slider_get_value(lv_event_get_target(e));  
   if (Backlight <= Backlight_MAX)  {
