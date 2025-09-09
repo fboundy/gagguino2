@@ -1,6 +1,7 @@
 #include "LVGL_Example.h"
 #include <math.h>
 #include <stdio.h>
+#include <inttypes.h>
 
 /**********************
  *      TYPEDEFS
@@ -499,7 +500,7 @@ static void set_label_value(lv_obj_t *label, float value, const char *suffix)
   char buf[16];
   int32_t whole = (int32_t)value;
   int32_t frac = (int32_t)(fabsf(value) * 10.0f + 0.5f) % 10;
-  snprintf(buf, sizeof(buf), "%d.%d%s", whole, frac, suffix);
+  snprintf(buf, sizeof(buf), "%" PRId32 ".%" PRId32 "%s", whole, frac, suffix);
   lv_label_set_text(label, buf);
 }
 
