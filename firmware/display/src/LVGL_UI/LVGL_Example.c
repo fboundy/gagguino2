@@ -3,7 +3,8 @@
 /**********************
  *      TYPEDEFS
  **********************/
-typedef enum {
+typedef enum
+{
   DISP_SMALL,
   DISP_MEDIUM,
   DISP_LARGE,
@@ -17,7 +18,6 @@ static void Settings_create(void);
 static void open_settings_event_cb(lv_event_t *e);
 static void back_event_cb(lv_event_t *e);
 
-static void ta_event_cb(lv_event_t *e);
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
  *  STATIC VARIABLES
@@ -46,7 +46,8 @@ static lv_obj_t *current_temp_arc;
 static lv_obj_t *set_temp_arc;
 lv_obj_t *Backlight_slider;
 
-void Lvgl_Example1(void) {
+void Lvgl_Example1(void)
+{
 
   if (LV_HOR_RES <= 320)
     disp_size = DISP_SMALL;
@@ -58,7 +59,8 @@ void Lvgl_Example1(void) {
   font_normal = LV_FONT_DEFAULT;
 
   lv_coord_t tab_h;
-  if (disp_size == DISP_LARGE) {
+  if (disp_size == DISP_LARGE)
+  {
     tab_h = 70;
 #if LV_FONT_MONTSERRAT_24
     font_large = &lv_font_montserrat_24;
@@ -72,7 +74,9 @@ void Lvgl_Example1(void) {
     LV_LOG_WARN("LV_FONT_MONTSERRAT_16 is not enabled for the widgets demo. "
                 "Using LV_FONT_DEFAULT instead.");
 #endif
-  } else if (disp_size == DISP_MEDIUM) {
+  }
+  else if (disp_size == DISP_MEDIUM)
+  {
     tab_h = 45;
 #if LV_FONT_MONTSERRAT_20
     font_large = &lv_font_montserrat_20;
@@ -86,7 +90,9 @@ void Lvgl_Example1(void) {
     LV_LOG_WARN("LV_FONT_MONTSERRAT_14 is not enabled for the widgets demo. "
                 "Using LV_FONT_DEFAULT instead.");
 #endif
-  } else { /* disp_size == DISP_SMALL */
+  }
+  else
+  { /* disp_size == DISP_SMALL */
     tab_h = 45;
 #if LV_FONT_MONTSERRAT_18
     font_large = &lv_font_montserrat_18;
@@ -140,7 +146,8 @@ void Lvgl_Example1(void) {
 
   lv_obj_set_style_text_font(lv_scr_act(), font_normal, 0);
 
-  if (disp_size == DISP_LARGE) {
+  if (disp_size == DISP_LARGE)
+  {
     /* Large displays do not require additional header content. */
   }
 
@@ -160,13 +167,17 @@ void Lvgl_Example1(void) {
   // color_changer_create(tv);
 }
 
-static void led_event_cb(lv_event_t *e) {
+static void led_event_cb(lv_event_t *e)
+{
   lv_obj_t *led = (lv_obj_t *)lv_event_get_user_data(e);
   lv_obj_t *sw = lv_event_get_target(e);
-  if (lv_obj_get_state(sw) & LV_STATE_CHECKED) {
+  if (lv_obj_get_state(sw) & LV_STATE_CHECKED)
+  {
     lv_led_on(led);
     Buzzer_On();
-  } else {
+  }
+  else
+  {
     lv_led_off(led);
     Buzzer_Off();
   }
@@ -174,13 +185,15 @@ static void led_event_cb(lv_event_t *e) {
 
 static void back_event_cb(lv_event_t *e) { lv_scr_load(main_screen); }
 
-static void open_settings_event_cb(lv_event_t *e) {
+static void open_settings_event_cb(lv_event_t *e)
+{
   if (!settings_scr)
     Settings_create();
   lv_scr_load(settings_scr);
 }
 
-static void Settings_create(void) {
+static void Settings_create(void)
+{
   settings_scr = lv_obj_create(NULL);
   lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(settings_scr, LV_OPA_COVER, 0);
@@ -198,8 +211,8 @@ static void Settings_create(void) {
   static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1),
                                            LV_GRID_TEMPLATE_LAST};
   static lv_coord_t grid_main_row_dsc[] = {
-      LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT,      LV_GRID_CONTENT,
-      LV_GRID_FR(1),   LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+      LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT,
+      LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
   lv_obj_set_grid_dsc_array(t, grid_main_col_dsc, grid_main_row_dsc);
 
   lv_obj_t *back_btn = lv_btn_create(t);
@@ -271,7 +284,8 @@ static void Settings_create(void) {
 //   lv_obj_align(sw, LV_ALIGN_CENTER, 60, 0);
 //   lv_obj_add_event_cb(sw, led_event_cb, LV_EVENT_VALUE_CHANGED, led);
 // }
-void Lvgl_Example1_close(void) {
+void Lvgl_Example1_close(void)
+{
   /*Delete all animation*/
   lv_anim_del(NULL, NULL);
 
@@ -293,7 +307,8 @@ void Lvgl_Example1_close(void) {
  *   STATIC FUNCTIONS
  **********************/
 
-static void Status_create(lv_obj_t *parent) {
+static void Status_create(lv_obj_t *parent)
+{
   static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1),
                                            LV_GRID_TEMPLATE_LAST};
   static lv_coord_t grid_main_row_dsc[] = {LV_GRID_FR(1), LV_GRID_CONTENT,
@@ -366,7 +381,8 @@ static void Status_create(lv_obj_t *parent) {
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
 }
 
-void example1_increase_lvgl_tick(lv_timer_t *t) {
+void example1_increase_lvgl_tick(lv_timer_t *t)
+{
   float current = MQTT_GetCurrentTemp();
   float set = MQTT_GetSetTemp();
   if (current_temp_arc)
@@ -378,13 +394,16 @@ void example1_increase_lvgl_tick(lv_timer_t *t) {
   LVGL_Backlight_adjustment(LCD_Backlight);
 }
 
-void Backlight_adjustment_event_cb(lv_event_t *e) {
+void Backlight_adjustment_event_cb(lv_event_t *e)
+{
   uint8_t Backlight = lv_slider_get_value(lv_event_get_target(e));
-  if (Backlight <= Backlight_MAX) {
+  if (Backlight <= Backlight_MAX)
+  {
     lv_slider_set_value(Backlight_slider, Backlight, LV_ANIM_ON);
     LCD_Backlight = Backlight;
     LVGL_Backlight_adjustment(Backlight);
-  } else
+  }
+  else
     printf("Volume out of range: %d\n", Backlight);
 }
 
