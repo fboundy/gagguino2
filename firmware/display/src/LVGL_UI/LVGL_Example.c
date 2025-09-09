@@ -283,15 +283,17 @@ void Lvgl_Example1_close(void)
 static void Status_create(lv_obj_t * parent)
 {
   static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-static lv_coord_t grid_main_row_dsc[] = {LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t grid_main_row_dsc[] = {LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
 
   lv_obj_set_style_bg_color(parent, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
-  lv_obj_set_grid_dsc_array(parent, grid_main_col_dsc, grid_main_row_dsc);
 
+  lv_coord_t meter_size = LV_MIN(lv_obj_get_content_width(parent),
+                                 lv_obj_get_content_height(parent));
   temp_meter = lv_meter_create(parent);
-  lv_obj_set_size(temp_meter, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_grid_cell(temp_meter, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_set_size(temp_meter, meter_size, meter_size);
+  lv_obj_center(temp_meter);
+  lv_obj_set_style_pad_all(temp_meter, 0, 0);
 
   lv_meter_scale_t * scale = lv_meter_add_scale(temp_meter);
   lv_meter_set_scale_ticks(temp_meter, scale, 11, 2, 10, lv_palette_main(LV_PALETTE_GREY));
@@ -303,15 +305,28 @@ static lv_coord_t grid_main_row_dsc[] = {LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID
                                             lv_palette_main(LV_PALETTE_BLUE),
                                             false, 2);
 
-  auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
+  lv_obj_t * overlay = lv_obj_create(parent);
+  lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
+  lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_grid_dsc_array(overlay, grid_main_col_dsc, grid_main_row_dsc);
 
-  lv_obj_t * settings_btn = lv_btn_create(parent);
+  lv_obj_t * status_area = lv_obj_create(overlay);
+  lv_obj_set_style_bg_opa(status_area, LV_OPA_TRANSP, 0);
+  lv_obj_clear_flag(status_area, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_grid_cell(status_area, LV_GRID_ALIGN_STRETCH, 0, 1,
+                       LV_GRID_ALIGN_STRETCH, 0, 1);
+
+  lv_obj_t * settings_btn = lv_btn_create(overlay);
   lv_obj_set_size(settings_btn, 80, 80);
-  lv_obj_set_grid_cell(settings_btn, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_CENTER, 1, 1);
+  lv_obj_set_grid_cell(settings_btn, LV_GRID_ALIGN_CENTER, 0, 1,
+                       LV_GRID_ALIGN_CENTER, 1, 1);
   lv_obj_t * settings_label = lv_label_create(settings_btn);
   lv_label_set_text(settings_label, LV_SYMBOL_SETTINGS);
   lv_obj_center(settings_label);
   lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED, NULL);
+
+  auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
 }
 
 
