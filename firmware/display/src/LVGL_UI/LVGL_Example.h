@@ -1,19 +1,31 @@
 #pragma once
 
 #include "lvgl.h"
-#include "demos/lv_demos.h"
+// #include "demos/lv_demos.h"
 
 #include "LVGL_Driver.h"
 #include "TCA9554PWR.h"
-#include "QMI8658.h"
 #include "Wireless.h"
 #include "Buzzer.h"
 #include "ST7701S.h"
+#include "fonts/mdi_icons_40.h"
 
-#define EXAMPLE1_LVGL_TICK_PERIOD_MS  1000
+#define EXAMPLE1_LVGL_TICK_PERIOD_MS 1000
+#define TEMP_ARC_START 120
+#define TEMP_ARC_SIZE 120
+#define TEMP_ARC_MIN 60
+#define TEMP_ARC_MAX 160
+#define TEMP_ARC_TICK 10
 
+#define TEMP_TOLERANCE 2
 
-void Backlight_adjustment_event_cb(lv_event_t * e);
+#define PRESSURE_ARC_START 300
+#define PRESSURE_ARC_SIZE 120
+#define PRESSURE_ARC_MIN 0
+#define PRESSURE_ARC_MAX 120
+#define PRESSURE_ARC_TICK 10
+
+void Backlight_adjustment_event_cb(lv_event_t *e);
 
 void Lvgl_Example1(void);
 void LVGL_Backlight_adjustment(uint8_t Backlight);

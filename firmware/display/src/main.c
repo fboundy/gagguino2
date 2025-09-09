@@ -9,7 +9,6 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "TCA9554PWR.h"
-#include "QMI8658.h"
 #include "ST7701S.h"
 #include "CST820.h"
 #include "SD_MMC.h"
@@ -18,37 +17,13 @@
 #include "Wireless.h"
 
 /**
- * @brief Driver task loop running sensor polling.
- *
- * @param parameter Unused task parameter required by FreeRTOS.
- */
-void Driver_Loop(void *parameter)
-{
-    while(1)
-    {
-        QMI8658_Loop();   // Accelerometer/Gyroscope polling
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-    vTaskDelete(NULL);
-}
-
-/**
  * @brief Initialize peripheral drivers and start background tasks.
  */
 void Driver_Init(void)
 {
     Flash_Searching();   // Detect storage devices
     I2C_Init();          // Initialize I2C bus for sensors
-    QMI8658_Init();      // Initialize IMU sensor
     EXIO_Init();         // Example: initialize external IO expander
-    xTaskCreatePinnedToCore(
-        Driver_Loop,
-        "Other Driver task",
-        4096,
-        NULL,
-        3,
-        NULL,
-        0);
 }
 
 /**
