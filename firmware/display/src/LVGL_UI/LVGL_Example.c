@@ -1,4 +1,5 @@
 #include "LVGL_Example.h"
+#include <math.h>
 
 /**********************
  *      TYPEDEFS
@@ -16,6 +17,7 @@ static void Status_create(lv_obj_t *parent);
 static void Settings_create(void);
 static void open_settings_event_cb(lv_event_t *e);
 static void back_event_cb(lv_event_t *e);
+static void draw_ticks_cb(lv_event_t *e);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -302,9 +304,10 @@ static void Status_create(lv_obj_t *parent) {
   lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(parent, 0, 0);
 
-  lv_coord_t meter_size = LV_MIN(lv_obj_get_content_width(parent),
+  lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
                                  lv_obj_get_content_height(parent)) -
                           20;
+  lv_coord_t meter_size = meter_base + (meter_base * 30) / 100;
 
   set_temp_arc = lv_arc_create(parent);
   lv_obj_set_size(set_temp_arc, meter_size, meter_size);
@@ -314,8 +317,8 @@ static void Status_create(lv_obj_t *parent) {
   lv_arc_set_bg_angles(set_temp_arc, 0, 270);
   lv_obj_remove_style(set_temp_arc, NULL, LV_PART_KNOB);
   lv_obj_clear_flag(set_temp_arc, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_arc_width(set_temp_arc, 2, LV_PART_MAIN);
-  lv_obj_set_style_arc_width(set_temp_arc, 2, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(set_temp_arc, 4, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(set_temp_arc, 4, LV_PART_INDICATOR);
   lv_obj_set_style_arc_color(
       set_temp_arc, lv_palette_darken(LV_PALETTE_GREY, 2), LV_PART_MAIN);
   lv_obj_set_style_arc_color(set_temp_arc, lv_palette_main(LV_PALETTE_BLUE),
@@ -332,8 +335,8 @@ static void Status_create(lv_obj_t *parent) {
   lv_arc_set_bg_angles(current_temp_arc, 0, 270);
   lv_obj_remove_style(current_temp_arc, NULL, LV_PART_KNOB);
   lv_obj_clear_flag(current_temp_arc, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_style_arc_width(current_temp_arc, 10, LV_PART_MAIN);
-  lv_obj_set_style_arc_width(current_temp_arc, 10, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(current_temp_arc, 20, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(current_temp_arc, 20, LV_PART_INDICATOR);
   lv_obj_set_style_arc_color(
       current_temp_arc, lv_palette_darken(LV_PALETTE_GREY, 2), LV_PART_MAIN);
   lv_obj_set_style_arc_color(
@@ -341,6 +344,12 @@ static void Status_create(lv_obj_t *parent) {
   lv_obj_set_style_bg_opa(current_temp_arc, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(current_temp_arc, 0, 0);
   lv_arc_set_value(current_temp_arc, 80);
+
+  lv_obj_t *tick_layer = lv_obj_create(parent);
+  lv_obj_set_size(tick_layer, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_style_bg_opa(tick_layer, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(tick_layer, 0, 0);
+  lv_obj_add_event_cb(tick_layer, draw_ticks_cb, LV_EVENT_DRAW_POST, NULL);
 
   lv_obj_t *overlay = lv_obj_create(parent);
   lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
@@ -351,6 +360,7 @@ static void Status_create(lv_obj_t *parent) {
 
   lv_obj_move_foreground(set_temp_arc);
   lv_obj_move_foreground(current_temp_arc);
+  lv_obj_move_foreground(tick_layer);
 
   lv_obj_t *status_area = lv_obj_create(overlay);
   lv_obj_set_style_bg_opa(status_area, LV_OPA_TRANSP, 0);
@@ -371,6 +381,52 @@ static void Status_create(lv_obj_t *parent) {
                       NULL);
 
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
+}
+
+static void draw_ticks_cb(lv_event_t *e) {
+  if (!current_temp_arc)
+    return;
+
+  lv_draw_ctx_t *draw_ctx = lv_event_get_draw_ctx(e);
+  lv_coord_t cx = lv_obj_get_x(current_temp_arc) +
+                  lv_obj_get_width(current_temp_arc) / 2;
+  lv_coord_t cy = lv_obj_get_y(current_temp_arc) +
+                  lv_obj_get_height(current_temp_arc) / 2;
+  lv_coord_t radius = lv_obj_get_width(current_temp_arc) / 2;
+
+  lv_draw_line_dsc_t line_dsc;
+  lv_draw_line_dsc_init(&line_dsc);
+  line_dsc.color = lv_color_white();
+  line_dsc.width = 2;
+
+  lv_draw_label_dsc_t label_dsc;
+  lv_draw_label_dsc_init(&label_dsc);
+  label_dsc.color = lv_color_white();
+  label_dsc.font = font_normal;
+  label_dsc.align = LV_TEXT_ALIGN_CENTER;
+
+  for (int val = 60; val <= 160; val += 10) {
+    int angle = 135 + (val - 60) * 270 / 100;
+    float rad = angle * 3.14159265f / 180.0f;
+    lv_coord_t len = (val % 20 == 0) ? 20 : 10;
+
+    lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
+                     cy + (lv_coord_t)((radius - len) * sinf(rad))};
+    lv_point_t p2 = {cx + (lv_coord_t)(radius * cosf(rad)),
+                     cy + (lv_coord_t)(radius * sinf(rad))};
+
+    lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
+
+    if (val % 20 == 0) {
+      char buf[8];
+      lv_snprintf(buf, sizeof(buf), "%d", val);
+      lv_coord_t text_r = radius - len - 10;
+      lv_point_t tp = {cx + (lv_coord_t)(text_r * cosf(rad)),
+                       cy + (lv_coord_t)(text_r * sinf(rad))};
+      lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
+      lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
+    }
+  }
 }
 
 void example1_increase_lvgl_tick(lv_timer_t *t) {
