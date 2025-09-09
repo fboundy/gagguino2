@@ -12,17 +12,18 @@ extern "C"
     LV_FONT_DECLARE(mdi_icons_40);
 
 /* Optional convenience defines for your 7 icons.
- * Replace the \uXXXX with the actual codepoints
- * shown by the font converter for your chosen icons.
+ * Replace the \UXXXXXXXX sequences with the actual codepoints
+ * shown by the font converter for your chosen icons. Use 8-digit
+ * escapes for codepoints above 0xFFFF.
  */
 /* Fill these with the exact codepoints from your subset export */
-#define MDI_THERMOMETER "\uF050F" /* thermometer */
-#define MDI_GAUGE "\uF029A"       /* gauge */
-#define MDI_CLOCK "\uF051B"       /* clock-outline */
-#define MDI_COG "\uF0493"         /* cog */
-#define MDI_POWER "\uF0425"       /* power */
-#define MDI_STEAM "\uF1799"       /* weather-fog or smoke, pick what you added */
-#define MDI_BEAKER "\uF068F"
+#define MDI_THERMOMETER "\U000F050F" /* thermometer */
+#define MDI_GAUGE "\U000F029A"       /* gauge */
+#define MDI_CLOCK "\U000F051B"       /* clock-outline */
+#define MDI_COG "\U000F0493"         /* cog */
+#define MDI_POWER "\U000F0425"       /* power */
+#define MDI_STEAM "\U000F1799"       /* weather-fog or smoke, pick what you added */
+#define MDI_BEAKER "\U000F068F"
 
 #ifdef __cplusplus
 } /* extern "C" */
