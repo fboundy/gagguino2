@@ -38,6 +38,7 @@ static void open_settings_event_cb(lv_event_t *e);
 static void back_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
 static void set_label_value(lv_obj_t *label, float value, const char *suffix);
+static void heater_event_cb(lv_event_t *e);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -192,6 +193,12 @@ static void led_event_cb(lv_event_t *e)
     lv_led_off(led);
     Buzzer_Off();
   }
+}
+
+static void heater_event_cb(lv_event_t *e)
+{
+  bool heater = MQTT_GetHeaterState();
+  MQTT_SetHeaterState(!heater);
 }
 
 static void back_event_cb(lv_event_t *e) { lv_scr_load(main_screen); }
@@ -479,6 +486,7 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_text_font(heater_label, &mdi_icons_40, 0);
   lv_label_set_text(heater_label, MDI_POWER);
   lv_obj_center(heater_label);
+  lv_obj_add_event_cb(heater_btn, heater_event_cb, LV_EVENT_CLICKED, NULL);
 
   steam_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(steam_btn, 80, 80);
