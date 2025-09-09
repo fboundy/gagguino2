@@ -1,12 +1,12 @@
 #pragma once
 
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "esp_wifi.h"
-#include "nvs_flash.h" 
-#include <stdio.h>
-#include <string.h>  // For memcpy
 #include "esp_system.h"
+#include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "nvs_flash.h"
+#include <stdio.h>
+#include <string.h> // For memcpy
 
 #include "mqtt_client.h"
 
@@ -20,3 +20,5 @@ float MQTT_GetCurrentTemp(void);
 float MQTT_GetSetTemp(void);
 float MQTT_GetCurrentPressure(void);
 float MQTT_GetSetPressure(void);
+float MQTT_GetShotTime(void);
+float MQTT_GetShotVolume(void);
