@@ -395,6 +395,8 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_center(settings_label);
   lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED,
                       NULL);
+  /* Ensure the settings button is above overlay layers like tick_layer */
+  lv_obj_move_foreground(settings_btn);
 
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
 }
