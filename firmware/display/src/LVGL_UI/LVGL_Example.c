@@ -333,6 +333,7 @@ static void Status_create(lv_obj_t *parent)
   lv_arc_set_bg_angles(current_pressure_arc, 0, PRESSURE_ARC_SIZE);
   lv_obj_remove_style(current_pressure_arc, NULL, LV_PART_KNOB);
   lv_obj_clear_flag(current_pressure_arc, LV_OBJ_FLAG_CLICKABLE);
+  lv_arc_set_mode(current_pressure_arc, LV_ARC_MODE_REVERSE);
   lv_obj_set_style_arc_width(current_pressure_arc, current_arc_width,
                              LV_PART_MAIN);
   lv_obj_set_style_arc_width(current_pressure_arc, current_arc_width,
@@ -345,7 +346,7 @@ static void Status_create(lv_obj_t *parent)
                              LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(current_pressure_arc, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(current_pressure_arc, 0, 0);
-  lv_arc_set_value(current_pressure_arc, PRESSURE_ARC_MAX - 50);
+  lv_arc_set_value(current_pressure_arc, 50);
 
   lv_obj_t *tick_layer = lv_obj_create(parent);
   lv_obj_set_size(tick_layer, LV_PCT(100), LV_PCT(100));
@@ -369,8 +370,8 @@ static void Status_create(lv_obj_t *parent)
   pressure_label = lv_label_create(parent);
   lv_obj_set_style_text_color(temp_label, lv_color_white(), 0);
   lv_obj_set_style_text_color(pressure_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(temp_label, font_large, 0);
-  lv_obj_set_style_text_font(pressure_label, font_large, 0);
+  lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(pressure_label, &lv_font_montserrat_28, 0);
   lv_coord_t y_offset = -(lv_obj_get_height(parent) / 4);
   lv_coord_t x_offset = meter_size / 4;
   lv_obj_align(temp_label, LV_ALIGN_CENTER, -x_offset, y_offset);
@@ -509,7 +510,7 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   {
     int32_t current_val = LV_MIN(LV_MAX((int32_t)current_p * 10.0f, PRESSURE_ARC_MIN),
                                  PRESSURE_ARC_MAX);
-    lv_arc_set_value(current_pressure_arc, PRESSURE_ARC_MAX - current_val);
+    lv_arc_set_value(current_pressure_arc, current_val);
   }
   if (temp_label)
     set_label_value(temp_label, current, "\u00B0C");
