@@ -310,7 +310,16 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
     if (data_len == sizeof(struct EspNowPacket))
     {
         const struct EspNowPacket *pkt = (const struct EspNowPacket *)data;
-        s_heater = pkt->heaterSwitch != 0;
+
+        bool heater = pkt->heaterSwitch != 0;
+        if (heater != s_heater)
+        {
+            s_heater = heater;
+            if (s_mqtt)
+            {
+                MQTT_Publish(TOPIC_HEATER, s_heater ? "on" : "off", 1, true);
+            }
+        }
         s_steam = pkt->steamFlag != 0;
         s_shot_time = (float)pkt->shotTimeMs / 1000.0f;
         s_shot_volume = pkt->shotVolumeMl;
