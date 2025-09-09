@@ -76,6 +76,10 @@ static lv_obj_t *shot_time_label;
 static lv_obj_t *shot_volume_label;
 static lv_obj_t *shot_time_icon;
 static lv_obj_t *shot_volume_icon;
+static lv_obj_t *temp_units_label;
+static lv_obj_t *pressure_units_label;
+static lv_obj_t *shot_time_units_label;
+static lv_obj_t *shot_volume_units_label;
 lv_obj_t *Backlight_slider;
 
 void Lvgl_Example1(void)
@@ -285,6 +289,10 @@ void Lvgl_Example1_close(void)
   shot_volume_label = NULL;
   shot_time_icon = NULL;
   shot_volume_icon = NULL;
+  temp_units_label = NULL;
+  pressure_units_label = NULL;
+  shot_time_units_label = NULL;
+  shot_volume_units_label = NULL;
 
   lv_style_reset(&style_text_muted);
   lv_style_reset(&style_title);
@@ -375,7 +383,7 @@ static void Status_create(lv_obj_t *parent)
   static lv_coord_t field_rows[] = {LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
 
 /* Create one field (icon | value | units) in ROW at column COL (0 or 1) */
-#define MAKE_FIELD(ROW, COL, ICON_TXT, OUT_ICON, OUT_VAL, INIT_VAL_TXT, UNITS_TXT)           \
+#define MAKE_FIELD(ROW, COL, ICON_TXT, OUT_ICON, OUT_VAL, OUT_UNITS, INIT_VAL_TXT, UNITS_TXT) \
   do                                                                                         \
   {                                                                                          \
     lv_obj_t *cell = lv_obj_create(ROW);                                                     \
@@ -397,11 +405,11 @@ static void Status_create(lv_obj_t *parent)
     lv_obj_set_style_text_color(OUT_VAL, lv_color_white(), 0);                               \
     lv_obj_set_grid_cell(OUT_VAL, LV_GRID_ALIGN_END, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);      \
     /* units (left in column) */                                                             \
-    lv_obj_t *units_lbl = lv_label_create(cell);                                             \
-    lv_label_set_text(units_lbl, (UNITS_TXT));                                               \
-    lv_obj_set_style_text_font(units_lbl, font_units, 0);                                    \
-    lv_obj_set_style_text_color(units_lbl, lv_color_white(), 0);                             \
-    lv_obj_set_grid_cell(units_lbl, LV_GRID_ALIGN_START, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);  \
+    OUT_UNITS = lv_label_create(cell);                                                       \
+    lv_label_set_text(OUT_UNITS, (UNITS_TXT));                                               \
+    lv_obj_set_style_text_font(OUT_UNITS, font_units, 0);                                    \
+    lv_obj_set_style_text_color(OUT_UNITS, lv_color_white(), 0);                             \
+    lv_obj_set_grid_cell(OUT_UNITS, LV_GRID_ALIGN_START, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);  \
   } while (0)
 
   const lv_coord_t H = lv_disp_get_ver_res(NULL);
@@ -417,8 +425,8 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_align(row_bottom, LV_ALIGN_CENTER, 0, (H * 5) / 100);
 
   /* left: shot time, right: shot volume */
-  MAKE_FIELD(row_bottom, 0, MDI_CLOCK, shot_time_icon, shot_time_label, "0.0", "s");
-  MAKE_FIELD(row_bottom, 1, MDI_BEAKER, shot_volume_icon, shot_volume_label, "0.0", "ml");
+  MAKE_FIELD(row_bottom, 0, MDI_CLOCK, shot_time_icon, shot_time_label, shot_time_units_label, "0.0", "s");
+  MAKE_FIELD(row_bottom, 1, MDI_BEAKER, shot_volume_icon, shot_volume_label, shot_volume_units_label, "0.0", "ml");
 
   /* ----------------- Top row @ 70% ----------------- */
   lv_obj_t *row_top = lv_obj_create(parent);
@@ -431,8 +439,8 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_align(row_top, LV_ALIGN_CENTER, 0, -(H * 10) / 100);
 
   /* left: temperature, right: pressure */
-  MAKE_FIELD(row_top, 0, MDI_THERMOMETER, temp_icon, temp_label, "0.0", "°C");
-  MAKE_FIELD(row_top, 1, MDI_GAUGE, pressure_icon, pressure_label, "0.0", "bar");
+  MAKE_FIELD(row_top, 0, MDI_THERMOMETER, temp_icon, temp_label, temp_units_label, "0.0", "°C");
+  MAKE_FIELD(row_top, 1, MDI_GAUGE, pressure_icon, pressure_label, pressure_units_label, "0.0", "bar");
 
   /* Keep rows above arcs/ticks */
   lv_obj_move_foreground(row_bottom);
@@ -606,6 +614,22 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     int32_t clamped = LV_MIN(LV_MAX(scaled, PRESSURE_ARC_MIN), PRESSURE_ARC_MAX);
     int32_t reversed = PRESSURE_ARC_MAX - clamped + PRESSURE_ARC_MIN;
     lv_arc_set_value(current_pressure_arc, reversed);
+  }
+
+  /* temperature colour */
+  if (temp_label && temp_icon && temp_units_label)
+  {
+    lv_color_t col = lv_color_white();
+    if (!isnan(current) && !isnan(set))
+    {
+      if (current > set + TEMP_TOLERANCE)
+        col = lv_palette_main(LV_PALETTE_RED);
+      else if (current >= set - TEMP_TOLERANCE)
+        col = lv_palette_main(LV_PALETTE_GREEN);
+    }
+    lv_obj_set_style_text_color(temp_label, col, 0);
+    lv_obj_set_style_text_color(temp_icon, col, 0);
+    lv_obj_set_style_text_color(temp_units_label, col, 0);
   }
 
   /* value labels ONLY (no units appended!) */
