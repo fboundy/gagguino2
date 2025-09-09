@@ -298,27 +298,15 @@ void Lvgl_Example1_close(void)
 
 static void Status_create(lv_obj_t *parent)
 {
-  static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1),
-                                           LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t grid_main_row_dsc[] = {LV_GRID_FR(1), LV_GRID_CONTENT,
-                                           LV_GRID_TEMPLATE_LAST};
-
-  lv_obj_set_style_bg_color(parent, lv_color_hex(0x000000), 0);
-  lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(parent, 0, 0);
 
   const lv_coord_t current_arc_width = 20;
-
   lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
                                  lv_obj_get_content_height(parent)) -
                           tab_h_global;
   lv_coord_t meter_size = meter_base;
-  // meter_base + (meter_base * 30) / 100 + current_arc_width; /* Add arc
-  //                                                              thickness to
-  //                                                              radius to
-  //                                                              align the
-  //                                                              outer edge */
 
+  /* ----------------- Arcs ----------------- */
   set_temp_arc = lv_arc_create(parent);
   lv_obj_set_size(set_temp_arc, meter_size, meter_size);
   lv_obj_align(set_temp_arc, LV_ALIGN_CENTER, 0, tab_h_global / 2);
@@ -329,10 +317,8 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_clear_flag(set_temp_arc, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_style_arc_width(set_temp_arc, 4, LV_PART_MAIN);
   lv_obj_set_style_arc_width(set_temp_arc, 4, LV_PART_INDICATOR);
-  lv_obj_set_style_arc_color(
-      set_temp_arc, lv_palette_darken(LV_PALETTE_GREY, 2), LV_PART_MAIN);
-  lv_obj_set_style_arc_color(set_temp_arc, lv_palette_main(LV_PALETTE_BLUE),
-                             LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(set_temp_arc, lv_palette_darken(LV_PALETTE_GREY, 2), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(set_temp_arc, lv_palette_main(LV_PALETTE_BLUE), LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(set_temp_arc, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(set_temp_arc, 0, 0);
   lv_arc_set_value(set_temp_arc, 80);
@@ -346,12 +332,9 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_remove_style(current_temp_arc, NULL, LV_PART_KNOB);
   lv_obj_clear_flag(current_temp_arc, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_style_arc_width(current_temp_arc, current_arc_width, LV_PART_MAIN);
-  lv_obj_set_style_arc_width(current_temp_arc, current_arc_width,
-                             LV_PART_INDICATOR);
-  lv_obj_set_style_arc_color(
-      current_temp_arc, lv_palette_darken(LV_PALETTE_GREY, 2), LV_PART_MAIN);
-  lv_obj_set_style_arc_color(
-      current_temp_arc, lv_palette_main(LV_PALETTE_YELLOW), LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(current_temp_arc, current_arc_width, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(current_temp_arc, lv_palette_darken(LV_PALETTE_GREY, 2), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(current_temp_arc, lv_palette_main(LV_PALETTE_YELLOW), LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(current_temp_arc, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(current_temp_arc, 0, 0);
   lv_arc_set_value(current_temp_arc, 80);
@@ -365,120 +348,114 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_remove_style(current_pressure_arc, NULL, LV_PART_KNOB);
   lv_obj_clear_flag(current_pressure_arc, LV_OBJ_FLAG_CLICKABLE);
   lv_arc_set_mode(current_pressure_arc, LV_ARC_MODE_REVERSE);
-  lv_obj_set_style_arc_width(current_pressure_arc, current_arc_width,
-                             LV_PART_MAIN);
-  lv_obj_set_style_arc_width(current_pressure_arc, current_arc_width,
-                             LV_PART_INDICATOR);
-  lv_obj_set_style_arc_color(current_pressure_arc,
-                             lv_palette_darken(LV_PALETTE_GREY, 2),
-                             LV_PART_MAIN);
-  lv_obj_set_style_arc_color(
-      current_pressure_arc, lv_palette_main(LV_PALETTE_RED), LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(current_pressure_arc, current_arc_width, LV_PART_MAIN);
+  lv_obj_set_style_arc_width(current_pressure_arc, current_arc_width, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_color(current_pressure_arc, lv_palette_darken(LV_PALETTE_GREY, 2), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(current_pressure_arc, lv_palette_main(LV_PALETTE_RED), LV_PART_INDICATOR);
   lv_obj_set_style_bg_opa(current_pressure_arc, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(current_pressure_arc, 0, 0);
   lv_arc_set_value(current_pressure_arc, 50);
 
+  /* Ticks above arcs */
   lv_obj_t *tick_layer = lv_obj_create(parent);
   lv_obj_set_size(tick_layer, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_bg_opa(tick_layer, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(tick_layer, 0, 0);
   lv_obj_add_event_cb(tick_layer, draw_ticks_cb, LV_EVENT_DRAW_POST, NULL);
 
-  lv_obj_t *overlay = lv_obj_create(parent);
-  lv_obj_set_size(overlay, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_opa(overlay, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(overlay, 0, 0);
-  lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_grid_dsc_array(overlay, grid_main_col_dsc, grid_main_row_dsc);
+  /* ----------------- Fonts ----------------- */
+  const lv_font_t *font_val = &lv_font_montserrat_40;
+  const lv_font_t *font_units = &lv_font_montserrat_28;
+  const lv_font_t *font_icon = &mdi_icons_40;
 
-  lv_obj_move_foreground(set_temp_arc);
-  lv_obj_move_foreground(current_temp_arc);
-  lv_obj_move_foreground(current_pressure_arc);
-  lv_obj_move_foreground(tick_layer);
+  /* ----------------- Helpers for rows/cells ----------------- */
+  static lv_coord_t row_cols[] = {LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t row_rows[] = {LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t field_cols[] = {LV_GRID_CONTENT, LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t field_rows[] = {LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
 
-  temp_label = lv_label_create(parent);
-  pressure_label = lv_label_create(parent);
-  lv_obj_set_style_text_color(temp_label, lv_color_white(), 0);
-  lv_obj_set_style_text_color(pressure_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_40, 0);
-  lv_obj_set_style_text_font(pressure_label, &lv_font_montserrat_40, 0);
-  lv_coord_t y_offset = -(lv_obj_get_height(parent) / 5);
-  lv_coord_t x_offset = meter_size / 5;
-  lv_obj_align(temp_label, LV_ALIGN_CENTER, -x_offset, y_offset);
-  lv_obj_align(pressure_label, LV_ALIGN_CENTER, x_offset, y_offset);
-  set_label_value(temp_label, 0.0f, "\u00B0C");
-  set_label_value(pressure_label, 0.0f, "bar");
+/* Create one field (icon | value | units) in ROW at column COL (0 or 1) */
+#define MAKE_FIELD(ROW, COL, ICON_TXT, OUT_ICON, OUT_VAL, INIT_VAL_TXT, UNITS_TXT)           \
+  do                                                                                         \
+  {                                                                                          \
+    lv_obj_t *cell = lv_obj_create(ROW);                                                     \
+    lv_obj_set_style_bg_opa(cell, LV_OPA_TRANSP, 0);                                         \
+    lv_obj_set_style_border_width(cell, 0, 0);                                               \
+    lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);                                         \
+    lv_obj_set_grid_dsc_array(cell, field_cols, field_rows);                                 \
+    lv_obj_set_grid_cell(cell, LV_GRID_ALIGN_STRETCH, (COL), 1, LV_GRID_ALIGN_CENTER, 0, 1); \
+    /* icon (left) */                                                                        \
+    OUT_ICON = lv_label_create(cell);                                                        \
+    lv_label_set_text(OUT_ICON, (ICON_TXT));                                                 \
+    lv_obj_set_style_text_font(OUT_ICON, font_icon, 0);                                      \
+    lv_obj_set_style_text_color(OUT_ICON, lv_color_white(), 0);                              \
+    lv_obj_set_grid_cell(OUT_ICON, LV_GRID_ALIGN_START, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);   \
+    /* value (right) */                                                                      \
+    OUT_VAL = lv_label_create(cell);                                                         \
+    lv_label_set_text(OUT_VAL, (INIT_VAL_TXT));                                              \
+    lv_obj_set_style_text_font(OUT_VAL, font_val, 0);                                        \
+    lv_obj_set_style_text_color(OUT_VAL, lv_color_white(), 0);                               \
+    lv_obj_set_grid_cell(OUT_VAL, LV_GRID_ALIGN_END, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);      \
+    /* units (left in column) */                                                             \
+    lv_obj_t *units_lbl = lv_label_create(cell);                                             \
+    lv_label_set_text(units_lbl, (UNITS_TXT));                                               \
+    lv_obj_set_style_text_font(units_lbl, font_units, 0);                                    \
+    lv_obj_set_style_text_color(units_lbl, lv_color_white(), 0);                             \
+    lv_obj_set_grid_cell(units_lbl, LV_GRID_ALIGN_START, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);  \
+  } while (0)
 
-  /* Icons for temperature and pressure */
-  temp_icon = lv_label_create(parent);
-  lv_label_set_text(temp_icon, MDI_THERMOMETER);
-  lv_obj_set_style_text_font(temp_icon, &mdi_icons_40, 0);
-  lv_obj_set_style_text_color(temp_icon, lv_color_white(), 0);
-  lv_obj_align_to(temp_icon, temp_label, LV_ALIGN_OUT_LEFT_MID, -10, 0);
+  const lv_coord_t H = lv_disp_get_ver_res(NULL);
+  const lv_coord_t W = lv_disp_get_hor_res(NULL);
 
-  pressure_icon = lv_label_create(parent);
-  lv_label_set_text(pressure_icon, LV_SYMBOL_SPEED);
-  lv_obj_set_style_text_color(pressure_icon, lv_color_white(), 0);
-  lv_obj_align_to(pressure_icon, pressure_label, LV_ALIGN_OUT_LEFT_MID, -10, 0);
+  /* ----------------- Bottom row @ 50% ----------------- */
+  lv_obj_t *row_bottom = lv_obj_create(parent);
+  lv_obj_set_style_bg_opa(row_bottom, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(row_bottom, 0, 0);
+  lv_obj_clear_flag(row_bottom, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_grid_dsc_array(row_bottom, row_cols, row_rows);
+  lv_obj_set_width(row_bottom, LV_PCT(92)); /* give some side margin */
+  lv_obj_align(row_bottom, LV_ALIGN_CENTER, 0, (H * 5) / 100);
 
-  /* Shot time and volume labels */
-  shot_time_label = lv_label_create(parent);
-  lv_obj_set_style_text_color(shot_time_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(shot_time_label, &lv_font_montserrat_40, 0);
-  lv_obj_align_to(shot_time_label, temp_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
-  set_label_value(shot_time_label, 0.0f, "s");
+  /* left: shot time, right: shot volume */
+  MAKE_FIELD(row_bottom, 0, MDI_CLOCK, shot_time_icon, shot_time_label, "0.0", "s");
+  MAKE_FIELD(row_bottom, 1, MDI_BEAKER, shot_volume_icon, shot_volume_label, "0.0", "ml");
 
-  shot_time_icon = lv_label_create(parent);
-  lv_label_set_text(shot_time_icon, LV_SYMBOL_TIMER);
-  lv_obj_set_style_text_color(shot_time_icon, lv_color_white(), 0);
-  lv_obj_align_to(shot_time_icon, shot_time_label, LV_ALIGN_OUT_LEFT_MID, -10,
-                  0);
+  /* ----------------- Top row @ 70% ----------------- */
+  lv_obj_t *row_top = lv_obj_create(parent);
+  lv_obj_set_style_bg_opa(row_top, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(row_top, 0, 0);
+  lv_obj_clear_flag(row_top, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_grid_dsc_array(row_top, row_cols, row_rows);
+  lv_obj_set_width(row_top, LV_PCT(92));
+  /* top row ABOVE center -> 30%: offset = -20% of screen height */
+  lv_obj_align(row_top, LV_ALIGN_CENTER, 0, -(H * 10) / 100);
 
-  shot_volume_label = lv_label_create(parent);
-  lv_obj_set_style_text_color(shot_volume_label, lv_color_white(), 0);
-  lv_obj_set_style_text_font(shot_volume_label, &lv_font_montserrat_40, 0);
-  lv_obj_align_to(shot_volume_label, pressure_label, LV_ALIGN_OUT_BOTTOM_MID, 0,
-                  10);
-  set_label_value(shot_volume_label, 0.0f, "ml");
+  /* left: temperature, right: pressure */
+  MAKE_FIELD(row_top, 0, MDI_THERMOMETER, temp_icon, temp_label, "0.0", "°C");
+  MAKE_FIELD(row_top, 1, MDI_GAUGE, pressure_icon, pressure_label, "0.0", "bar");
 
-  shot_volume_icon = lv_label_create(parent);
-  lv_label_set_text(shot_volume_icon, "\u2697");
-  lv_obj_set_style_text_color(shot_volume_icon, lv_color_white(), 0);
-  lv_obj_align_to(shot_volume_icon, shot_volume_label, LV_ALIGN_OUT_LEFT_MID,
-                  -10, 0);
+  /* Keep rows above arcs/ticks */
+  lv_obj_move_foreground(row_bottom);
+  lv_obj_move_foreground(row_top);
 
-  lv_obj_t *status_area = lv_obj_create(overlay);
-  lv_obj_set_style_bg_opa(status_area, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(status_area, 0, 0);
-  lv_obj_clear_flag(status_area, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_grid_cell(status_area, LV_GRID_ALIGN_STRETCH, 0, 1,
-                       LV_GRID_ALIGN_STRETCH, 0, 1);
-
+  /* ----------------- Buttons @ 70% with 1% spacing ----------------- */
   lv_obj_t *ctrl_container = lv_obj_create(parent);
-
-  // size to content so centering is “tight”
-  lv_obj_set_size(ctrl_container, LV_SIZE_CONTENT, 80);
   lv_obj_set_style_bg_opa(ctrl_container, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(ctrl_container, 0, 0);
   lv_obj_clear_flag(ctrl_container, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(ctrl_container, LV_SIZE_CONTENT, 80);
 
-  // 3 content-sized columns; keep your 1% screen-width gap
-  static lv_coord_t btn_col_dsc[] = {
-      LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t btn_row_dsc[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-  lv_obj_set_grid_dsc_array(ctrl_container, btn_col_dsc, btn_row_dsc);
-  lv_obj_set_style_pad_column(ctrl_container, lv_disp_get_hor_res(NULL) / 100, 0);
-
-  // place the group 20% of screen height below the center
-  lv_coord_t y20 = (lv_disp_get_ver_res(NULL) * 20) / 100;
-  lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, y20);
+  static lv_coord_t btn_cols[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t btn_rows[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+  lv_obj_set_grid_dsc_array(ctrl_container, btn_cols, btn_rows);
+  lv_obj_set_style_pad_column(ctrl_container, W / 100, 0);          /* 1% spacing */
+  lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100); /* 70% */
 
   heater_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(heater_btn, 80, 80);
   lv_obj_set_style_border_width(heater_btn, 0, 0);
   lv_obj_set_style_bg_color(heater_btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_set_grid_cell(heater_btn, LV_GRID_ALIGN_CENTER, 0, 1,
-                       LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_set_grid_cell(heater_btn, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);
   lv_obj_t *heater_label = lv_label_create(heater_btn);
   lv_obj_set_style_text_font(heater_label, &mdi_icons_40, 0);
   lv_label_set_text(heater_label, MDI_POWER);
@@ -488,8 +465,7 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_size(steam_btn, 80, 80);
   lv_obj_set_style_border_width(steam_btn, 0, 0);
   lv_obj_set_style_bg_color(steam_btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_set_grid_cell(steam_btn, LV_GRID_ALIGN_CENTER, 1, 1,
-                       LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_set_grid_cell(steam_btn, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);
   lv_obj_t *steam_label = lv_label_create(steam_btn);
   lv_obj_set_style_text_font(steam_label, &mdi_icons_40, 0);
   lv_label_set_text(steam_label, MDI_STEAM);
@@ -499,17 +475,16 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_size(settings_btn, 80, 80);
   lv_obj_set_style_border_width(settings_btn, 0, 0);
   lv_obj_set_style_bg_color(settings_btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_set_grid_cell(settings_btn, LV_GRID_ALIGN_CENTER, 2, 1,
-                       LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_set_grid_cell(settings_btn, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);
   lv_obj_t *settings_label = lv_label_create(settings_btn);
   lv_obj_set_style_text_font(settings_label, &mdi_icons_40, 0);
   lv_label_set_text(settings_label, MDI_COG);
   lv_obj_center(settings_label);
-  lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED,
-                      NULL);
+  lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED, NULL);
 
   lv_obj_move_foreground(ctrl_container);
 
+  /* Timer to drive UI updates */
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
 }
 
@@ -610,40 +585,58 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   float shot_vol = MQTT_GetShotVolume();
   bool heater = MQTT_GetHeaterState();
   bool steam = MQTT_GetSteamState();
+
   if (isnan(current_p) || current_p < 0.0f)
     current_p = 0.0f;
+
+  /* arcs */
   if (current_temp_arc)
   {
-    int32_t current_val =
-        LV_MIN(LV_MAX((int32_t)current, TEMP_ARC_MIN), TEMP_ARC_MAX);
-    lv_arc_set_value(current_temp_arc, current_val);
+    int32_t v = LV_MIN(LV_MAX((int32_t)current, TEMP_ARC_MIN), TEMP_ARC_MAX);
+    lv_arc_set_value(current_temp_arc, v);
   }
   if (set_temp_arc)
   {
-    int32_t set_val = LV_MIN(LV_MAX((int32_t)set, TEMP_ARC_MIN), TEMP_ARC_MAX);
-    lv_arc_set_value(set_temp_arc, set_val);
+    int32_t v = LV_MIN(LV_MAX((int32_t)set, TEMP_ARC_MIN), TEMP_ARC_MAX);
+    lv_arc_set_value(set_temp_arc, v);
   }
-
   if (current_pressure_arc)
   {
     int32_t scaled = (int32_t)lroundf(current_p * 10.0f);
-    int32_t clamped =
-        LV_MIN(LV_MAX(scaled, PRESSURE_ARC_MIN), PRESSURE_ARC_MAX);
+    int32_t clamped = LV_MIN(LV_MAX(scaled, PRESSURE_ARC_MIN), PRESSURE_ARC_MAX);
     int32_t reversed = PRESSURE_ARC_MAX - clamped + PRESSURE_ARC_MIN;
     lv_arc_set_value(current_pressure_arc, reversed);
   }
+
+  /* value labels ONLY (no units appended!) */
+  char buf[32];
   if (temp_label)
-    set_label_value(temp_label, current, "\u00B0C");
+  {
+    snprintf(buf, sizeof buf, "%.1f", current);
+    lv_label_set_text(temp_label, buf);
+  }
   if (pressure_label)
-    set_label_value(pressure_label, current_p, " bar");
+  {
+    snprintf(buf, sizeof buf, "%.1f", current_p);
+    lv_label_set_text(pressure_label, buf);
+  }
   if (shot_time_label)
-    set_label_value(shot_time_label, shot_time, " s");
+  {
+    snprintf(buf, sizeof buf, "%.1f", shot_time);
+    lv_label_set_text(shot_time_label, buf);
+  }
   if (shot_volume_label)
-    set_label_value(shot_volume_label, shot_vol, " ml");
+  {
+    snprintf(buf, sizeof buf, "%.1f", shot_vol);
+    lv_label_set_text(shot_volume_label, buf);
+  }
+
+  /* backlight */
   if (Backlight_slider)
     lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
   LVGL_Backlight_adjustment(LCD_Backlight);
 
+  /* buttons */
   lv_color_t off = lv_palette_main(LV_PALETTE_GREY);
   lv_color_t on = lv_palette_main(LV_PALETTE_YELLOW);
   if (heater_btn)
