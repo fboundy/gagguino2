@@ -13,6 +13,8 @@
 
 #include "EspNowPacket.h"
 
+#define ESPNOW_TIMEOUT_MS 5000
+
 // --- B: exact topic strings ---------------------------------------------------
 static char TOPIC_HEATER[128];
 static char TOPIC_HEATER_SET[128];
@@ -48,6 +50,7 @@ static inline bool parse_bool_str(const char *s)
     return (strcmp(s, "1") == 0) || (strcasecmp(s, "true") == 0) || (strcasecmp(s, "on") == 0);
 }
 
+static void espnow_timeout_cb(TimerHandle_t xTimer);
 static void try_start_espnow(void);
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
                            int data_len);
@@ -134,6 +137,8 @@ static bool s_use_espnow = false;
 static bool s_mqtt_connected = false;
 static uint8_t s_espnow_peer[ESP_NOW_ETH_ALEN];
 static volatile bool s_espnow_packet = false;
+static TimerHandle_t s_espnow_timer = NULL;
+static bool s_espnow_active = false;
 static int s_espnow_channel = 0;
 static bool s_have_espnow_mac = false;
 static bool s_have_espnow_chan = false;
@@ -370,22 +375,32 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
     if (!s_use_espnow)
     {
         s_use_espnow = true;
-        if (s_mqtt)
-        {
-            MQTT_Publish(TOPIC_ESPNOW_CMD, "OFF", 1, false);
-            esp_mqtt_client_stop(s_mqtt);
-            s_mqtt_connected = false;
-        }
+    }
+    if (s_espnow_timer)
+    {
+        xTimerStop(s_espnow_timer, 0);
     }
     s_espnow_packet = true;
 }
 
 static void try_start_espnow(void)
 {
-    if (s_use_espnow || !s_have_espnow_mac || !s_have_espnow_chan)
+    if (s_espnow_active || !s_have_espnow_mac || !s_have_espnow_chan)
         return;
+    s_espnow_active = true;
+    if (s_mqtt)
+    {
+        MQTT_Publish(TOPIC_ESPNOW_CMD, "OFF", 1, false);
+        esp_mqtt_client_stop(s_mqtt);
+        s_mqtt_connected = false;
+    }
+    esp_wifi_disconnect();
+    s_wifi_got_ip = false;
     if (esp_now_init() != ESP_OK)
+    {
+        s_espnow_active = false;
         return;
+    }
     esp_now_register_recv_cb(espnow_recv_cb);
     esp_wifi_set_channel(s_espnow_channel, WIFI_SECOND_CHAN_NONE);
     esp_now_peer_info_t peer = {0};
@@ -431,6 +446,30 @@ static void try_start_espnow(void)
     }
     printf("ESP-NOW initialized on channel %d\r\n", s_espnow_channel);
     s_espnow_packet = false;
+    if (!s_espnow_timer)
+    {
+        s_espnow_timer = xTimerCreate("espnow", pdMS_TO_TICKS(ESPNOW_TIMEOUT_MS),
+                                      pdFALSE, NULL, espnow_timeout_cb);
+    }
+    if (s_espnow_timer)
+    {
+        xTimerStart(s_espnow_timer, 0);
+    }
+}
+
+static void espnow_timeout_cb(TimerHandle_t xTimer)
+{
+    (void)xTimer;
+    if (!s_espnow_packet && s_espnow_active)
+    {
+        esp_now_deinit();
+        esp_wifi_connect();
+        if (s_mqtt)
+        {
+            esp_mqtt_client_start(s_mqtt);
+        }
+        s_espnow_active = false;
+    }
 }
 
 bool Wireless_UsingEspNow(void)
