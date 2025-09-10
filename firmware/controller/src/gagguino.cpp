@@ -69,6 +69,10 @@ constexpr int PRESS_PIN = 35;
 constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250,
                    ESP_CYCLE = 500, LOG_CYCLE = 2000;
 
+// Simple handshake bytes for ESP-NOW link-up
+constexpr uint8_t ESPNOW_HANDSHAKE_REQ = 0xAA;
+constexpr uint8_t ESPNOW_HANDSHAKE_ACK = 0x55;
+
 constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when idle (reduced chatter)
 constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
 constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
@@ -192,6 +196,7 @@ static bool g_mqttIpResolved = false;
 static uint8_t g_espnowChannel = 0;
 static String g_espnowStatus = "disabled";
 static String g_espnowMac;
+static bool g_espnowHandshake = false;
 static bool g_mqttDisabled = false;
 static unsigned long g_mqttDisabledSince = 0;
 
@@ -1052,6 +1057,17 @@ static void sendEspNowPacket() {
     esp_now_send(nullptr, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
 }
 
+static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
+    if (len == 1 && data[0] == ESPNOW_HANDSHAKE_REQ) {
+        LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1],
+            mac[2], mac[3], mac[4], mac[5]);
+        uint8_t ack = ESPNOW_HANDSHAKE_ACK;
+        esp_now_send(mac, &ack, 1);
+        g_espnowHandshake = true;
+        LOG("ESP-NOW: handshake acknowledged");
+    }
+}
+
 // ---------- MQTT callback (handle both setpoints) ----------
 /**
  * @brief Handle inbound MQTT commands (setpoints, PID gains, heater switch).
@@ -1196,6 +1212,8 @@ static void initEspNow() {
         memcpy(peerInfo.peer_addr, broadcastAddr, 6);
         peerInfo.encrypt = false;
         espNowInit = true;
+        esp_now_register_recv_cb(espNowRecv);
+        g_espnowHandshake = false;
     }
 
     peerInfo.channel = channel;
@@ -1237,7 +1255,7 @@ static void initEspNow() {
         publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
         publishStr(t_espnow_mac_state, g_espnowMac.c_str(), true);
     }
-    LOG("ESP-NOW: initialized on channel %u", channel);
+    LOG("ESP-NOW: initialized on channel %u — awaiting handshake", channel);
 }
 
 /**
@@ -1487,7 +1505,7 @@ void loop() {
     ensureWifi();
     ensureMqtt();
 
-    if (g_espnowStatus == "enabled" &&
+    if (g_espnowStatus == "enabled" && g_espnowHandshake &&
         (currentTime - lastEspNowTime) >= ESP_CYCLE) {
         sendEspNowPacket();
         lastEspNowTime = currentTime;
