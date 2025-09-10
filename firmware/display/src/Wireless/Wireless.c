@@ -13,7 +13,8 @@
 
 #include "EspNowPacket.h"
 
-#define ESPNOW_TIMEOUT_MS 5000
+#define ESPNOW_TIMEOUT_MS 15000
+#define ESPNOW_PING_PERIOD_MS 500
 
 // --- B: exact topic strings ---------------------------------------------------
 static char TOPIC_HEATER[128];
@@ -51,6 +52,7 @@ static inline bool parse_bool_str(const char *s)
 }
 
 static void espnow_timeout_cb(TimerHandle_t xTimer);
+static void espnow_ping_cb(TimerHandle_t xTimer);
 static volatile bool s_espnow_timeout_req = false;
 static void try_start_espnow(void);
 static volatile bool s_espnow_start_req = false; // request to start espnow (deferred)
@@ -141,6 +143,7 @@ static bool s_mqtt_stopping = false; // avoid repeated stop requests
 static uint8_t s_espnow_peer[ESP_NOW_ETH_ALEN];
 static volatile bool s_espnow_packet = false;
 static TimerHandle_t s_espnow_timer = NULL;
+static TimerHandle_t s_espnow_ping_timer = NULL;
 static bool s_espnow_active = false;
 static int s_espnow_channel = 0;
 static bool s_have_espnow_mac = false;
@@ -243,8 +246,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         {
             s_espnow_channel = atoi(d_copy);
             s_have_espnow_chan = true;
-            // Defer ESP-NOW start to non-MQTT task context
-            s_espnow_start_req = true;
+            // Auto-start when both MAC and channel are known
+            if (!s_espnow_active && s_have_espnow_mac)
+                s_espnow_start_req = true;
         }
         else if (strcmp(t_copy, TOPIC_ESPNOW_MAC) == 0)
         {
@@ -254,8 +258,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
                 for (int i = 0; i < 6; ++i)
                     s_espnow_peer[i] = (uint8_t)b[i];
                 s_have_espnow_mac = true;
-                // Defer ESP-NOW start to non-MQTT task context
-                s_espnow_start_req = true;
+                // Auto-start when both MAC and channel are known
+                if (!s_espnow_active && s_have_espnow_chan)
+                    s_espnow_start_req = true;
             }
         }
         break;
@@ -387,22 +392,38 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
     {
         xTimerStop(s_espnow_timer, 0);
     }
+    if (s_espnow_ping_timer)
+    {
+        xTimerStop(s_espnow_ping_timer, 0);
+    }
     s_espnow_packet = true;
 }
 
 static void try_start_espnow(void)
 {
     if (s_espnow_active || !s_have_espnow_mac || !s_have_espnow_chan)
+    {
+        ESP_LOGI("ESP-NOW", "Start check: active=%d have_mac=%d have_chan=%d",
+                 (int)s_espnow_active, (int)s_have_espnow_mac, (int)s_have_espnow_chan);
         return;
+    }
     // Ensure prerequisites met: MQTT stopped and STA disconnected
-    if (s_mqtt && s_mqtt_connected)
+    if (s_mqtt && s_mqtt_connected && !s_mqtt_stopping)
+    {
+        ESP_LOGI("ESP-NOW", "Waiting for MQTT stop before init");
         return;
+    }
     if (s_wifi_got_ip)
+    {
+        ESP_LOGI("ESP-NOW", "Waiting for STA disconnect before init");
         return;
+    }
     s_espnow_active = true;
+    ESP_LOGI("ESP-NOW", "Initializing on channel %d", s_espnow_channel);
     if (esp_now_init() != ESP_OK)
     {
         s_espnow_active = false;
+        ESP_LOGE("ESP-NOW", "esp_now_init failed");
         return;
     }
     esp_now_register_recv_cb(espnow_recv_cb);
@@ -457,7 +478,31 @@ static void try_start_espnow(void)
     }
     if (s_espnow_timer)
     {
+        ESP_LOGI("ESP-NOW", "Starting timeout timer: %d ms", (int)ESPNOW_TIMEOUT_MS);
         xTimerStart(s_espnow_timer, 0);
+    }
+
+    // Start periodic small probe to wake/validate link
+    if (!s_espnow_ping_timer)
+    {
+        s_espnow_ping_timer = xTimerCreate("espnow_ping", pdMS_TO_TICKS(ESPNOW_PING_PERIOD_MS),
+                                           pdTRUE, NULL, espnow_ping_cb);
+    }
+    if (s_espnow_ping_timer)
+    {
+        ESP_LOGI("ESP-NOW", "Starting ping timer: %d ms", (int)ESPNOW_PING_PERIOD_MS);
+        xTimerStart(s_espnow_ping_timer, 0);
+    }
+}
+
+static void espnow_ping_cb(TimerHandle_t xTimer)
+{
+    (void)xTimer;
+    uint8_t ping = 0xA5;
+    esp_err_t err = esp_now_send(s_espnow_peer, &ping, sizeof(ping));
+    if (err != ESP_OK)
+    {
+        ESP_LOGW("ESP-NOW", "ping send failed: %d", (int)err);
     }
 }
 
@@ -487,6 +532,10 @@ void Wireless_Poll(void)
         if (!s_espnow_packet && s_espnow_active)
         {
             esp_now_deinit();
+            if (s_espnow_ping_timer)
+            {
+                xTimerStop(s_espnow_ping_timer, 0);
+            }
             esp_wifi_connect();
             if (s_mqtt)
             {
@@ -505,11 +554,13 @@ void Wireless_Poll(void)
             // Step 1: stop MQTT client if running
             if (s_mqtt && s_mqtt_connected && !s_mqtt_stopping)
             {
-                // Notify controller that we're switching
-                MQTT_Publish(TOPIC_ESPNOW_CMD, "OFF", 1, false);
+                // Notify controller to switch to ESP-NOW
+                MQTT_Publish(TOPIC_ESPNOW_CMD, "ON", 1, false);
                 esp_mqtt_client_stop(s_mqtt);
                 // Mark stopping to prevent repeated stop calls; wait for DISCONNECTED event
                 s_mqtt_stopping = true;
+                // Be permissive: proceed even if DISCONNECTED event is delayed
+                s_mqtt_connected = false;
                 return;
             }
 
