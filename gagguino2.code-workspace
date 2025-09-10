@@ -1,0 +1,12 @@
+{
+  "folders": [
+    { "path": "firmware/controller" },
+    { "path": "firmware/display" },
+    { "path": "firmware/secrets" },
+    { "path": "firmware/shared" }
+
+],
+  "settings": {
+    "terminal.integrated.defaultProfile.windows": "PowerShell"
+  }
+}
