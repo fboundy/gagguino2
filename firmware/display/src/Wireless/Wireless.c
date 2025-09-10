@@ -393,7 +393,42 @@ static void try_start_espnow(void)
     peer.ifidx = ESP_IF_WIFI_STA;
     peer.channel = s_espnow_channel;
     peer.encrypt = false;
-    esp_now_add_peer(&peer);
+    if (esp_now_is_peer_exist(peer.peer_addr))
+    {
+        esp_now_peer_info_t old_peer = {0};
+        bool have_old = (esp_now_get_peer(peer.peer_addr, &old_peer) == ESP_OK);
+        esp_err_t err = esp_now_mod_peer(&peer);
+        if (err != ESP_OK)
+        {
+            printf("esp_now_mod_peer failed: %d\r\n", err);
+        }
+        else
+        {
+            printf("ESP-NOW peer modified");
+            if (have_old)
+            {
+                if (old_peer.channel != peer.channel)
+                    printf(" channel %d->%d", old_peer.channel, peer.channel);
+                if (old_peer.ifidx != peer.ifidx)
+                    printf(" ifidx %d->%d", old_peer.ifidx, peer.ifidx);
+                if (old_peer.encrypt != peer.encrypt)
+                    printf(" encrypt %d->%d", old_peer.encrypt, peer.encrypt);
+            }
+            printf("\r\n");
+        }
+    }
+    else
+    {
+        esp_err_t err = esp_now_add_peer(&peer);
+        if (err != ESP_OK)
+        {
+            printf("esp_now_add_peer failed: %d\r\n", err);
+        }
+        else
+        {
+            printf("ESP-NOW peer added\r\n");
+        }
+    }
     printf("ESP-NOW initialized on channel %d\r\n", s_espnow_channel);
     s_espnow_packet = false;
 }
