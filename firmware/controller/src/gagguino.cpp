@@ -546,18 +546,19 @@ void setup() {
     setupComplete = true;
 
     WiFi.mode(WIFI_STA);
-    esp_wifi_set_channel(ESPNOW_CHAN, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
     if (esp_now_init() == ESP_OK) {
         esp_now_peer_info_t peer{};
-        memcpy(peer.peer_addr, DISPLAY_MAC_ADDR, ESP_NOW_ETH_ALEN);
-        peer.ifidx = ESP_IF_WIFI_STA;
-        peer.channel = ESPNOW_CHAN;
+        const uint8_t peer_addr[ESP_NOW_ETH_ALEN] = DISPLAY_MAC;
+        memcpy(peer.peer_addr, peer_addr, ESP_NOW_ETH_ALEN);
+        peer.ifidx = WIFI_IF_STA;
+        peer.channel = ESPNOW_CHANNEL;
         peer.encrypt = false;
         esp_now_add_peer(&peer);
     }
     LOG("Pins: FLOW=%d ZC=%d HEAT=%d AC_SENS=%d PRESS=%d  SPI{CS=%d}", FLOW_PIN, ZC_PIN, HEAT_PIN,
         AC_SENS, PRESS_PIN, MAX_CS);
-    LOG("ESP-NOW: channel %u", ESPNOW_CHAN);
+    LOG("ESP-NOW: channel %u", ESPNOW_CHANNEL);
 }
 
 /**
