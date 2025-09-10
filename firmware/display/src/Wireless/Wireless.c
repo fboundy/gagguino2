@@ -137,6 +137,7 @@ static bool s_heater = false;
 static bool s_steam = false;
 static bool s_use_espnow = false;
 static bool s_mqtt_connected = false;
+static bool s_mqtt_stopping = false; // avoid repeated stop requests
 static uint8_t s_espnow_peer[ESP_NOW_ETH_ALEN];
 static volatile bool s_espnow_packet = false;
 static TimerHandle_t s_espnow_timer = NULL;
@@ -199,6 +200,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     case MQTT_EVENT_CONNECTED:
         printf("MQTT connected\r\n");
         s_mqtt_connected = true;
+        s_mqtt_stopping = false;
         mqtt_subscribe_all(true);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_CHAN, 1);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_MAC, 1);
@@ -210,6 +212,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     case MQTT_EVENT_DISCONNECTED:
         printf("MQTT disconnected\r\n");
         s_mqtt_connected = false;
+        s_mqtt_stopping = false;
         break;
 
     case MQTT_EVENT_DATA:
@@ -391,15 +394,12 @@ static void try_start_espnow(void)
 {
     if (s_espnow_active || !s_have_espnow_mac || !s_have_espnow_chan)
         return;
+    // Ensure prerequisites met: MQTT stopped and STA disconnected
+    if (s_mqtt && s_mqtt_connected)
+        return;
+    if (s_wifi_got_ip)
+        return;
     s_espnow_active = true;
-    if (s_mqtt)
-    {
-        MQTT_Publish(TOPIC_ESPNOW_CMD, "OFF", 1, false);
-        esp_mqtt_client_stop(s_mqtt);
-        s_mqtt_connected = false;
-    }
-    esp_wifi_disconnect();
-    s_wifi_got_ip = false;
     if (esp_now_init() != ESP_OK)
     {
         s_espnow_active = false;
@@ -480,6 +480,7 @@ bool Wireless_IsMQTTConnected(void)
 
 void Wireless_Poll(void)
 {
+    // Handle deferred ESP-NOW timeout actions
     if (s_espnow_timeout_req)
     {
         s_espnow_timeout_req = false;
@@ -492,6 +493,38 @@ void Wireless_Poll(void)
                 esp_mqtt_client_start(s_mqtt);
             }
             s_espnow_active = false;
+        }
+    }
+
+    // Ensure sequence: 1) stop MQTT, 2) disconnect STA, 3) init ESP-NOW
+    if (s_espnow_start_req)
+    {
+        // If already active or missing params, wait
+        if (!s_espnow_active && s_have_espnow_mac && s_have_espnow_chan)
+        {
+            // Step 1: stop MQTT client if running
+            if (s_mqtt && s_mqtt_connected && !s_mqtt_stopping)
+            {
+                // Notify controller that we're switching
+                MQTT_Publish(TOPIC_ESPNOW_CMD, "OFF", 1, false);
+                esp_mqtt_client_stop(s_mqtt);
+                // Mark stopping to prevent repeated stop calls; wait for DISCONNECTED event
+                s_mqtt_stopping = true;
+                return;
+            }
+
+            // Step 2: disconnect WiFi STA if still connected (we use s_wifi_got_ip as proxy)
+            if (s_wifi_got_ip)
+            {
+                esp_wifi_disconnect();
+                s_wifi_got_ip = false;
+                return;
+            }
+
+            // Step 3: init ESP-NOW
+            try_start_espnow();
+            // Clear request once begun
+            s_espnow_start_req = false;
         }
     }
 }
