@@ -1167,6 +1167,17 @@ static void initEspNow() {
         return;
     }
 
+    if (channel < 1 || channel > 13) {
+        LOG_ERROR("ESP-NOW: invalid channel %u", channel);
+        g_espnowStatus = "error";
+        g_espnowChannel = 0;
+        if (mqttClient.connected()) {
+            publishStr(t_espnow_state, g_espnowStatus, true);
+            publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
+        }
+        return;
+    }
+
     // Only initialise ESP-NOW once and update the broadcast peer on subsequent
     // Wi-Fi reconnects. Repeated init/deinit was causing log spam and Wi-Fi
     // churn, which in turn dropped the MQTT session.
