@@ -1,0 +1,4 @@
+#pragma once
+#include_next "sdkconfig.h"
+#undef CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH
+#define CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH 4096
