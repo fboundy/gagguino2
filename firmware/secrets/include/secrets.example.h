@@ -13,10 +13,10 @@
 #define MQTT_HOST "homeassistant.local"
 #define MQTT_PORT 1883
 
-/* helpers for URI building */
-#define _S(x) #x
-#define S(x) _S(x)
-#define MQTT_URI "mqtt://" MQTT_HOST ":" S(MQTT_PORT)
+/* helpers for URI building (avoid clash with ctype.h macros) */
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
+#define MQTT_URI "mqtt://" MQTT_HOST ":" STR(MQTT_PORT)
 
 /* auth */
 #define MQTT_USERNAME "mqtt-user"
