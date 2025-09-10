@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include "Wireless.h"
 
 /* Fallback symbol definitions for environments where newer LVGL symbols are
  * not provided. These values correspond to Font Awesome code points and allow
@@ -197,8 +198,7 @@ static void led_event_cb(lv_event_t *e)
 
 static void heater_event_cb(lv_event_t *e)
 {
-  bool heater = MQTT_GetHeaterState();
-  MQTT_SetHeaterState(!heater);
+  (void)e; // Heater control via ESP-NOW not implemented
 }
 
 static void back_event_cb(lv_event_t *e) { lv_scr_load(main_screen); }
@@ -594,37 +594,30 @@ static void draw_ticks_cb(lv_event_t *e)
 
 void example1_increase_lvgl_tick(lv_timer_t *t)
 {
-  float current = MQTT_GetCurrentTemp();
-  float set = MQTT_GetSetTemp();
-  float current_p = MQTT_GetCurrentPressure();
-  float shot_time = MQTT_GetShotTime();
-  float shot_vol = MQTT_GetShotVolume();
-  bool heater = MQTT_GetHeaterState();
-  bool steam = MQTT_GetSteamState();
+  float current = Wireless_GetCurrentTemp();
+  float set = Wireless_GetSetTemp();
+  float current_p = Wireless_GetCurrentPressure();
+  float shot_time = Wireless_GetShotTime();
+  float shot_vol = Wireless_GetShotVolume();
+  bool heater = Wireless_GetHeaterState();
+  bool steam = Wireless_GetSteamState();
 
   enum
   {
     CONN_NONE,
-    CONN_MQTT,
     CONN_ESPNOW
   };
   int conn = CONN_NONE;
   if (Wireless_UsingEspNow())
     conn = CONN_ESPNOW;
-  else if (Wireless_IsMQTTConnected())
-    conn = CONN_MQTT;
 
   if (conn_label && conn != last_conn_type)
   {
     switch (conn)
     {
-    case CONN_MQTT:
-      lv_label_set_text(conn_label, "MQTT");
-      lv_obj_set_style_text_color(conn_label, lv_palette_main(LV_PALETTE_ORANGE), 0);
-      break;
     case CONN_ESPNOW:
       lv_label_set_text(conn_label, "ESP-NOW");
-      lv_obj_set_style_text_color(conn_label, lv_palette_main(LV_PALETTE_CYAN), 0);
+      lv_obj_set_style_text_color(conn_label, lv_palette_main(LV_PALETTE_GREEN), 0);
       break;
     default:
       lv_label_set_text(conn_label, "");
