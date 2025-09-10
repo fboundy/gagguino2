@@ -1,0 +1,9 @@
+
+firmware/secrets/include/secrets.h
+# VS Code folders (per project)
+firmware/controller/.vscode/
+firmware/display/.vscode/
+
+# PlatformIO build folders
+firmware/controller/.pio/
+firmware/display/.pio/
