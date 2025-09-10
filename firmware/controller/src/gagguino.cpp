@@ -1167,27 +1167,52 @@ static void initEspNow() {
         return;
     }
 
-    // Reinitialize on each WiFi connect to follow channel changes
-    esp_now_deinit();
-    if (esp_now_init() != ESP_OK) {
-        LOG_ERROR("ESP-NOW: init failed");
-        g_espnowStatus = "error";
-        if (mqttClient.connected()) publishStr(t_espnow_state, g_espnowStatus, true);
-        return;
-    }
+    // Only initialise ESP-NOW once and update the broadcast peer on subsequent
+    // Wi-Fi reconnects. Repeated init/deinit was causing log spam and Wi-Fi
+    // churn, which in turn dropped the MQTT session.
+    static bool espNowInit = false;
+    static bool espPeerAdded = false;
+    static esp_now_peer_info_t peerInfo{};
     static const uint8_t broadcastAddr[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    esp_now_peer_info_t peerInfo{};
-    memcpy(peerInfo.peer_addr, broadcastAddr, 6);
+
+    if (!espNowInit) {
+        if (esp_now_init() != ESP_OK) {
+            LOG_ERROR("ESP-NOW: init failed");
+            g_espnowStatus = "error";
+            if (mqttClient.connected()) publishStr(t_espnow_state, g_espnowStatus, true);
+            return;
+        }
+        memcpy(peerInfo.peer_addr, broadcastAddr, 6);
+        peerInfo.encrypt = false;
+        espNowInit = true;
+    }
+
     peerInfo.channel = channel;
-    peerInfo.encrypt = false;
-    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-        LOG_ERROR("ESP-NOW: add peer failed");
+    esp_err_t res;
+    if (!espPeerAdded) {
+        res = esp_now_add_peer(&peerInfo);
+        if (res == ESP_OK) {
+            espPeerAdded = true;
+        }
+    } else {
+        res = esp_now_mod_peer(&peerInfo);
+        if (res == ESP_ERR_ESPNOW_NOT_FOUND) {
+            // Peer dropped somehow; try re-adding
+            res = esp_now_add_peer(&peerInfo);
+            if (res == ESP_OK) espPeerAdded = true;
+        }
+    }
+
+    if (res != ESP_OK) {
+        LOG_ERROR("ESP-NOW: add/mod peer failed");
         g_espnowStatus = "error";
         if (mqttClient.connected()) publishStr(t_espnow_state, g_espnowStatus, true);
         return;
     }
+
     g_espnowChannel = channel;
     g_espnowStatus = "enabled";
+
     uint8_t mac[6];
     if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
         char buf[18];
@@ -1195,6 +1220,7 @@ static void initEspNow() {
                  mac[3], mac[4], mac[5]);
         g_espnowMac = buf;
     }
+
     if (mqttClient.connected()) {
         publishStr(t_espnow_state, g_espnowStatus, true);
         publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
