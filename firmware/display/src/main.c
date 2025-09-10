@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "esp_log.h"
 #include "TCA9554PWR.h"
 #include "ST7701S.h"
 #include "CST820.h"
@@ -31,6 +32,11 @@ void Driver_Init(void)
  */
 void app_main(void)
 {
+    // Give host time to open the serial port (USB/UART) before logs start
+    const int boot_delay_ms = 1500; // adjust if needed
+    ESP_LOGI("BOOT", "Delaying %d ms to let serial start", boot_delay_ms);
+    vTaskDelay(pdMS_TO_TICKS(boot_delay_ms));
+
     Wireless_Init();  // Configure Wi-Fi/BLE modules
     Driver_Init();    // Initialize hardware drivers
 
