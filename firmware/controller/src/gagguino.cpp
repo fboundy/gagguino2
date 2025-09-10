@@ -190,6 +190,9 @@ static bool g_mqttIpResolved = false;
 // ESP-NOW diagnostics
 static uint8_t g_espnowChannel = 0;
 static String g_espnowStatus = "disabled";
+static String g_espnowMac;
+static bool g_mqttDisabled = false;
+static unsigned long g_mqttDisabledSince = 0;
 
 // ---------- HA Discovery identity / topics ----------
 const char* DISCOVERY_PREFIX = "homeassistant";
@@ -201,7 +204,8 @@ char uid_suffix[16] = {0};
 
 // Sensor state topics
 char t_shotvol_state[96], t_settemp_state[96], t_curtemp_state[96], t_press_state[96],
-    t_shottime_state[96], t_ota_state[96], t_espnow_state[96], t_espnow_chan_state[96];
+    t_shottime_state[96], t_ota_state[96], t_espnow_state[96], t_espnow_chan_state[96],
+    t_espnow_mac_state[96], t_espnow_cmd[96];
 // OTA command topic
 char t_ota_cmd[96];
 // Switch state/command topics
@@ -652,6 +656,9 @@ static void buildTopics() {
              uid_suffix);
     snprintf(t_espnow_chan_state, sizeof(t_espnow_chan_state), "%s/%s/espnow/channel", STATE_BASE,
              uid_suffix);
+    snprintf(t_espnow_mac_state, sizeof(t_espnow_mac_state), "%s/%s/espnow/mac", STATE_BASE,
+             uid_suffix);
+    snprintf(t_espnow_cmd, sizeof(t_espnow_cmd), "%s/%s/espnow/cmd", STATE_BASE, uid_suffix);
     // heater switch topics
     snprintf(t_heater_state, sizeof(t_heater_state), "%s/%s/heater/state", STATE_BASE, uid_suffix);
     snprintf(t_heater_cmd, sizeof(t_heater_cmd), "%s/%s/heater/set", STATE_BASE, uid_suffix);
@@ -1011,6 +1018,7 @@ static void publishStates() {
     publishNum(t_pulsecnt_state, pulseCount, 0);
     publishStr(t_espnow_state, g_espnowStatus, true);
     publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
+    publishStr(t_espnow_mac_state, g_espnowMac.c_str(), true);
 
     // flags
     publishBool(t_shot_state, shotFlag);
@@ -1123,6 +1131,16 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         publishBool(t_heater_state, heaterEnabled, true);
         LOG("HA: Heater -> %s", heaterEnabled ? "ON" : "OFF");
     }
+    if (parse_onoff(t_espnow_cmd, hv)) {
+        g_mqttDisabled = !hv;
+        if (g_mqttDisabled) {
+            g_mqttDisabledSince = millis();
+            mqttClient.disconnect();
+            LOG("HA: MQTT disabled");
+        } else {
+            LOG("HA: MQTT enabled");
+        }
+    }
     if (strcmp(topic, t_ota_cmd) == 0) {
         otaActive = true;
         otaStart = millis();
@@ -1169,9 +1187,17 @@ static void initEspNow() {
     }
     g_espnowChannel = channel;
     g_espnowStatus = "enabled";
+    uint8_t mac[6];
+    if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
+        char buf[18];
+        snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2],
+                 mac[3], mac[4], mac[5]);
+        g_espnowMac = buf;
+    }
     if (mqttClient.connected()) {
         publishStr(t_espnow_state, g_espnowStatus, true);
         publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
+        publishStr(t_espnow_mac_state, g_espnowMac.c_str(), true);
     }
     LOG("ESP-NOW: initialized on channel %u", channel);
 }
@@ -1236,6 +1262,11 @@ static void ensureWifi() {
  * @brief Maintain MQTT session, (re)publish discovery and subscribe to commands.
  */
 static void ensureMqtt() {
+    if (g_mqttDisabled) {
+        if (mqttClient.connected()) mqttClient.disconnect();
+        if (millis() - g_mqttDisabledSince < 30000) return;
+        g_mqttDisabled = false;
+    }
     // Skip MQTT servicing during OTA to avoid starving the OTA socket
     if (!otaActive) {
         mqttClient.loop();
@@ -1269,6 +1300,7 @@ static void ensureMqtt() {
             mqttClient.subscribe(t_piddtau_cmd);
             // heater switch
             mqttClient.subscribe(t_heater_cmd);
+            mqttClient.subscribe(t_espnow_cmd);
             // ✅ B) Immediately publish a full snapshot so HA has data right away
             // Do this only once, right after a successful (re)connect.
             resetPublishCache();

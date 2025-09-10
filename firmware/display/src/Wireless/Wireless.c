@@ -21,6 +21,9 @@ static char TOPIC_SETTEMP[128];
 static char TOPIC_PRESSURE[128];
 static char TOPIC_SHOTVOL[128];
 static char TOPIC_SHOT[128];
+static char TOPIC_ESPNOW_CHAN[128];
+static char TOPIC_ESPNOW_MAC[128];
+static char TOPIC_ESPNOW_CMD[128];
 
 static inline void build_topics(void)
 {
@@ -33,6 +36,9 @@ static inline void build_topics(void)
     snprintf(TOPIC_PRESSURE, sizeof TOPIC_PRESSURE, "gaggia_classic/%s/pressure/state", GAGGIA_ID);
     snprintf(TOPIC_SHOTVOL, sizeof TOPIC_SHOTVOL, "gaggia_classic/%s/shot_volume/state", GAGGIA_ID);
     snprintf(TOPIC_SHOT, sizeof TOPIC_SHOT, "gaggia_classic/%s/shot/state", GAGGIA_ID);
+    snprintf(TOPIC_ESPNOW_CHAN, sizeof TOPIC_ESPNOW_CHAN, "gaggia_classic/%s/espnow/channel", GAGGIA_ID);
+    snprintf(TOPIC_ESPNOW_MAC, sizeof TOPIC_ESPNOW_MAC, "gaggia_classic/%s/espnow/mac", GAGGIA_ID);
+    snprintf(TOPIC_ESPNOW_CMD, sizeof TOPIC_ESPNOW_CMD, "gaggia_classic/%s/espnow/cmd", GAGGIA_ID);
 }
 
 // tolerant bool parse: "1"/"true"/"on" => true
@@ -41,7 +47,7 @@ static inline bool parse_bool_str(const char *s)
     return (strcmp(s, "1") == 0) || (strcasecmp(s, "true") == 0) || (strcasecmp(s, "on") == 0);
 }
 
-static bool espnow_try_connect(void);
+static void try_start_espnow(void);
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
                            int data_len);
 
@@ -94,13 +100,6 @@ void WIFI_Init(void *arg)
         IP_EVENT, IP_EVENT_STA_GOT_IP, &on_got_ip, NULL, NULL));
 
     ESP_ERROR_CHECK(esp_wifi_start());
-
-    if (espnow_try_connect())
-    {
-        vTaskDelete(NULL);
-        return;
-    }
-
     ESP_ERROR_CHECK(esp_wifi_connect());
 
     // Wait up to ~10s for IP
@@ -117,6 +116,7 @@ void WIFI_Init(void *arg)
     // Start MQTT client once network is up
     extern void MQTT_Start(void);
     MQTT_Start();
+    try_start_espnow();
 
     vTaskDelete(NULL);
 }
@@ -134,6 +134,8 @@ static bool s_mqtt_connected = false;
 static uint8_t s_espnow_peer[ESP_NOW_ETH_ALEN];
 static volatile bool s_espnow_packet = false;
 static int s_espnow_channel = 0;
+static bool s_have_espnow_mac = false;
+static bool s_have_espnow_chan = false;
 static const char *s_mqtt_topics[] = {
     "brew_setpoint",
     "steam_setpoint",
@@ -190,6 +192,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         printf("MQTT connected\r\n");
         s_mqtt_connected = true;
         mqtt_subscribe_all(true);
+        esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_CHAN, 1);
+        esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_MAC, 1);
 #ifdef MQTT_LWT_TOPIC
         esp_mqtt_client_publish(event->client, MQTT_LWT_TOPIC, "online", 0, 1, true);
 #endif
@@ -224,6 +228,23 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             s_heater = parse_bool_str(d_copy);
         else if (strcmp(t_copy, TOPIC_STEAM) == 0)
             s_steam = parse_bool_str(d_copy);
+        else if (strcmp(t_copy, TOPIC_ESPNOW_CHAN) == 0)
+        {
+            s_espnow_channel = atoi(d_copy);
+            s_have_espnow_chan = true;
+            try_start_espnow();
+        }
+        else if (strcmp(t_copy, TOPIC_ESPNOW_MAC) == 0)
+        {
+            unsigned int b[6];
+            if (sscanf(d_copy, "%02x:%02x:%02x:%02x:%02x:%02x", &b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) == 6)
+            {
+                for (int i = 0; i < 6; ++i)
+                    s_espnow_peer[i] = (uint8_t)b[i];
+                s_have_espnow_mac = true;
+                try_start_espnow();
+            }
+        }
         break;
     }
 
@@ -345,35 +366,35 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
     {
         memcpy(s_espnow_peer, info->src_addr, ESP_NOW_ETH_ALEN);
     }
+    if (!s_use_espnow)
+    {
+        s_use_espnow = true;
+        if (s_mqtt)
+        {
+            MQTT_Publish(TOPIC_ESPNOW_CMD, "OFF", 1, false);
+            esp_mqtt_client_stop(s_mqtt);
+            s_mqtt_connected = false;
+        }
+    }
     s_espnow_packet = true;
 }
 
-static bool espnow_try_connect(void)
+static void try_start_espnow(void)
 {
+    if (s_use_espnow || !s_have_espnow_mac || !s_have_espnow_chan)
+        return;
     if (esp_now_init() != ESP_OK)
-        return false;
+        return;
     esp_now_register_recv_cb(espnow_recv_cb);
-    for (int ch = 1; ch <= 13; ++ch)
-    {
-        s_espnow_packet = false;
-        esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        if (s_espnow_packet)
-        {
-            s_use_espnow = true;
-            s_espnow_channel = ch;
-            esp_now_peer_info_t peer = {0};
-            memcpy(peer.peer_addr, s_espnow_peer, ESP_NOW_ETH_ALEN);
-            peer.ifidx = ESP_IF_WIFI_STA;
-            peer.channel = ch;
-            peer.encrypt = false;
-            esp_now_add_peer(&peer);
-            printf("ESP-NOW peer found on channel %d\r\n", ch);
-            return true;
-        }
-    }
-    esp_now_deinit();
-    return false;
+    esp_wifi_set_channel(s_espnow_channel, WIFI_SECOND_CHAN_NONE);
+    esp_now_peer_info_t peer = {0};
+    memcpy(peer.peer_addr, s_espnow_peer, ESP_NOW_ETH_ALEN);
+    peer.ifidx = ESP_IF_WIFI_STA;
+    peer.channel = s_espnow_channel;
+    peer.encrypt = false;
+    esp_now_add_peer(&peer);
+    printf("ESP-NOW initialized on channel %d\r\n", s_espnow_channel);
+    s_espnow_packet = false;
 }
 
 bool Wireless_UsingEspNow(void)
