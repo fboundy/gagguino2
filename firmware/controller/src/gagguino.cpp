@@ -35,6 +35,7 @@
 #include <map>
 
 #include "secrets.h"  // WIFI_*, MQTT_*
+#include "mqtt_topics.h"  // GAG_TOPIC_ROOT
 #include "espnow_packet.h"
 
 #define VERSION "7.0"
@@ -197,7 +198,7 @@ static unsigned long g_mqttDisabledSince = 0;
 // ---------- HA Discovery identity / topics ----------
 const char* DISCOVERY_PREFIX = "homeassistant";
 // If your broker ACLs need a username prefix, change this:
-const char* STATE_BASE = "gaggia_classic";
+const char* STATE_BASE = GAG_TOPIC_ROOT;
 
 char dev_id[32] = {0};
 char uid_suffix[16] = {0};
