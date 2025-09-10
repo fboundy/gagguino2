@@ -51,7 +51,9 @@ static inline bool parse_bool_str(const char *s)
 }
 
 static void espnow_timeout_cb(TimerHandle_t xTimer);
+static volatile bool s_espnow_timeout_req = false;
 static void try_start_espnow(void);
+static volatile bool s_espnow_start_req = false; // request to start espnow (deferred)
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
                            int data_len);
 
@@ -238,7 +240,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         {
             s_espnow_channel = atoi(d_copy);
             s_have_espnow_chan = true;
-            try_start_espnow();
+            // Defer ESP-NOW start to non-MQTT task context
+            s_espnow_start_req = true;
         }
         else if (strcmp(t_copy, TOPIC_ESPNOW_MAC) == 0)
         {
@@ -248,7 +251,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
                 for (int i = 0; i < 6; ++i)
                     s_espnow_peer[i] = (uint8_t)b[i];
                 s_have_espnow_mac = true;
-                try_start_espnow();
+                // Defer ESP-NOW start to non-MQTT task context
+                s_espnow_start_req = true;
             }
         }
         break;
@@ -460,16 +464,8 @@ static void try_start_espnow(void)
 static void espnow_timeout_cb(TimerHandle_t xTimer)
 {
     (void)xTimer;
-    if (!s_espnow_packet && s_espnow_active)
-    {
-        esp_now_deinit();
-        esp_wifi_connect();
-        if (s_mqtt)
-        {
-            esp_mqtt_client_start(s_mqtt);
-        }
-        s_espnow_active = false;
-    }
+    // Defer heavy work to a normal task context
+    s_espnow_timeout_req = true;
 }
 
 bool Wireless_UsingEspNow(void)
@@ -480,4 +476,22 @@ bool Wireless_UsingEspNow(void)
 bool Wireless_IsMQTTConnected(void)
 {
     return s_mqtt_connected;
+}
+
+void Wireless_Poll(void)
+{
+    if (s_espnow_timeout_req)
+    {
+        s_espnow_timeout_req = false;
+        if (!s_espnow_packet && s_espnow_active)
+        {
+            esp_now_deinit();
+            esp_wifi_connect();
+            if (s_mqtt)
+            {
+                esp_mqtt_client_start(s_mqtt);
+            }
+            s_espnow_active = false;
+        }
+    }
 }

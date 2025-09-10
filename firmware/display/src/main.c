@@ -57,6 +57,7 @@ void app_main(void)
     while (1) {
         // Raise task priority or reduce handler period to improve performance
         // Run lv_timer_handler every 250 ms
+        Wireless_Poll();
         vTaskDelay(pdMS_TO_TICKS(250));
         // Task running lv_timer_handler should have lower priority than that running `lv_tick_inc`
         lv_timer_handler();
