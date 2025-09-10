@@ -1,6 +1,8 @@
 // secrets.h
 #pragma once
 
+#include "mqtt_topics.h"
+
 /* ===== Device ===== */
 #define GAGGIA_ID "D94F94"
 
@@ -20,15 +22,14 @@
 
 /* auth */
 #define MQTT_USERNAME "mqtt-user"
-#define MQTT_PASSWORD_MQTT "0pl,mko9" /* avoid name clash with WIFI_PASSWORD */
-#define MQTT_USER MQTT_USERNAME       /* aliases for legacy names */
-#define MQTT_PASS MQTT_PASSWORD_MQTT
+#define MQTT_PASSWORD "0pl,mko9"
+#define MQTT_USER MQTT_USERNAME  /* aliases for legacy names */
+#define MQTT_PASS MQTT_PASSWORD
 
 /* client id */
-#define MQTT_CLIENT_ID "gaggia-display"
+#define MQTT_CLIENT_ID "gaggia-device"
 #define MQTT_CLIENTID MQTT_CLIENT_ID /* alias */
 
 /* ===== Topics ===== */
-#define MQTT_TOPIC "homeassistant/espresso/telemetry"
-#define MQTT_STATUS "homeassistant/espresso/status"
-#define MQTT_ERRORS "homeassistant/espresso/error"
+#define MQTT_STATUS GAG_TOPIC_ROOT "/" GAGGIA_ID "/status"
+#define MQTT_ERRORS GAG_TOPIC_ROOT "/" GAGGIA_ID "/error"

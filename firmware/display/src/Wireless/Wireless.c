@@ -5,6 +5,7 @@
 #include "freertos/timers.h"
 #include "mqtt_client.h"
 #include "secrets.h"
+#include "mqtt_topics.h"
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>  // strcmp, memcpy, strncpy
@@ -27,18 +28,18 @@ static char TOPIC_ESPNOW_CMD[128];
 
 static inline void build_topics(void)
 {
-    snprintf(TOPIC_HEATER, sizeof TOPIC_HEATER, "gaggia_classic/%s/heater/state", GAGGIA_ID);
+    snprintf(TOPIC_HEATER, sizeof TOPIC_HEATER, "%s/%s/heater/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_HEATER_SET, sizeof TOPIC_HEATER_SET,
-             "gaggia_classic/%s/heater/set", GAGGIA_ID);
-    snprintf(TOPIC_STEAM, sizeof TOPIC_STEAM, "gaggia_classic/%s/steam/state", GAGGIA_ID);
-    snprintf(TOPIC_CURTEMP, sizeof TOPIC_CURTEMP, "gaggia_classic/%s/current_temp/state", GAGGIA_ID);
-    snprintf(TOPIC_SETTEMP, sizeof TOPIC_SETTEMP, "gaggia_classic/%s/set_temp/state", GAGGIA_ID);
-    snprintf(TOPIC_PRESSURE, sizeof TOPIC_PRESSURE, "gaggia_classic/%s/pressure/state", GAGGIA_ID);
-    snprintf(TOPIC_SHOTVOL, sizeof TOPIC_SHOTVOL, "gaggia_classic/%s/shot_volume/state", GAGGIA_ID);
-    snprintf(TOPIC_SHOT, sizeof TOPIC_SHOT, "gaggia_classic/%s/shot/state", GAGGIA_ID);
-    snprintf(TOPIC_ESPNOW_CHAN, sizeof TOPIC_ESPNOW_CHAN, "gaggia_classic/%s/espnow/channel", GAGGIA_ID);
-    snprintf(TOPIC_ESPNOW_MAC, sizeof TOPIC_ESPNOW_MAC, "gaggia_classic/%s/espnow/mac", GAGGIA_ID);
-    snprintf(TOPIC_ESPNOW_CMD, sizeof TOPIC_ESPNOW_CMD, "gaggia_classic/%s/espnow/cmd", GAGGIA_ID);
+             "%s/%s/heater/set", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_STEAM, sizeof TOPIC_STEAM, "%s/%s/steam/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_CURTEMP, sizeof TOPIC_CURTEMP, "%s/%s/current_temp/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_SETTEMP, sizeof TOPIC_SETTEMP, "%s/%s/set_temp/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PRESSURE, sizeof TOPIC_PRESSURE, "%s/%s/pressure/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_SHOTVOL, sizeof TOPIC_SHOTVOL, "%s/%s/shot_volume/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_SHOT, sizeof TOPIC_SHOT, "%s/%s/shot/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_ESPNOW_CHAN, sizeof TOPIC_ESPNOW_CHAN, "%s/%s/espnow/channel", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_ESPNOW_MAC, sizeof TOPIC_ESPNOW_MAC, "%s/%s/espnow/mac", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_ESPNOW_CMD, sizeof TOPIC_ESPNOW_CMD, "%s/%s/espnow/cmd", GAG_TOPIC_ROOT, GAGGIA_ID);
 }
 
 // tolerant bool parse: "1"/"true"/"on" => true
@@ -156,8 +157,8 @@ static void mqtt_subscribe_all(bool log)
     for (size_t i = 0; i < (sizeof(s_mqtt_topics) / sizeof(s_mqtt_topics[0]));
          ++i)
     {
-        int n = snprintf(topic_buf, sizeof(topic_buf), "gaggia_classic/%s/%s/state",
-                         GAGGIA_ID, s_mqtt_topics[i]);
+        int n = snprintf(topic_buf, sizeof(topic_buf), "%s/%s/%s/state",
+                         GAG_TOPIC_ROOT, GAGGIA_ID, s_mqtt_topics[i]);
         if (n > 0 && n < (int)sizeof(topic_buf))
         {
             esp_mqtt_client_subscribe(s_mqtt, topic_buf, 1);
@@ -194,8 +195,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         mqtt_subscribe_all(true);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_CHAN, 1);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_MAC, 1);
-#ifdef MQTT_LWT_TOPIC
-        esp_mqtt_client_publish(event->client, MQTT_LWT_TOPIC, "online", 0, 1, true);
+#ifdef MQTT_STATUS
+        esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
 #endif
         break;
 
@@ -263,8 +264,8 @@ void MQTT_Start(void)
     esp_mqtt_client_config_t cfg = {
         .broker.address.uri = MQTT_URI,
         .session.last_will = {
-#ifdef MQTT_LWT_TOPIC
-            .topic = MQTT_LWT_TOPIC,
+#ifdef MQTT_STATUS
+            .topic = MQTT_STATUS,
             .msg = "offline",
             .msg_len = 7,
             .qos = 1,
