@@ -15,6 +15,8 @@
 
 #define ESPNOW_TIMEOUT_MS 15000
 #define ESPNOW_PING_PERIOD_MS 500
+#define ESPNOW_HANDSHAKE_REQ 0xAA
+#define ESPNOW_HANDSHAKE_ACK 0x55
 
 // --- B: exact topic strings ---------------------------------------------------
 static char TOPIC_HEATER[128];
@@ -145,6 +147,7 @@ static volatile bool s_espnow_packet = false;
 static TimerHandle_t s_espnow_timer = NULL;
 static TimerHandle_t s_espnow_ping_timer = NULL;
 static bool s_espnow_active = false;
+static bool s_espnow_handshake = false;
 static int s_espnow_channel = 0;
 static bool s_have_espnow_mac = false;
 static bool s_have_espnow_chan = false;
@@ -360,6 +363,25 @@ int MQTT_Publish(const char *topic, const char *payload, int qos, bool retain)
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
                            int data_len)
 {
+    if (data_len == 1 && data[0] == ESPNOW_HANDSHAKE_ACK)
+    {
+        if (info)
+            ESP_LOGI("ESP-NOW", "Handshake ack from %02X:%02X:%02X:%02X:%02X:%02X",
+                     info->src_addr[0], info->src_addr[1], info->src_addr[2],
+                     info->src_addr[3], info->src_addr[4], info->src_addr[5]);
+        else
+            ESP_LOGI("ESP-NOW", "Handshake acknowledged");
+        s_espnow_handshake = true;
+        s_use_espnow = true;
+        s_espnow_packet = true;
+        if (info)
+            memcpy(s_espnow_peer, info->src_addr, ESP_NOW_ETH_ALEN);
+        if (s_espnow_timer)
+            xTimerReset(s_espnow_timer, 0);
+        if (s_espnow_ping_timer)
+            xTimerReset(s_espnow_ping_timer, 0);
+        return;
+    }
     if (data_len == sizeof(struct EspNowPacket))
     {
         const struct EspNowPacket *pkt = (const struct EspNowPacket *)data;
@@ -493,16 +515,33 @@ static void try_start_espnow(void)
         ESP_LOGI("ESP-NOW", "Starting ping timer: %d ms", (int)ESPNOW_PING_PERIOD_MS);
         xTimerStart(s_espnow_ping_timer, 0);
     }
+
+    // Kick off handshake
+    s_espnow_handshake = false;
+    uint8_t hs = ESPNOW_HANDSHAKE_REQ;
+    esp_err_t err = esp_now_send(s_espnow_peer, &hs, 1);
+    if (err != ESP_OK)
+    {
+        ESP_LOGW("ESP-NOW", "handshake send failed: %d", (int)err);
+    }
+    else
+    {
+        ESP_LOGI("ESP-NOW", "Handshake request sent");
+    }
 }
 
 static void espnow_ping_cb(TimerHandle_t xTimer)
 {
     (void)xTimer;
-    uint8_t ping = 0xA5;
-    esp_err_t err = esp_now_send(s_espnow_peer, &ping, sizeof(ping));
+    uint8_t b = s_espnow_handshake ? 0xA5 : ESPNOW_HANDSHAKE_REQ;
+    esp_err_t err = esp_now_send(s_espnow_peer, &b, 1);
     if (err != ESP_OK)
     {
-        ESP_LOGW("ESP-NOW", "ping send failed: %d", (int)err);
+        ESP_LOGW("ESP-NOW", "ping/handshake send failed: %d", (int)err);
+    }
+    else if (!s_espnow_handshake)
+    {
+        ESP_LOGI("ESP-NOW", "Handshake request sent");
     }
 }
 
@@ -542,6 +581,7 @@ void Wireless_Poll(void)
                 esp_mqtt_client_start(s_mqtt);
             }
             s_espnow_active = false;
+            s_espnow_handshake = false;
         }
     }
 
