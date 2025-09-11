@@ -29,16 +29,16 @@
 #include <esp_timer.h>
 #include <esp_wifi.h>
 #include <math.h>
-
-#include <cstdarg>
 #include <string.h>
-#include <map>
 #include <sys/time.h>
 #include <time.h>
 
-#include "secrets.h"  // WIFI_*, MQTT_*
-#include "mqtt_topics.h"  // GAG_TOPIC_ROOT
+#include <cstdarg>
+#include <map>
+
 #include "espnow_packet.h"
+#include "mqtt_topics.h"  // GAG_TOPIC_ROOT
+#include "secrets.h"      // WIFI_*, MQTT_*
 
 #define VERSION "7.0"
 #define STARTUP_WAIT 1000
@@ -74,8 +74,8 @@ constexpr int FLOW_PIN = 26, ZC_PIN = 25, HEAT_PIN = 27, AC_SENS = 14;
 constexpr int MAX_CS = 16;
 constexpr int PRESS_PIN = 35;
 
-constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250,
-                   ESP_CYCLE = 500, LOG_CYCLE = 2000;
+constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP_CYCLE = 500,
+                        LOG_CYCLE = 2000;
 
 // Simple handshake bytes for ESP-NOW link-up
 constexpr uint8_t ESPNOW_HANDSHAKE_REQ = 0xAA;
@@ -104,7 +104,7 @@ constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
 // Derivative filter time constant (seconds), exposed to HA
 constexpr float D_TAU_TEMP = 0.8f;
 
-constexpr float PRESS_TOL = 0.4f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
+constexpr float PRESS_TOL = 1.0f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
 constexpr int PRESS_BUFF_SIZE = 14;
 constexpr float PRESS_THRESHOLD = 9.0f;
 
@@ -165,8 +165,8 @@ static void syncClock() {
     configTime(0, 0, "pool.ntp.org");
     struct tm tm;
     if (getLocalTime(&tm, 5000)) {
-        LOG("RTC: %04d-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1,
-            tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+        LOG("RTC: %04d-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+            tm.tm_hour, tm.tm_min, tm.tm_sec);
         g_clockSynced = true;
     } else {
         LOG_ERROR("RTC: sync failed");
@@ -687,8 +687,7 @@ static void buildTopics() {
              uid_suffix);
     snprintf(t_ota_state, sizeof(t_ota_state), "%s/%s/ota/status", STATE_BASE, uid_suffix);
     snprintf(t_ota_cmd, sizeof(t_ota_cmd), "%s/%s/ota/enable", STATE_BASE, uid_suffix);
-    snprintf(t_espnow_state, sizeof(t_espnow_state), "%s/%s/espnow/status", STATE_BASE,
-             uid_suffix);
+    snprintf(t_espnow_state, sizeof(t_espnow_state), "%s/%s/espnow/status", STATE_BASE, uid_suffix);
     snprintf(t_espnow_chan_state, sizeof(t_espnow_chan_state), "%s/%s/espnow/channel", STATE_BASE,
              uid_suffix);
     snprintf(t_espnow_mac_state, sizeof(t_espnow_mac_state), "%s/%s/espnow/mac", STATE_BASE,
@@ -745,8 +744,8 @@ static void buildTopics() {
     snprintf(c_ota, sizeof(c_ota), "%s/sensor/%s_ota_status/config", DISCOVERY_PREFIX, dev_id);
     snprintf(c_espnow, sizeof(c_espnow), "%s/sensor/%s_espnow_status/config", DISCOVERY_PREFIX,
              dev_id);
-    snprintf(c_espnow_chan, sizeof(c_espnow_chan),
-             "%s/sensor/%s_espnow_channel/config", DISCOVERY_PREFIX, dev_id);
+    snprintf(c_espnow_chan, sizeof(c_espnow_chan), "%s/sensor/%s_espnow_channel/config",
+             DISCOVERY_PREFIX, dev_id);
 
     snprintf(c_shot, sizeof(c_shot), "%s/binary_sensor/%s_shot/config", DISCOVERY_PREFIX, dev_id);
     snprintf(c_preflow, sizeof(c_preflow), "%s/binary_sensor/%s_preflow/config", DISCOVERY_PREFIX,
@@ -855,11 +854,11 @@ static void publishDiscovery() {
                    "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     publishRetained(
-        c_espnow,
-        String("{\"name\":\"ESP-NOW Status\",\"uniq_id\":\"") + dev_id +
-            "_espnow_status\",\"stat_t\":\"" + t_espnow_state +
-            "\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" + String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+        c_espnow, String("{\"name\":\"ESP-NOW Status\",\"uniq_id\":\"") + dev_id +
+                      "_espnow_status\",\"stat_t\":\"" + t_espnow_state +
+                      "\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" + String(MQTT_STATUS) +
+                      "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
+                      "}");
     publishRetained(
         c_espnow_chan,
         String("{\"name\":\"ESP-NOW Channel\",\"uniq_id\":\"") + dev_id +
@@ -1094,8 +1093,8 @@ static void sendEspNowPacket() {
 
 static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
     if (len == 1 && data[0] == ESPNOW_HANDSHAKE_REQ) {
-        LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1],
-            mac[2], mac[3], mac[4], mac[5]);
+        LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3],
+            mac[4], mac[5]);
         uint8_t ack = ESPNOW_HANDSHAKE_ACK;
         // Ensure we can reply directly to the sender. If the display has not
         // yet been registered as a peer, add it now so the ACK can be sent
@@ -1295,8 +1294,8 @@ static void initEspNow() {
     uint8_t mac[6];
     if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
         char buf[18];
-        snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2],
-                 mac[3], mac[4], mac[5]);
+        snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3],
+                 mac[4], mac[5]);
         g_espnowMac = buf;
     }
 
