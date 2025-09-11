@@ -1062,7 +1062,12 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
         LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1],
             mac[2], mac[3], mac[4], mac[5]);
         uint8_t ack = ESPNOW_HANDSHAKE_ACK;
-        esp_now_send(mac, &ack, 1);
+        // Broadcast the acknowledgement so the display receives it even
+        // before it has been added as a peer on this controller. Sending to
+        // the specific MAC requires the peer to be registered and was
+        // causing the display to miss the ACK, resulting in repeated
+        // handshake requests.
+        esp_now_send(nullptr, &ack, 1);
         g_espnowHandshake = true;
         LOG("ESP-NOW: handshake acknowledged");
     }
