@@ -21,9 +21,13 @@
 #define MQTT_USER MQTT_USERNAME /* aliases for legacy names */
 #define MQTT_PASS MQTT_PASSWORD
 
-/* client id */
-#define MQTT_CLIENT_ID "gaggia-device"
-#define MQTT_CLIENTID MQTT_CLIENT_ID /* alias */
+/* client ids */
+#define MQTT_CONTROLLER_CLIENT_ID "gaggia-controller"
+#define MQTT_DISPLAY_CLIENT_ID "gaggia-display"
+
+/* legacy aliases */
+#define MQTT_CLIENT_ID MQTT_CONTROLLER_CLIENT_ID
+#define MQTT_CLIENTID MQTT_CLIENT_ID
 
 /* ===== Topics ===== */
 #define MQTT_STATUS GAG_TOPIC_ROOT "/" GAGGIA_ID "/status"
