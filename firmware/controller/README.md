@@ -29,7 +29,7 @@ Getting Started
 2) Configure secrets
 - Edit `src/secrets.h` and set:
   - `WIFI_SSID`, `WIFI_PASSWORD`
-  - `MQTT_HOST`, `MQTT_PORT`, `MQTT_CLIENTID`, `MQTT_USER`, `MQTT_PASS`
+  - `MQTT_HOST`, `MQTT_PORT`, `MQTT_CLIENT_ID`, `MQTT_USERNAME`, `MQTT_PASSWORD`
 - Tip: Avoid committing real credentials. Consider ignoring or templating this file in your fork.
 
 3) Build and upload (USB)

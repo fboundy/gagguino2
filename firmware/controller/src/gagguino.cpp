@@ -118,6 +118,9 @@ Adafruit_MAX31865 max31865(MAX_CS);
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
+static char MQTT_STATUS[128];
+static char MQTT_ERRORS[128];
+
 // Rolling buffer of recent significant error messages
 static String g_errorLog;
 
@@ -143,6 +146,11 @@ static inline void LOG_ERROR(const char* fmt, ...) {
     }
 
     if (mqttClient.connected()) mqttClient.publish(MQTT_ERRORS, g_errorLog.c_str(), true);
+}
+
+static inline void build_topics() {
+    snprintf(MQTT_STATUS, sizeof MQTT_STATUS, "%s/%s/status", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(MQTT_ERRORS, sizeof MQTT_ERRORS, "%s/%s/error", GAG_TOPIC_ROOT, GAGGIA_ID);
 }
 
 // Temps / PID
@@ -1379,14 +1387,15 @@ static void ensureMqtt() {
     static unsigned long lastAttempt = 0;
     if (millis() - lastAttempt < 2000) return;
     lastAttempt = millis();
-    LOG("MQTT: connecting to %s:%u as '%s' (user=%s)…", MQTT_HOST, MQTT_PORT, MQTT_CLIENTID,
-        (MQTT_USER && MQTT_USER[0]) ? MQTT_USER : "(none)");
+    LOG("MQTT: connecting to %s:%u as '%s' (user=%s)…", MQTT_HOST, MQTT_PORT, MQTT_CLIENT_ID,
+        (MQTT_USERNAME && MQTT_USERNAME[0]) ? MQTT_USERNAME : "(none)");
     bool ok;
-    if (MQTT_USER && MQTT_USER[0])
-        ok = mqttClient.connect(MQTT_CLIENTID, MQTT_USER, MQTT_PASS, MQTT_STATUS, 0, true,
-                                "offline");
+    if (MQTT_USERNAME && MQTT_USERNAME[0])
+        ok = mqttClient.connect(MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD, MQTT_STATUS, 0,
+                                true, "offline");
     else
-        ok = mqttClient.connect(MQTT_CLIENTID, nullptr, nullptr, MQTT_STATUS, 0, true, "offline");
+        ok = mqttClient.connect(MQTT_CLIENT_ID, nullptr, nullptr, MQTT_STATUS, 0, true,
+                                "offline");
     if (!ok)
         LOG_ERROR("MQTT: connect failed rc=%d (%s)  WiFi=%s RSSI=%d IP=%s GW=%s",
                   mqttClient.state(), mqttStateName(mqttClient.state()),
@@ -1404,6 +1413,7 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
     delay(300);
     LOG("Booting… FW %s", VERSION);
+    build_topics();
 
 #if defined(ARDUINO_ARCH_ESP32)
     analogReadResolution(12);
@@ -1461,7 +1471,7 @@ void setup() {
     LOG("Pins: FLOW=%d ZC=%d HEAT=%d AC_SENS=%d PRESS=%d  SPI{CS=%d}", FLOW_PIN, ZC_PIN, HEAT_PIN,
         AC_SENS, PRESS_PIN, MAX_CS);
     LOG("WiFi: connecting to '%s'…  MQTT: %s:%u id=%s", WIFI_SSID, MQTT_HOST, MQTT_PORT,
-        MQTT_CLIENTID);
+        MQTT_CLIENT_ID);
 }
 
 /**

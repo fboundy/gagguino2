@@ -25,7 +25,7 @@
     LOG("Pins: FLOW=%d ZC=%d HEAT=%d AC_SENS=%d PRESS=%d  SPI{CS=%d}",
         FLOW_PIN, ZC_PIN, HEAT_PIN, AC_SENS, PRESS_PIN, MAX_CS);
     LOG("WiFi: connecting to '%s'…  MQTT: %s:%u id=%s", WIFI_SSID, MQTT_HOST, MQTT_PORT,
-        MQTT_CLIENTID);
+        MQTT_CLIENT_ID);
 }
 
 void loop() {

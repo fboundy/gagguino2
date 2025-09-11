@@ -19,6 +19,7 @@
 #define ESPNOW_HANDSHAKE_ACK 0x55
 
 // --- B: exact topic strings ---------------------------------------------------
+static char TOPIC_STATUS[128];
 static char TOPIC_HEATER[128];
 static char TOPIC_HEATER_SET[128];
 static char TOPIC_STEAM[128];
@@ -33,6 +34,7 @@ static char TOPIC_ESPNOW_CMD[128];
 
 static inline void build_topics(void)
 {
+    snprintf(TOPIC_STATUS, sizeof TOPIC_STATUS, "%s/%s/status", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_HEATER, sizeof TOPIC_HEATER, "%s/%s/heater/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_HEATER_SET, sizeof TOPIC_HEATER_SET,
              "%s/%s/heater/set", GAG_TOPIC_ROOT, GAGGIA_ID);
@@ -101,7 +103,7 @@ void WIFI_Init(void *arg)
     // Apply credentials from secrets.h
     wifi_config_t sta_cfg = {0};
     strncpy((char *)sta_cfg.sta.ssid, WIFI_SSID, sizeof(sta_cfg.sta.ssid));
-    strncpy((char *)sta_cfg.sta.password, WIFI_PASS,
+    strncpy((char *)sta_cfg.sta.password, WIFI_PASSWORD,
             sizeof(sta_cfg.sta.password));
     sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
@@ -210,9 +212,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         mqtt_subscribe_all(true);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_CHAN, 1);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_MAC, 1);
-#ifdef MQTT_STATUS
-        esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
-#endif
+        esp_mqtt_client_publish(event->client, TOPIC_STATUS, "online", 0, 1, true);
         break;
 
     case MQTT_EVENT_DISCONNECTED:
@@ -286,27 +286,21 @@ void MQTT_Start(void)
 
     esp_mqtt_client_config_t cfg = {
         .broker.address.uri = mqtt_uri,
-        .session.last_will = {
-#ifdef MQTT_STATUS
-            .topic = MQTT_STATUS,
-            .msg = "offline",
-            .msg_len = 7,
-            .qos = 1,
-            .retain = true,
-#endif
-        },
-        .credentials = {
+    };
+    cfg.session.last_will.topic = TOPIC_STATUS;
+    cfg.session.last_will.msg = "offline";
+    cfg.session.last_will.msg_len = 7;
+    cfg.session.last_will.qos = 1;
+    cfg.session.last_will.retain = true;
 #ifdef MQTT_USERNAME
-            .username = MQTT_USERNAME,
+    cfg.credentials.username = MQTT_USERNAME;
 #endif
 #ifdef MQTT_PASSWORD
-            .authentication.password = MQTT_PASSWORD,
+    cfg.credentials.authentication.password = MQTT_PASSWORD;
 #endif
 #ifdef MQTT_CLIENT_ID
-            .client_id = MQTT_CLIENT_ID,
+    cfg.credentials.client_id = MQTT_CLIENT_ID;
 #endif
-        },
-    };
 
     // inside MQTT_Start(), before esp_mqtt_client_init():
     build_topics();
