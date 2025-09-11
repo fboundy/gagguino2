@@ -6,8 +6,9 @@
 #include "secrets.h"
 #include <stdbool.h>
 #include <stdlib.h>
-#include <string.h>  // strcmp, memcpy, strncpy
+#include <string.h>  // strcmp, memcpy, strncpy, strlen
 #include <strings.h> // strcasecmp
+#include <stdio.h>   // snprintf, printf
 
 // --- B: exact topic strings ---------------------------------------------------
 static char TOPIC_HEATER[128];
@@ -17,6 +18,7 @@ static char TOPIC_SETTEMP[128];
 static char TOPIC_PRESSURE[128];
 static char TOPIC_SHOTVOL[128];
 static char TOPIC_SHOT[128];
+static char s_mqtt_uri[128];
 
 static inline void build_topics(void)
 {
@@ -215,8 +217,17 @@ void MQTT_Start(void)
     if (s_mqtt || !s_wifi_got_ip)
         return;
 
+    // Sanitize MQTT_URI: remove trailing ':' if port is missing
+    strncpy(s_mqtt_uri, MQTT_URI, sizeof(s_mqtt_uri));
+    s_mqtt_uri[sizeof(s_mqtt_uri) - 1] = '\0';
+    size_t uri_len = strlen(s_mqtt_uri);
+    if (uri_len > 0 && s_mqtt_uri[uri_len - 1] == ':')
+    {
+        s_mqtt_uri[uri_len - 1] = '\0';
+    }
+
     esp_mqtt_client_config_t cfg = {
-        .broker.address.uri = MQTT_URI,
+        .broker.address.uri = s_mqtt_uri,
         .session.last_will = {
 #ifdef MQTT_LWT_TOPIC
             .topic = MQTT_LWT_TOPIC,
