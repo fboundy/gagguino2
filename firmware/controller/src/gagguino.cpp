@@ -106,7 +106,8 @@ constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
 // Derivative filter time constant (seconds), exposed to HA
 constexpr float D_TAU_TEMP = 0.8f;
 
-constexpr float PRESS_TOL = 1.0f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
+// Pressure calibration constants
+constexpr float PRESSURE_TOL = 1.0f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
 constexpr int PRESS_BUFF_SIZE = 14;
 constexpr float PRESS_THRESHOLD = 9.0f;
 
@@ -1489,9 +1490,14 @@ void setup() {
     pvFiltTemp = currentTemp;
     lastTemp = currentTemp;
 
-    // zero pressure
-    float startP = analogRead(PRESS_PIN) * pressGrad + pressInt;
-    if (startP > -PRESS_TOL && startP < PRESS_TOL) {
+    // zero pressure using a few samples to average noise
+    float startP = 0.0f;
+    const int samples = 4;
+    for (int i = 0; i < samples; ++i) {
+        startP += analogRead(PRESS_PIN);
+    }
+    startP = startP / samples * pressGrad + pressInt;
+    if (fabsf(startP) <= PRESSURE_TOL) {
         pressInt -= startP;
         LOG("Pressure Intercept reset to %f", pressInt);
     }
