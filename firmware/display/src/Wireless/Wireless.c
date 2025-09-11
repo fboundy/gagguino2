@@ -133,9 +133,9 @@ void WIFI_Init(void *arg)
     else
     {
         // Sync clock via NTP when WiFi connects
-        sntp_setoperatingmode(SNTP_OPMODE_POLL);
-        sntp_setservername(0, "pool.ntp.org");
-        sntp_init();
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, "pool.ntp.org");
+        esp_sntp_init();
         time_t now = 0;
         struct tm timeinfo = {0};
         int retry = 0;
