@@ -63,6 +63,7 @@ static inline bool parse_bool_str(const char *s)
 
 static void espnow_timeout_cb(TimerHandle_t xTimer);
 static void espnow_ping_cb(TimerHandle_t xTimer);
+static void espnow_log_timer_cb(TimerHandle_t xTimer);
 static volatile bool s_espnow_timeout_req = false;
 static volatile bool s_espnow_ping_req = false;
 static void try_start_espnow(void);
@@ -185,6 +186,8 @@ static uint8_t s_espnow_peer[ESP_NOW_ETH_ALEN];
 static volatile bool s_espnow_packet = false;
 static TimerHandle_t s_espnow_timer = NULL;
 static TimerHandle_t s_espnow_ping_timer = NULL;
+static TimerHandle_t s_espnow_log_timer = NULL;
+static volatile uint32_t s_espnow_packet_count = 0;
 static bool s_espnow_active = false;
 static bool s_espnow_handshake = false;
 static int s_espnow_channel = 0;
@@ -435,7 +438,18 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
             xTimerReset(s_espnow_timer, 0);
         if (s_espnow_ping_timer)
             xTimerReset(s_espnow_ping_timer, 0);
+        if (!s_espnow_log_timer)
+            s_espnow_log_timer =
+                xTimerCreate("espnow_log", pdMS_TO_TICKS(10000), pdTRUE, NULL,
+                             espnow_log_timer_cb);
+        if (s_espnow_log_timer)
+            xTimerReset(s_espnow_log_timer, 0);
+        s_espnow_packet_count = 0;
         return;
+    }
+    if (s_espnow_handshake)
+    {
+        s_espnow_packet_count++;
     }
     if (data_len == sizeof(struct EspNowPacket))
     {
@@ -598,6 +612,14 @@ static void espnow_timeout_cb(TimerHandle_t xTimer)
     s_espnow_timeout_req = true;
 }
 
+static void espnow_log_timer_cb(TimerHandle_t xTimer)
+{
+    (void)xTimer;
+    ESP_LOGI("ESP-NOW", "Packets received in last 10s: %u",
+             (unsigned int)s_espnow_packet_count);
+    s_espnow_packet_count = 0;
+}
+
 bool Wireless_UsingEspNow(void)
 {
     return s_use_espnow;
@@ -626,6 +648,11 @@ static void Wireless_Poll(void)
             {
                 xTimerStop(s_espnow_ping_timer, 0);
             }
+            if (s_espnow_log_timer)
+            {
+                xTimerStop(s_espnow_log_timer, 0);
+            }
+            s_espnow_packet_count = 0;
             s_use_espnow = false;
             s_espnow_last_rx = 0; // clear stale timestamp so MQTT comparison is valid
             esp_wifi_connect();
