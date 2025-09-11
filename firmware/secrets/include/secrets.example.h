@@ -11,14 +11,9 @@
 #define WIFI_PASSWORD "4d9a4d4652"
 #define WIFI_PASS WIFI_PASSWORD /* alias */
 
-/* ===== MQTT (host/port + URI kept in sync) ===== */
+/* ===== MQTT ===== */
 #define MQTT_HOST "homeassistant.local"
 #define MQTT_PORT 1883
-
-/* helpers for URI building (avoid clash with ctype.h macros) */
-#define STR_HELPER(x)
-#define STR(x) STR_HELPER(x) #x
-#define MQTT_URI "mqtt://" MQTT_HOST ":" STR(MQTT_PORT)
 
 /* auth */
 #define MQTT_USERNAME "mqtt-user"

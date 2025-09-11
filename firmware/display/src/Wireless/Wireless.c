@@ -277,12 +277,15 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
 // --- A: MQTT_Start (no periodic re-subscribe timer) --------------------------
 void MQTT_Start(void)
 {
-#if defined(MQTT_URI)
+#if defined(MQTT_HOST) && defined(MQTT_PORT)
     if (s_mqtt || !s_wifi_got_ip)
         return;
 
+    char mqtt_uri[64];
+    snprintf(mqtt_uri, sizeof(mqtt_uri), "mqtt://%s:%d", MQTT_HOST, MQTT_PORT);
+
     esp_mqtt_client_config_t cfg = {
-        .broker.address.uri = MQTT_URI,
+        .broker.address.uri = mqtt_uri,
         .session.last_will = {
 #ifdef MQTT_STATUS
             .topic = MQTT_STATUS,
@@ -321,7 +324,7 @@ void MQTT_Start(void)
     (void)s_mqtt;
     if (!s_wifi_got_ip)
         return;
-    printf("MQTT: MQTT_URI not defined in secrets.h; disabled\r\n");
+    printf("MQTT: MQTT_HOST or MQTT_PORT not defined in secrets.h; disabled\r\n");
 #endif
 }
 
