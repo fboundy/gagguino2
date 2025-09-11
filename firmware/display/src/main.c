@@ -9,6 +9,27 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include <sys/time.h>
+#include <time.h>
+
+static int log_vprintf(const char *fmt, va_list args)
+{
+    char buf[256];
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    char *msg = strstr(buf, ") ");
+    if (msg)
+        msg += 2; // skip ") "
+    else
+        msg = buf;
+
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    struct tm tm;
+    localtime_r(&tv.tv_sec, &tm);
+    char tbuf[32];
+    strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &tm);
+    return ets_printf("[%s.%03ld] %s", tbuf, tv.tv_usec / 1000, msg);
+}
 #include "TCA9554PWR.h"
 #include "ST7701S.h"
 #include "CST820.h"
@@ -32,6 +53,9 @@ void Driver_Init(void)
  */
 void app_main(void)
 {
+    // Install custom logger to prepend RTC timestamp
+    esp_log_set_vprintf(log_vprintf);
+
     // Give host time to open the serial port (USB/UART) before logs start
     const int boot_delay_ms = 1500; // adjust if needed
     ESP_LOGI("BOOT", "Delaying %d ms to let serial start", boot_delay_ms);

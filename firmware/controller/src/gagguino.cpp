@@ -33,6 +33,8 @@
 #include <cstdarg>
 #include <string.h>
 #include <map>
+#include <sys/time.h>
+#include <time.h>
 
 #include "secrets.h"  // WIFI_*, MQTT_*
 #include "mqtt_topics.h"  // GAG_TOPIC_ROOT
@@ -51,7 +53,13 @@ static inline void LOG(const char* fmt, ...) {
     va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
-    Serial.println(buf);
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    struct tm tm;
+    localtime_r(&tv.tv_sec, &tm);
+    char tbuf[32];
+    strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &tm);
+    Serial.printf("[%s.%03ld] %s\n", tbuf, tv.tv_usec / 1000, buf);
 }
 
 /**
@@ -130,7 +138,13 @@ static inline void LOG_ERROR(const char* fmt, ...) {
     va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
-    Serial.println(buf);
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    struct tm tm;
+    localtime_r(&tv.tv_sec, &tm);
+    char tbuf[32];
+    strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &tm);
+    Serial.printf("[%s.%03ld] %s\n", tbuf, tv.tv_usec / 1000, buf);
 
     if (!g_errorLog.isEmpty()) g_errorLog += '\n';
     g_errorLog += buf;
@@ -145,6 +159,18 @@ static inline void LOG_ERROR(const char* fmt, ...) {
     if (mqttClient.connected()) mqttClient.publish(MQTT_ERRORS, g_errorLog.c_str(), true);
 }
 
+static void syncClock() {
+    configTime(0, 0, "pool.ntp.org");
+    struct tm tm;
+    if (getLocalTime(&tm, 5000)) {
+        LOG("RTC: %04d-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1,
+            tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+        g_clockSynced = true;
+    } else {
+        LOG_ERROR("RTC: sync failed");
+    }
+}
+
 // Temps / PID
 float currentTemp = 0.0f, lastTemp = 0.0f, pvFiltTemp = 0.0f;
 float brewSetpoint = 95.0f;           // HA-controllable (90–99)
@@ -157,6 +183,7 @@ float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;  // HA switch default ON at boot
+bool g_clockSynced = false;
 
 // Pressure
 int rawPress = 0;
@@ -1276,6 +1303,7 @@ static void ensureWifi() {
     if (now != WL_CONNECTED) {
         forceHeaterOff();
         g_espnowStatus = "disabled";
+        g_clockSynced = false;
     }
     if (now != last) {
         if (now == WL_CONNECTED) {
@@ -1285,6 +1313,7 @@ static void ensureWifi() {
             g_mqttIpResolved = false;
             resolveBrokerIfNeeded();
             initEspNow();
+            if (!g_clockSynced) syncClock();
         } else {
             LOG("WiFi: %s (code=%d) — reconnecting…", wifiStatusName(now), (int)now);
         }

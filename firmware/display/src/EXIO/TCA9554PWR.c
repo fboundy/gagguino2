@@ -1,4 +1,5 @@
 #include "TCA9554PWR.h"
+#include "esp_log.h"
 /*****************************************************  Operation register REG   ****************************************************/   
 uint8_t Read_REG(uint8_t REG)                                // Read the value of the TCA9554PWR register REG
 {
@@ -63,8 +64,8 @@ void Set_EXIO(uint8_t Pin,uint8_t State)                  // Sets the level stat
             Data = (~(0x01 << (Pin-1)) & bitsStatus);  
         Write_REG(TCA9554_OUTPUT_REG,Data);
     }
-    else                                                                             
-        printf("Parameter error, please enter the correct parameter!\r\n");
+    else
+        ESP_LOGE("EXIO", "Parameter error, please enter the correct parameter!");
 
 }
 void Set_EXIOS(uint8_t PinState)                     // Set 7 pins to the PinState state such as :PinState=0x23, 0010 0011 state (the highest bit is not used)
