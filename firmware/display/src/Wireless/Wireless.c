@@ -3,6 +3,7 @@
 #include "esp_netif.h"
 #include "esp_now.h"
 #include "freertos/timers.h"
+#include "freertos/task.h"
 #include "mqtt_client.h"
 #include "secrets.h"
 #include "mqtt_topics.h"
@@ -56,10 +57,12 @@ static inline bool parse_bool_str(const char *s)
 static void espnow_timeout_cb(TimerHandle_t xTimer);
 static void espnow_ping_cb(TimerHandle_t xTimer);
 static volatile bool s_espnow_timeout_req = false;
+static volatile bool s_espnow_ping_req = false;
 static void try_start_espnow(void);
 static volatile bool s_espnow_start_req = false; // request to start espnow (deferred)
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
                            int data_len);
+static void Wireless_Task(void *arg);
 
 void Wireless_Init(void)
 {
@@ -74,6 +77,8 @@ void Wireless_Init(void)
     ESP_ERROR_CHECK(ret);
     // WiFi
     xTaskCreatePinnedToCore(WIFI_Init, "WIFI task", 4096, NULL, 3, NULL, 0);
+    // Background task for deferred wireless work
+    xTaskCreatePinnedToCore(Wireless_Task, "wireless", 4096, NULL, 3, NULL, 0);
 }
 
 static volatile bool s_wifi_got_ip = false;
@@ -536,16 +541,8 @@ static void try_start_espnow(void)
 static void espnow_ping_cb(TimerHandle_t xTimer)
 {
     (void)xTimer;
-    uint8_t b = s_espnow_handshake ? 0xA5 : ESPNOW_HANDSHAKE_REQ;
-    esp_err_t err = esp_now_send(s_espnow_peer, &b, 1);
-    if (err != ESP_OK)
-    {
-        ESP_LOGW("ESP-NOW", "ping/handshake send failed: %d", (int)err);
-    }
-    else if (!s_espnow_handshake)
-    {
-        ESP_LOGI("ESP-NOW", "Handshake request sent");
-    }
+    // Defer ping/handshake send to task context
+    s_espnow_ping_req = true;
 }
 
 static void espnow_timeout_cb(TimerHandle_t xTimer)
@@ -565,7 +562,7 @@ bool Wireless_IsMQTTConnected(void)
     return s_mqtt_connected;
 }
 
-void Wireless_Poll(void)
+static void Wireless_Poll(void)
 {
     // Handle deferred ESP-NOW timeout actions
     if (s_espnow_timeout_req)
@@ -585,6 +582,22 @@ void Wireless_Poll(void)
             }
             s_espnow_active = false;
             s_espnow_handshake = false;
+        }
+    }
+
+    // Handle pending ESP-NOW ping/handshake sends
+    if (s_espnow_ping_req)
+    {
+        s_espnow_ping_req = false;
+        uint8_t b = s_espnow_handshake ? 0xA5 : ESPNOW_HANDSHAKE_REQ;
+        esp_err_t err = esp_now_send(s_espnow_peer, &b, 1);
+        if (err != ESP_OK)
+        {
+            ESP_LOGW("ESP-NOW", "ping/handshake send failed: %d", (int)err);
+        }
+        else if (!s_espnow_handshake)
+        {
+            ESP_LOGI("ESP-NOW", "Handshake request sent");
         }
     }
 
@@ -620,5 +633,16 @@ void Wireless_Poll(void)
             // Clear request once begun
             s_espnow_start_req = false;
         }
+    }
+}
+
+static void Wireless_Task(void *arg)
+{
+    (void)arg;
+    const TickType_t delay = pdMS_TO_TICKS(50);
+    while (1)
+    {
+        Wireless_Poll();
+        vTaskDelay(delay);
     }
 }

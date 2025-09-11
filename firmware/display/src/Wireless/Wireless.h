@@ -13,8 +13,6 @@
 
 void Wireless_Init(void);
 void WIFI_Init(void *arg);
-// Call periodically from main loop to run deferred work
-void Wireless_Poll(void);
 // MQTT
 void MQTT_Start(void);
 esp_mqtt_client_handle_t MQTT_GetClient(void);
