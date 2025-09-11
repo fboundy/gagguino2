@@ -337,8 +337,8 @@ void MQTT_Start(void)
 #ifdef MQTT_PASSWORD
             .authentication.password = MQTT_PASSWORD,
 #endif
-#ifdef MQTT_CLIENT_ID
-            .client_id = MQTT_CLIENT_ID,
+#ifdef MQTT_DISPLAY_CLIENT_ID
+            .client_id = MQTT_DISPLAY_CLIENT_ID,
 #endif
         },
     };
