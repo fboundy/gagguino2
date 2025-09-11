@@ -21,6 +21,8 @@
 #define ESPNOW_PING_PERIOD_MS 500
 #define ESPNOW_HANDSHAKE_REQ 0xAA
 #define ESPNOW_HANDSHAKE_ACK 0x55
+#define ESPNOW_CMD_HEATER_ON 0xA1
+#define ESPNOW_CMD_HEATER_OFF 0xA0
 
 // --- B: exact topic strings ---------------------------------------------------
 static char TOPIC_HEATER[128];
@@ -392,6 +394,11 @@ void MQTT_SetHeaterState(bool heater)
         if (s_mqtt)
         {
             MQTT_Publish(TOPIC_HEATER_SET, s_heater ? "ON" : "OFF", 1, true);
+        }
+        if (s_use_espnow)
+        {
+            uint8_t cmd = s_heater ? ESPNOW_CMD_HEATER_ON : ESPNOW_CMD_HEATER_OFF;
+            esp_now_send(s_espnow_peer, &cmd, 1);
         }
     }
 }

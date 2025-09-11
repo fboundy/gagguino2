@@ -80,6 +80,8 @@ constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250,
 // Simple handshake bytes for ESP-NOW link-up
 constexpr uint8_t ESPNOW_HANDSHAKE_REQ = 0xAA;
 constexpr uint8_t ESPNOW_HANDSHAKE_ACK = 0x55;
+constexpr uint8_t ESPNOW_CMD_HEATER_ON = 0xA1;
+constexpr uint8_t ESPNOW_CMD_HEATER_OFF = 0xA0;
 
 constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when idle (reduced chatter)
 constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
@@ -1115,6 +1117,14 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
         esp_now_send(mac, &ack, 1);
         g_espnowHandshake = true;
         LOG("ESP-NOW: handshake acknowledged");
+    } else if (len == 1 && (data[0] == ESPNOW_CMD_HEATER_ON || data[0] == ESPNOW_CMD_HEATER_OFF)) {
+        bool hv = (data[0] == ESPNOW_CMD_HEATER_ON);
+        heaterEnabled = hv;
+        if (!heaterEnabled) {
+            forceHeaterOff();
+        }
+        publishBool(t_heater_state, heaterEnabled, true);
+        LOG("ESP-NOW: Heater -> %s", heaterEnabled ? "ON" : "OFF");
     }
 }
 
