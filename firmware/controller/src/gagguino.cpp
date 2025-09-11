@@ -227,6 +227,7 @@ static String g_espnowMac;
 static bool g_espnowHandshake = false;
 static bool g_mqttDisabled = false;
 static unsigned long g_mqttDisabledSince = 0;
+static unsigned long g_lastEspnowEpoch = 0;  // Unix time of last ESP-NOW packet
 
 // ---------- HA Discovery identity / topics ----------
 const char* DISCOVERY_PREFIX = "homeassistant";
@@ -239,7 +240,7 @@ char uid_suffix[16] = {0};
 // Sensor state topics
 char t_shotvol_state[96], t_settemp_state[96], t_curtemp_state[96], t_press_state[96],
     t_shottime_state[96], t_ota_state[96], t_espnow_state[96], t_espnow_chan_state[96],
-    t_espnow_mac_state[96], t_espnow_cmd[96];
+    t_espnow_mac_state[96], t_espnow_last_state[96], t_espnow_cmd[96];
 // OTA command topic
 char t_ota_cmd[96];
 // Switch state/command topics
@@ -692,6 +693,8 @@ static void buildTopics() {
              uid_suffix);
     snprintf(t_espnow_mac_state, sizeof(t_espnow_mac_state), "%s/%s/espnow/mac", STATE_BASE,
              uid_suffix);
+    snprintf(t_espnow_last_state, sizeof(t_espnow_last_state), "%s/%s/espnow/last", STATE_BASE,
+             uid_suffix);
     snprintf(t_espnow_cmd, sizeof(t_espnow_cmd), "%s/%s/espnow/cmd", STATE_BASE, uid_suffix);
     // heater switch topics
     snprintf(t_heater_state, sizeof(t_heater_state), "%s/%s/heater/state", STATE_BASE, uid_suffix);
@@ -1053,6 +1056,9 @@ static void publishStates() {
     publishStr(t_espnow_state, g_espnowStatus, true);
     publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
     publishStr(t_espnow_mac_state, g_espnowMac.c_str(), true);
+    char espnow_last_buf[24];
+    snprintf(espnow_last_buf, sizeof(espnow_last_buf), "%lu", g_lastEspnowEpoch);
+    publishStr(t_espnow_last_state, espnow_last_buf, true);
 
     // flags
     publishBool(t_shot_state, shotFlag);
@@ -1083,6 +1089,7 @@ static void sendEspNowPacket() {
     pkt.steamSetpointC = steamSetpoint;
     pkt.brewSetpointC = brewSetpoint;
     esp_now_send(nullptr, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
+    g_lastEspnowEpoch = static_cast<unsigned long>(time(nullptr));
 }
 
 static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {

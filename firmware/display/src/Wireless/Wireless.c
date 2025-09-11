@@ -34,6 +34,7 @@ static char TOPIC_SHOT[128];
 static char TOPIC_ESPNOW_CHAN[128];
 static char TOPIC_ESPNOW_MAC[128];
 static char TOPIC_ESPNOW_CMD[128];
+static char TOPIC_ESPNOW_LAST[128];
 
 static inline void build_topics(void)
 {
@@ -49,6 +50,7 @@ static inline void build_topics(void)
     snprintf(TOPIC_ESPNOW_CHAN, sizeof TOPIC_ESPNOW_CHAN, "%s/%s/espnow/channel", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_ESPNOW_MAC, sizeof TOPIC_ESPNOW_MAC, "%s/%s/espnow/mac", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_ESPNOW_CMD, sizeof TOPIC_ESPNOW_CMD, "%s/%s/espnow/cmd", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_ESPNOW_LAST, sizeof TOPIC_ESPNOW_LAST, "%s/%s/espnow/last", GAG_TOPIC_ROOT, GAGGIA_ID);
 }
 
 // tolerant bool parse: "1"/"true"/"on" => true
@@ -186,6 +188,8 @@ static bool s_espnow_handshake = false;
 static int s_espnow_channel = 0;
 static bool s_have_espnow_mac = false;
 static bool s_have_espnow_chan = false;
+static time_t s_espnow_last_rx = 0;
+static time_t s_mqtt_espnow_last = 0;
 static const char *s_mqtt_topics[] = {
     "brew_setpoint",
     "steam_setpoint",
@@ -245,6 +249,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         mqtt_subscribe_all(true);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_CHAN, 1);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_MAC, 1);
+        esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_LAST, 1);
 #ifdef MQTT_STATUS
         esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
 #endif
@@ -300,6 +305,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
                 if (!s_espnow_active && s_have_espnow_chan)
                     s_espnow_start_req = true;
             }
+        }
+        else if (strcmp(t_copy, TOPIC_ESPNOW_LAST) == 0)
+        {
+            s_mqtt_espnow_last = (time_t)strtoul(d_copy, NULL, 10);
         }
         break;
     }
@@ -401,6 +410,7 @@ int MQTT_Publish(const char *topic, const char *payload, int qos, bool retain)
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
                            int data_len)
 {
+    s_espnow_last_rx = time(NULL);
     if (data_len == 1 && data[0] == ESPNOW_HANDSHAKE_ACK)
     {
         if (info)
@@ -591,6 +601,11 @@ bool Wireless_IsMQTTConnected(void)
     return s_mqtt_connected;
 }
 
+bool Wireless_ControllerStillSendingEspNow(void)
+{
+    return s_mqtt_espnow_last > s_espnow_last_rx;
+}
+
 static void Wireless_Poll(void)
 {
     // Handle deferred ESP-NOW timeout actions
@@ -604,10 +619,13 @@ static void Wireless_Poll(void)
             {
                 xTimerStop(s_espnow_ping_timer, 0);
             }
+            s_use_espnow = false;
+            s_espnow_last_rx = 0; // clear stale timestamp so MQTT comparison is valid
             esp_wifi_connect();
             if (s_mqtt)
             {
                 esp_mqtt_client_start(s_mqtt);
+                MQTT_Publish(TOPIC_ESPNOW_CMD, "ON", 1, false);
             }
             s_espnow_active = false;
             s_espnow_handshake = false;
