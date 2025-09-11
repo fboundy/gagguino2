@@ -3,6 +3,8 @@
 #define EXAMPLE_MAX_CHAR_SIZE    64
 #define MOUNT_POINT "/sdcard"
 
+#include "esp_log.h"
+
 static const char *SD_TAG = "SD";
 
 uint32_t Flash_Size = 0;
@@ -126,9 +128,9 @@ void Flash_Searching(void)
     if(esp_flash_get_physical_size(NULL, &Flash_Size) == ESP_OK)
     {
         Flash_Size = Flash_Size / (uint32_t)(1024 * 1024);
-        printf("Flash size: %ld MB\n", Flash_Size);
+        ESP_LOGI(SD_TAG, "Flash size: %ld MB", Flash_Size);
     }
     else{
-        printf("Get flash size failed\n");
+        ESP_LOGE(SD_TAG, "Get flash size failed");
     }
 }

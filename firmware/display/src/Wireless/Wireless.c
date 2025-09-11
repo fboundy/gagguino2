@@ -2,15 +2,18 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_now.h"
+#include "esp_log.h"
 #include "freertos/timers.h"
 #include "freertos/task.h"
 #include "mqtt_client.h"
 #include "secrets.h"
 #include "mqtt_topics.h"
+#include "esp_sntp.h"
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>  // strcmp, memcpy, strncpy
 #include <strings.h> // strcasecmp
+#include <time.h>
 
 #include "EspNowPacket.h"
 
@@ -88,7 +91,7 @@ static void on_got_ip(void *arg, esp_event_base_t base, int32_t id,
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
     {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
-        printf("Got IP: %d.%d.%d.%d\r\n", IP2STR(&event->ip_info.ip));
+        ESP_LOGI("WiFi", "Got IP: %d.%d.%d.%d", IP2STR(&event->ip_info.ip));
         s_wifi_got_ip = true;
     }
 }
@@ -125,7 +128,34 @@ void WIFI_Init(void *arg)
     }
     if (!s_wifi_got_ip)
     {
-        printf("WiFi connect timeout for SSID '%s'\r\n", WIFI_SSID);
+        ESP_LOGW("WiFi", "Connect timeout for SSID '%s'", WIFI_SSID);
+    }
+    else
+    {
+        // Sync clock via NTP when WiFi connects
+        sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        sntp_setservername(0, "pool.ntp.org");
+        sntp_init();
+        time_t now = 0;
+        struct tm timeinfo = {0};
+        int retry = 0;
+        while (timeinfo.tm_year < (2016 - 1900) && ++retry < 10)
+        {
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            time(&now);
+            localtime_r(&now, &timeinfo);
+        }
+        if (timeinfo.tm_year >= (2016 - 1900))
+        {
+            ESP_LOGI("TIME", "RTC synced: %04d-%02d-%02d %02d:%02d:%02d",
+                     timeinfo.tm_year + 1900, timeinfo.tm_mon + 1,
+                     timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min,
+                     timeinfo.tm_sec);
+        }
+        else
+        {
+            ESP_LOGW("TIME", "RTC sync failed");
+        }
     }
 
     // Start MQTT client once network is up
@@ -183,7 +213,7 @@ static void mqtt_subscribe_all(bool log)
             esp_mqtt_client_subscribe(s_mqtt, topic_buf, 1);
             if (log)
             {
-                printf("MQTT subscribed: %s\r\n", topic_buf);
+                ESP_LOGI("MQTT", "Subscribed: %s", topic_buf);
             }
         }
     }
@@ -209,7 +239,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
     switch (event->event_id)
     {
     case MQTT_EVENT_CONNECTED:
-        printf("MQTT connected\r\n");
+        ESP_LOGI("MQTT", "Connected");
         s_mqtt_connected = true;
         s_mqtt_stopping = false;
         mqtt_subscribe_all(true);
@@ -221,7 +251,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         break;
 
     case MQTT_EVENT_DISCONNECTED:
-        printf("MQTT disconnected\r\n");
+        ESP_LOGI("MQTT", "Disconnected");
         s_mqtt_connected = false;
         s_mqtt_stopping = false;
         break;
@@ -234,7 +264,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         t_copy[tl] = '\0';
         memcpy(d_copy, event->data, dl);
         d_copy[dl] = '\0';
-        printf("MQTT state [%s] = %s\r\n", t_copy, d_copy);
+        ESP_LOGI("MQTT", "State [%s] = %s", t_copy, d_copy);
 
         if (strcmp(t_copy, TOPIC_CURTEMP) == 0)
             s_current_temp = strtof(d_copy, NULL);
@@ -319,7 +349,7 @@ void MQTT_Start(void)
     s_mqtt = esp_mqtt_client_init(&cfg);
     if (!s_mqtt)
     {
-        printf("MQTT init failed\r\n");
+        ESP_LOGE("MQTT", "Init failed");
         return;
     }
     ESP_ERROR_CHECK(esp_mqtt_client_register_event(s_mqtt, ESP_EVENT_ANY_ID,
@@ -329,7 +359,7 @@ void MQTT_Start(void)
     (void)s_mqtt;
     if (!s_wifi_got_ip)
         return;
-    printf("MQTT: MQTT_HOST or MQTT_PORT not defined in secrets.h; disabled\r\n");
+    ESP_LOGW("MQTT", "MQTT_HOST or MQTT_PORT not defined in secrets.h; disabled");
 #endif
 }
 
@@ -470,21 +500,20 @@ static void try_start_espnow(void)
         esp_err_t err = esp_now_mod_peer(&peer);
         if (err != ESP_OK)
         {
-            printf("esp_now_mod_peer failed: %d\r\n", err);
+            ESP_LOGW("ESP-NOW", "esp_now_mod_peer failed: %d", err);
         }
         else
         {
-            printf("ESP-NOW peer modified");
+            ESP_LOGI("ESP-NOW", "Peer modified");
             if (have_old)
             {
                 if (old_peer.channel != peer.channel)
-                    printf(" channel %d->%d", old_peer.channel, peer.channel);
+                    ESP_LOGI("ESP-NOW", " channel %d->%d", old_peer.channel, peer.channel);
                 if (old_peer.ifidx != peer.ifidx)
-                    printf(" ifidx %d->%d", old_peer.ifidx, peer.ifidx);
+                    ESP_LOGI("ESP-NOW", " ifidx %d->%d", old_peer.ifidx, peer.ifidx);
                 if (old_peer.encrypt != peer.encrypt)
-                    printf(" encrypt %d->%d", old_peer.encrypt, peer.encrypt);
+                    ESP_LOGI("ESP-NOW", " encrypt %d->%d", old_peer.encrypt, peer.encrypt);
             }
-            printf("\r\n");
         }
     }
     else
@@ -492,14 +521,14 @@ static void try_start_espnow(void)
         esp_err_t err = esp_now_add_peer(&peer);
         if (err != ESP_OK)
         {
-            printf("esp_now_add_peer failed: %d\r\n", err);
+            ESP_LOGW("ESP-NOW", "esp_now_add_peer failed: %d", err);
         }
         else
         {
-            printf("ESP-NOW peer added\r\n");
+            ESP_LOGI("ESP-NOW", "Peer added");
         }
     }
-    printf("ESP-NOW initialized on channel %d\r\n", s_espnow_channel);
+    ESP_LOGI("ESP-NOW", "Initialized on channel %d", s_espnow_channel);
     s_espnow_packet = false;
     if (!s_espnow_timer)
     {

@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include "esp_log.h"
 
 /* Fallback symbol definitions for environments where newer LVGL symbols are
  * not provided. These values correspond to Font Awesome code points and allow
@@ -720,7 +721,7 @@ void Backlight_adjustment_event_cb(lv_event_t *e)
     LVGL_Backlight_adjustment(Backlight);
   }
   else
-    printf("Volume out of range: %d\n", Backlight);
+    ESP_LOGW("LVGL", "Volume out of range: %d", Backlight);
 }
 
 void LVGL_Backlight_adjustment(uint8_t Backlight) { Set_Backlight(Backlight); }
