@@ -16,14 +16,14 @@
 #define MQTT_PORT 1883
 
 /* helpers for URI building (avoid clash with ctype.h macros) */
-#define STR_HELPER(x) #x
+#define STR_HELPER(x)
 #define STR(x) STR_HELPER(x)
 #define MQTT_URI "mqtt://" MQTT_HOST ":" STR(MQTT_PORT)
 
 /* auth */
 #define MQTT_USERNAME "mqtt-user"
 #define MQTT_PASSWORD "0pl,mko9"
-#define MQTT_USER MQTT_USERNAME  /* aliases for legacy names */
+#define MQTT_USER MQTT_USERNAME /* aliases for legacy names */
 #define MQTT_PASS MQTT_PASSWORD
 
 /* client id */
