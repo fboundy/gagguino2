@@ -1090,12 +1090,22 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
         LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1],
             mac[2], mac[3], mac[4], mac[5]);
         uint8_t ack = ESPNOW_HANDSHAKE_ACK;
-        // Broadcast the acknowledgement so the display receives it even
-        // before it has been added as a peer on this controller. Sending to
-        // the specific MAC requires the peer to be registered and was
-        // causing the display to miss the ACK, resulting in repeated
-        // handshake requests.
-        esp_now_send(nullptr, &ack, 1);
+        // Ensure we can reply directly to the sender. If the display has not
+        // yet been registered as a peer, add it now so the ACK can be sent
+        // unicast to its MAC address. Broadcasting via `nullptr` was not
+        // reliably delivered, leading to repeated handshake attempts.
+        if (!esp_now_is_peer_exist(mac)) {
+            esp_now_peer_info_t peer{};
+            memcpy(peer.peer_addr, mac, ESP_NOW_ETH_ALEN);
+            peer.channel = g_espnowChannel;
+            peer.ifidx = WIFI_IF_STA;
+            peer.encrypt = false;
+            esp_err_t res = esp_now_add_peer(&peer);
+            if (res != ESP_OK) {
+                LOG_ERROR("ESP-NOW: add peer failed (%d)", (int)res);
+            }
+        }
+        esp_now_send(mac, &ack, 1);
         g_espnowHandshake = true;
         LOG("ESP-NOW: handshake acknowledged");
     }
