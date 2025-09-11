@@ -11,6 +11,8 @@
 #include "esp_log.h"
 #include <sys/time.h>
 #include <time.h>
+#include <string.h>
+#include "esp_rom_sys.h"
 
 static int log_vprintf(const char *fmt, va_list args)
 {
@@ -28,7 +30,7 @@ static int log_vprintf(const char *fmt, va_list args)
     localtime_r(&tv.tv_sec, &tm);
     char tbuf[32];
     strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &tm);
-    return ets_printf("[%s.%03ld] %s", tbuf, tv.tv_usec / 1000, msg);
+    return esp_rom_printf("[%s.%03ld] %s", tbuf, tv.tv_usec / 1000, msg);
 }
 #include "TCA9554PWR.h"
 #include "ST7701S.h"

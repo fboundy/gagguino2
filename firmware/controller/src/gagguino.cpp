@@ -128,6 +128,8 @@ PubSubClient mqttClient(wifiClient);
 
 // Rolling buffer of recent significant error messages
 static String g_errorLog;
+// Tracks whether the RTC has successfully synchronized with NTP
+static bool g_clockSynced = false;
 
 /**
  * @brief Log a significant error and publish it via MQTT.
@@ -183,7 +185,6 @@ float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;  // HA switch default ON at boot
-bool g_clockSynced = false;
 
 // Pressure
 int rawPress = 0;
