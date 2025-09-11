@@ -17,7 +17,7 @@
 
 /* helpers for URI building (avoid clash with ctype.h macros) */
 #define STR_HELPER(x)
-#define STR(x) STR_HELPER(x)
+#define STR(x) STR_HELPER(x) #x
 #define MQTT_URI "mqtt://" MQTT_HOST ":" STR(MQTT_PORT)
 
 /* auth */
