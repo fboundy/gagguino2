@@ -25,13 +25,20 @@
 #include <PubSubClient.h>
 #include <WiFi.h>
 #include <ctype.h>
+#include <esp_now.h>
 #include <esp_timer.h>
+#include <esp_wifi.h>
 #include <math.h>
+#include <string.h>
+#include <sys/time.h>
+#include <time.h>
 
 #include <cstdarg>
 #include <map>
 
-#include "secrets.h"  // WIFI_*, MQTT_*
+#include "espnow_packet.h"
+#include "mqtt_topics.h"  // GAG_TOPIC_ROOT
+#include "secrets.h"      // WIFI_*, MQTT_*
 
 #define VERSION "7.0"
 #define STARTUP_WAIT 1000
@@ -46,7 +53,13 @@ static inline void LOG(const char* fmt, ...) {
     va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
-    Serial.println(buf);
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    struct tm tm;
+    localtime_r(&tv.tv_sec, &tm);
+    char tbuf[32];
+    strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &tm);
+    Serial.printf("[%s.%03ld] %s\n", tbuf, tv.tv_usec / 1000, buf);
 }
 
 /**
@@ -61,7 +74,14 @@ constexpr int FLOW_PIN = 26, ZC_PIN = 25, HEAT_PIN = 27, AC_SENS = 14;
 constexpr int MAX_CS = 16;
 constexpr int PRESS_PIN = 35;
 
-constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, LOG_CYCLE = 2000;
+constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP_CYCLE = 500,
+                        LOG_CYCLE = 2000;
+
+// Simple handshake bytes for ESP-NOW link-up
+constexpr uint8_t ESPNOW_HANDSHAKE_REQ = 0xAA;
+constexpr uint8_t ESPNOW_HANDSHAKE_ACK = 0x55;
+constexpr uint8_t ESPNOW_CMD_HEATER_ON = 0xA1;
+constexpr uint8_t ESPNOW_CMD_HEATER_OFF = 0xA0;
 
 constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when idle (reduced chatter)
 constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
@@ -86,7 +106,8 @@ constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
 // Derivative filter time constant (seconds), exposed to HA
 constexpr float D_TAU_TEMP = 0.8f;
 
-constexpr float PRESS_TOL = 0.4f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
+// Pressure calibration constants
+constexpr float PRESSURE_TOL = 1.0f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
 constexpr int PRESS_BUFF_SIZE = 14;
 constexpr float PRESS_THRESHOLD = 9.0f;
 
@@ -110,6 +131,8 @@ PubSubClient mqttClient(wifiClient);
 
 // Rolling buffer of recent significant error messages
 static String g_errorLog;
+// Tracks whether the RTC has successfully synchronized with NTP
+static bool g_clockSynced = false;
 
 /**
  * @brief Log a significant error and publish it via MQTT.
@@ -120,7 +143,13 @@ static inline void LOG_ERROR(const char* fmt, ...) {
     va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
-    Serial.println(buf);
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    struct tm tm;
+    localtime_r(&tv.tv_sec, &tm);
+    char tbuf[32];
+    strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &tm);
+    Serial.printf("[%s.%03ld] %s\n", tbuf, tv.tv_usec / 1000, buf);
 
     if (!g_errorLog.isEmpty()) g_errorLog += '\n';
     g_errorLog += buf;
@@ -133,6 +162,18 @@ static inline void LOG_ERROR(const char* fmt, ...) {
     }
 
     if (mqttClient.connected()) mqttClient.publish(MQTT_ERRORS, g_errorLog.c_str(), true);
+}
+
+static void syncClock() {
+    configTime(0, 0, "pool.ntp.org");
+    struct tm tm;
+    if (getLocalTime(&tm, 5000)) {
+        LOG("RTC: %04d-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+            tm.tm_hour, tm.tm_min, tm.tm_sec);
+        g_clockSynced = true;
+    } else {
+        LOG_ERROR("RTC: sync failed");
+    }
 }
 
 // Temps / PID
@@ -157,7 +198,7 @@ uint8_t pressBuffIdx = 0;
 
 // Time/shot
 unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, lastMqttTime = 0,
-              lastLogTime = 0;
+              lastEspNowTime = 0, lastLogTime = 0;
 // microsecond timestamps for ISR debounce
 volatile int64_t lastPulseTime = 0;
 unsigned long shotStart = 0, startTime = 0;
@@ -182,17 +223,27 @@ static unsigned long otaStart = 0;  // millis when OTA was enabled
 static IPAddress g_mqttIp;
 static bool g_mqttIpResolved = false;
 
+// ESP-NOW diagnostics
+static uint8_t g_espnowChannel = 0;
+static String g_espnowStatus = "disabled";
+static String g_espnowMac;
+static bool g_espnowHandshake = false;
+static bool g_mqttDisabled = false;
+static unsigned long g_mqttDisabledSince = 0;
+static unsigned long g_lastEspnowEpoch = 0;  // Unix time of last ESP-NOW packet
+
 // ---------- HA Discovery identity / topics ----------
 const char* DISCOVERY_PREFIX = "homeassistant";
 // If your broker ACLs need a username prefix, change this:
-const char* STATE_BASE = "gaggia_classic";
+const char* STATE_BASE = GAG_TOPIC_ROOT;
 
 char dev_id[32] = {0};
 char uid_suffix[16] = {0};
 
 // Sensor state topics
 char t_shotvol_state[96], t_settemp_state[96], t_curtemp_state[96], t_press_state[96],
-    t_shottime_state[96], t_ota_state[96];
+    t_shottime_state[96], t_ota_state[96], t_espnow_state[96], t_espnow_chan_state[96],
+    t_espnow_mac_state[96], t_espnow_last_state[96], t_espnow_cmd[96];
 // OTA command topic
 char t_ota_cmd[96];
 // Switch state/command topics
@@ -213,7 +264,8 @@ char t_pidg_state[96], t_pidg_cmd[96];
 char t_piddtau_state[96], t_piddtau_cmd[96];
 
 // Config topics
-char c_shotvol[128], c_settemp[128], c_curtemp[128], c_press[128], c_shottime[128], c_ota[128];
+char c_shotvol[128], c_settemp[128], c_curtemp[128], c_press[128], c_shottime[128], c_ota[128],
+    c_espnow[128], c_espnow_chan[128];
 char c_accnt[128], c_zccnt[128], c_pulsecnt[128];
 char c_pidp_number[128], c_pidi_number[128], c_pidd_number[128], c_pidg_number[128];
 char c_shot[128], c_preflow[128], c_steam[128];
@@ -638,6 +690,14 @@ static void buildTopics() {
              uid_suffix);
     snprintf(t_ota_state, sizeof(t_ota_state), "%s/%s/ota/status", STATE_BASE, uid_suffix);
     snprintf(t_ota_cmd, sizeof(t_ota_cmd), "%s/%s/ota/enable", STATE_BASE, uid_suffix);
+    snprintf(t_espnow_state, sizeof(t_espnow_state), "%s/%s/espnow/status", STATE_BASE, uid_suffix);
+    snprintf(t_espnow_chan_state, sizeof(t_espnow_chan_state), "%s/%s/espnow/channel", STATE_BASE,
+             uid_suffix);
+    snprintf(t_espnow_mac_state, sizeof(t_espnow_mac_state), "%s/%s/espnow/mac", STATE_BASE,
+             uid_suffix);
+    snprintf(t_espnow_last_state, sizeof(t_espnow_last_state), "%s/%s/espnow/last", STATE_BASE,
+             uid_suffix);
+    snprintf(t_espnow_cmd, sizeof(t_espnow_cmd), "%s/%s/espnow/cmd", STATE_BASE, uid_suffix);
     // heater switch topics
     snprintf(t_heater_state, sizeof(t_heater_state), "%s/%s/heater/state", STATE_BASE, uid_suffix);
     snprintf(t_heater_cmd, sizeof(t_heater_cmd), "%s/%s/heater/set", STATE_BASE, uid_suffix);
@@ -685,6 +745,10 @@ static void buildTopics() {
     snprintf(c_shottime, sizeof(c_shottime), "%s/sensor/%s_shot_time/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_ota, sizeof(c_ota), "%s/sensor/%s_ota_status/config", DISCOVERY_PREFIX, dev_id);
+    snprintf(c_espnow, sizeof(c_espnow), "%s/sensor/%s_espnow_status/config", DISCOVERY_PREFIX,
+             dev_id);
+    snprintf(c_espnow_chan, sizeof(c_espnow_chan), "%s/sensor/%s_espnow_channel/config",
+             DISCOVERY_PREFIX, dev_id);
 
     snprintf(c_shot, sizeof(c_shot), "%s/binary_sensor/%s_shot/config", DISCOVERY_PREFIX, dev_id);
     snprintf(c_preflow, sizeof(c_preflow), "%s/binary_sensor/%s_preflow/config", DISCOVERY_PREFIX,
@@ -791,6 +855,20 @@ static void publishDiscovery() {
                    "_ota_status\",\"stat_t\":\"" + t_ota_state +
                    "\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" + String(MQTT_STATUS) +
                    "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+
+    publishRetained(
+        c_espnow, String("{\"name\":\"ESP-NOW Status\",\"uniq_id\":\"") + dev_id +
+                      "_espnow_status\",\"stat_t\":\"" + t_espnow_state +
+                      "\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" + String(MQTT_STATUS) +
+                      "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
+                      "}");
+    publishRetained(
+        c_espnow_chan,
+        String("{\"name\":\"ESP-NOW Channel\",\"uniq_id\":\"") + dev_id +
+            "_espnow_channel\",\"stat_t\":\"" + t_espnow_chan_state +
+            "\",\"stat_cla\":\"measurement\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" +
+            String(MQTT_STATUS) +
+            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     // Diagnostic counters
     publishRetained(
@@ -977,6 +1055,12 @@ static void publishStates() {
     publishNum(t_accnt_state, acCount, 0);
     publishNum(t_zccnt_state, zcCount, 0);
     publishNum(t_pulsecnt_state, pulseCount, 0);
+    publishStr(t_espnow_state, g_espnowStatus, true);
+    publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
+    publishStr(t_espnow_mac_state, g_espnowMac.c_str(), true);
+    char espnow_last_buf[24];
+    snprintf(espnow_last_buf, sizeof(espnow_last_buf), "%lu", g_lastEspnowEpoch);
+    publishStr(t_espnow_last_state, espnow_last_buf, true);
 
     // flags
     publishBool(t_shot_state, shotFlag);
@@ -992,6 +1076,56 @@ static void publishStates() {
     publishNum(t_pidd_state, dGainTemp, 2, true);
     publishNum(t_pidg_state, windupGuardTemp, 2, true);
     publishNum(t_piddtau_state, dTauTemp, 2, true);
+}
+
+static void sendEspNowPacket() {
+    EspNowPacket pkt{};
+    pkt.shotFlag = shotFlag ? 1 : 0;
+    pkt.steamFlag = steamFlag ? 1 : 0;
+    pkt.heaterSwitch = heaterEnabled ? 1 : 0;
+    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(currentTime - shotStart) : 0;
+    pkt.shotVolumeMl = static_cast<float>(shotVol);
+    pkt.setTempC = setTemp;
+    pkt.currentTempC = currentTemp;
+    pkt.pressureBar = pressNow;
+    pkt.steamSetpointC = steamSetpoint;
+    pkt.brewSetpointC = brewSetpoint;
+    esp_now_send(nullptr, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
+    g_lastEspnowEpoch = static_cast<unsigned long>(time(nullptr));
+}
+
+static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
+    if (len == 1 && data[0] == ESPNOW_HANDSHAKE_REQ) {
+        LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3],
+            mac[4], mac[5]);
+        uint8_t ack = ESPNOW_HANDSHAKE_ACK;
+        // Ensure we can reply directly to the sender. If the display has not
+        // yet been registered as a peer, add it now so the ACK can be sent
+        // unicast to its MAC address. Broadcasting via `nullptr` was not
+        // reliably delivered, leading to repeated handshake attempts.
+        if (!esp_now_is_peer_exist(mac)) {
+            esp_now_peer_info_t peer{};
+            memcpy(peer.peer_addr, mac, ESP_NOW_ETH_ALEN);
+            peer.channel = g_espnowChannel;
+            peer.ifidx = WIFI_IF_STA;
+            peer.encrypt = false;
+            esp_err_t res = esp_now_add_peer(&peer);
+            if (res != ESP_OK) {
+                LOG_ERROR("ESP-NOW: add peer failed (%d)", (int)res);
+            }
+        }
+        esp_now_send(mac, &ack, 1);
+        g_espnowHandshake = true;
+        LOG("ESP-NOW: handshake acknowledged");
+    } else if (len == 1 && (data[0] == ESPNOW_CMD_HEATER_ON || data[0] == ESPNOW_CMD_HEATER_OFF)) {
+        bool hv = (data[0] == ESPNOW_CMD_HEATER_ON);
+        heaterEnabled = hv;
+        if (!heaterEnabled) {
+            forceHeaterOff();
+        }
+        publishBool(t_heater_state, heaterEnabled, true);
+        LOG("ESP-NOW: Heater -> %s", heaterEnabled ? "ON" : "OFF");
+    }
 }
 
 // ---------- MQTT callback (handle both setpoints) ----------
@@ -1074,6 +1208,16 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         publishBool(t_heater_state, heaterEnabled, true);
         LOG("HA: Heater -> %s", heaterEnabled ? "ON" : "OFF");
     }
+    if (parse_onoff(t_espnow_cmd, hv)) {
+        g_mqttDisabled = !hv;
+        if (g_mqttDisabled) {
+            g_mqttDisabledSince = millis();
+            mqttClient.disconnect();
+            LOG("HA: MQTT disabled");
+        } else {
+            LOG("HA: MQTT enabled");
+        }
+    }
     if (strcmp(topic, t_ota_cmd) == 0) {
         otaActive = true;
         otaStart = millis();
@@ -1089,6 +1233,91 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
 }
 
 // ---------- WiFi / MQTT ----------
+static void initEspNow() {
+    uint8_t channel;
+    wifi_second_chan_t second;
+    if (esp_wifi_get_channel(&channel, &second) != ESP_OK) {
+        LOG_ERROR("ESP-NOW: failed to get channel");
+        g_espnowStatus = "error";
+        if (mqttClient.connected()) publishStr(t_espnow_state, g_espnowStatus, true);
+        return;
+    }
+
+    if (channel < 1 || channel > 13) {
+        LOG_ERROR("ESP-NOW: invalid channel %u", channel);
+        g_espnowStatus = "error";
+        g_espnowChannel = 0;
+        if (mqttClient.connected()) {
+            publishStr(t_espnow_state, g_espnowStatus, true);
+            publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
+        }
+        return;
+    }
+
+    // Only initialise ESP-NOW once and update the broadcast peer on subsequent
+    // Wi-Fi reconnects. Repeated init/deinit was causing log spam and Wi-Fi
+    // churn, which in turn dropped the MQTT session.
+    static bool espNowInit = false;
+    static bool espPeerAdded = false;
+    static esp_now_peer_info_t peerInfo{};
+    static const uint8_t broadcastAddr[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+    if (!espNowInit) {
+        if (esp_now_init() != ESP_OK) {
+            LOG_ERROR("ESP-NOW: init failed");
+            g_espnowStatus = "error";
+            if (mqttClient.connected()) publishStr(t_espnow_state, g_espnowStatus, true);
+            return;
+        }
+        memcpy(peerInfo.peer_addr, broadcastAddr, 6);
+        peerInfo.encrypt = false;
+        espNowInit = true;
+        esp_now_register_recv_cb(espNowRecv);
+        g_espnowHandshake = false;
+    }
+
+    peerInfo.channel = channel;
+    esp_err_t res;
+    if (!espPeerAdded) {
+        res = esp_now_add_peer(&peerInfo);
+        if (res == ESP_OK) {
+            espPeerAdded = true;
+        }
+    } else {
+        res = esp_now_mod_peer(&peerInfo);
+        if (res == ESP_ERR_ESPNOW_NOT_FOUND) {
+            // Peer dropped somehow; try re-adding
+            res = esp_now_add_peer(&peerInfo);
+            if (res == ESP_OK) espPeerAdded = true;
+        }
+    }
+
+    if (res != ESP_OK) {
+        LOG_ERROR("ESP-NOW: add/mod peer failed");
+        g_espnowStatus = "error";
+        if (mqttClient.connected()) publishStr(t_espnow_state, g_espnowStatus, true);
+        return;
+    }
+
+    g_espnowChannel = channel;
+    g_espnowStatus = "enabled";
+
+    uint8_t mac[6];
+    if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
+        char buf[18];
+        snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3],
+                 mac[4], mac[5]);
+        g_espnowMac = buf;
+    }
+
+    if (mqttClient.connected()) {
+        publishStr(t_espnow_state, g_espnowStatus, true);
+        publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
+        publishStr(t_espnow_mac_state, g_espnowMac.c_str(), true);
+    }
+    LOG("ESP-NOW: initialized on channel %u — awaiting handshake", channel);
+}
+
 /**
  * @brief Maintain Wi‑Fi connection with periodic reconnect attempts.
  */
@@ -1101,6 +1330,8 @@ static void ensureWifi() {
     wl_status_t now = WiFi.status();
     if (now != WL_CONNECTED) {
         forceHeaterOff();
+        g_espnowStatus = "disabled";
+        g_clockSynced = false;
     }
     if (now != last) {
         if (now == WL_CONNECTED) {
@@ -1109,6 +1340,8 @@ static void ensureWifi() {
                 WiFi.RSSI());
             g_mqttIpResolved = false;
             resolveBrokerIfNeeded();
+            initEspNow();
+            if (!g_clockSynced) syncClock();
         } else {
             LOG("WiFi: %s (code=%d) — reconnecting…", wifiStatusName(now), (int)now);
         }
@@ -1147,6 +1380,11 @@ static void ensureWifi() {
  * @brief Maintain MQTT session, (re)publish discovery and subscribe to commands.
  */
 static void ensureMqtt() {
+    if (g_mqttDisabled) {
+        if (mqttClient.connected()) mqttClient.disconnect();
+        if (millis() - g_mqttDisabledSince < 30000) return;
+        g_mqttDisabled = false;
+    }
     // Skip MQTT servicing during OTA to avoid starving the OTA socket
     if (!otaActive) {
         mqttClient.loop();
@@ -1180,6 +1418,7 @@ static void ensureMqtt() {
             mqttClient.subscribe(t_piddtau_cmd);
             // heater switch
             mqttClient.subscribe(t_heater_cmd);
+            mqttClient.subscribe(t_espnow_cmd);
             // ✅ B) Immediately publish a full snapshot so HA has data right away
             // Do this only once, right after a successful (re)connect.
             resetPublishCache();
@@ -1251,9 +1490,14 @@ void setup() {
     pvFiltTemp = currentTemp;
     lastTemp = currentTemp;
 
-    // zero pressure
-    float startP = analogRead(PRESS_PIN) * pressGrad + pressInt;
-    if (startP > -PRESS_TOL && startP < PRESS_TOL) {
+    // zero pressure using a few samples to average noise
+    float startP = 0.0f;
+    const int samples = 4;
+    for (int i = 0; i < samples; ++i) {
+        startP += analogRead(PRESS_PIN);
+    }
+    startP = startP / samples * pressGrad + pressInt;
+    if (fabsf(startP) <= PRESSURE_TOL) {
         pressInt -= startP;
         LOG("Pressure Intercept reset to %f", pressInt);
     }
@@ -1327,6 +1571,12 @@ void loop() {
 
     ensureWifi();
     ensureMqtt();
+
+    if (g_espnowStatus == "enabled" && g_espnowHandshake &&
+        (currentTime - lastEspNowTime) >= ESP_CYCLE) {
+        sendEspNowPacket();
+        lastEspNowTime = currentTime;
+    }
 
     unsigned long publishInterval = shotFlag ? SHOT_CYCLE : IDLE_CYCLE;
     if (!otaActive && streamData && (currentTime - lastMqttTime) >= publishInterval) {

@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include "esp_log.h"
 
 /* Fallback symbol definitions for environments where newer LVGL symbols are
  * not provided. These values correspond to Font Awesome code points and allow
@@ -38,6 +39,7 @@ static void open_settings_event_cb(lv_event_t *e);
 static void back_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
 static void set_label_value(lv_obj_t *label, float value, const char *suffix);
+static void heater_event_cb(lv_event_t *e);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -81,6 +83,8 @@ static lv_obj_t *pressure_units_label;
 static lv_obj_t *shot_time_units_label;
 static lv_obj_t *shot_volume_units_label;
 lv_obj_t *Backlight_slider;
+static lv_obj_t *conn_label;
+static int last_conn_type = -1;
 
 void Lvgl_Example1(void)
 {
@@ -190,6 +194,12 @@ static void led_event_cb(lv_event_t *e)
     lv_led_off(led);
     Buzzer_Off();
   }
+}
+
+static void heater_event_cb(lv_event_t *e)
+{
+  bool heater = MQTT_GetHeaterState();
+  MQTT_SetHeaterState(!heater);
 }
 
 static void back_event_cb(lv_event_t *e) { lv_scr_load(main_screen); }
@@ -308,6 +318,15 @@ static void Status_create(lv_obj_t *parent)
 {
   lv_obj_set_style_border_width(parent, 0, 0);
 
+  conn_label = lv_label_create(parent);
+#if LV_FONT_MONTSERRAT_24
+  lv_obj_set_style_text_font(conn_label, &lv_font_montserrat_24, 0);
+#else
+  lv_obj_set_style_text_font(conn_label, LV_FONT_DEFAULT, 0);
+#endif
+  lv_obj_align(conn_label, LV_ALIGN_TOP_MID, 0, 0);
+  lv_label_set_text(conn_label, "");
+
   const lv_coord_t current_arc_width = 20;
   lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
                                  lv_obj_get_content_height(parent)) -
@@ -384,32 +403,32 @@ static void Status_create(lv_obj_t *parent)
 
 /* Create one field (icon | value | units) in ROW at column COL (0 or 1) */
 #define MAKE_FIELD(ROW, COL, ICON_TXT, OUT_ICON, OUT_VAL, OUT_UNITS, INIT_VAL_TXT, UNITS_TXT) \
-  do                                                                                         \
-  {                                                                                          \
-    lv_obj_t *cell = lv_obj_create(ROW);                                                     \
-    lv_obj_set_style_bg_opa(cell, LV_OPA_TRANSP, 0);                                         \
-    lv_obj_set_style_border_width(cell, 0, 0);                                               \
-    lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);                                         \
-    lv_obj_set_grid_dsc_array(cell, field_cols, field_rows);                                 \
-    lv_obj_set_grid_cell(cell, LV_GRID_ALIGN_STRETCH, (COL), 1, LV_GRID_ALIGN_CENTER, 0, 1); \
-    /* icon (left) */                                                                        \
-    OUT_ICON = lv_label_create(cell);                                                        \
-    lv_label_set_text(OUT_ICON, (ICON_TXT));                                                 \
-    lv_obj_set_style_text_font(OUT_ICON, font_icon, 0);                                      \
-    lv_obj_set_style_text_color(OUT_ICON, lv_color_white(), 0);                              \
-    lv_obj_set_grid_cell(OUT_ICON, LV_GRID_ALIGN_START, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);   \
-    /* value (right) */                                                                      \
-    OUT_VAL = lv_label_create(cell);                                                         \
-    lv_label_set_text(OUT_VAL, (INIT_VAL_TXT));                                              \
-    lv_obj_set_style_text_font(OUT_VAL, font_val, 0);                                        \
-    lv_obj_set_style_text_color(OUT_VAL, lv_color_white(), 0);                               \
-    lv_obj_set_grid_cell(OUT_VAL, LV_GRID_ALIGN_END, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);      \
-    /* units (left in column) */                                                             \
-    OUT_UNITS = lv_label_create(cell);                                                       \
-    lv_label_set_text(OUT_UNITS, (UNITS_TXT));                                               \
-    lv_obj_set_style_text_font(OUT_UNITS, font_units, 0);                                    \
-    lv_obj_set_style_text_color(OUT_UNITS, lv_color_white(), 0);                             \
-    lv_obj_set_grid_cell(OUT_UNITS, LV_GRID_ALIGN_START, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);  \
+  do                                                                                          \
+  {                                                                                           \
+    lv_obj_t *cell = lv_obj_create(ROW);                                                      \
+    lv_obj_set_style_bg_opa(cell, LV_OPA_TRANSP, 0);                                          \
+    lv_obj_set_style_border_width(cell, 0, 0);                                                \
+    lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);                                          \
+    lv_obj_set_grid_dsc_array(cell, field_cols, field_rows);                                  \
+    lv_obj_set_grid_cell(cell, LV_GRID_ALIGN_STRETCH, (COL), 1, LV_GRID_ALIGN_CENTER, 0, 1);  \
+    /* icon (left) */                                                                         \
+    OUT_ICON = lv_label_create(cell);                                                         \
+    lv_label_set_text(OUT_ICON, (ICON_TXT));                                                  \
+    lv_obj_set_style_text_font(OUT_ICON, font_icon, 0);                                       \
+    lv_obj_set_style_text_color(OUT_ICON, lv_color_white(), 0);                               \
+    lv_obj_set_grid_cell(OUT_ICON, LV_GRID_ALIGN_START, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);    \
+    /* value (right) */                                                                       \
+    OUT_VAL = lv_label_create(cell);                                                          \
+    lv_label_set_text(OUT_VAL, (INIT_VAL_TXT));                                               \
+    lv_obj_set_style_text_font(OUT_VAL, font_val, 0);                                         \
+    lv_obj_set_style_text_color(OUT_VAL, lv_color_white(), 0);                                \
+    lv_obj_set_grid_cell(OUT_VAL, LV_GRID_ALIGN_END, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);       \
+    /* units (left in column) */                                                              \
+    OUT_UNITS = lv_label_create(cell);                                                        \
+    lv_label_set_text(OUT_UNITS, (UNITS_TXT));                                                \
+    lv_obj_set_style_text_font(OUT_UNITS, font_units, 0);                                     \
+    lv_obj_set_style_text_color(OUT_UNITS, lv_color_white(), 0);                              \
+    lv_obj_set_grid_cell(OUT_UNITS, LV_GRID_ALIGN_START, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);   \
   } while (0)
 
   const lv_coord_t H = lv_disp_get_ver_res(NULL);
@@ -468,6 +487,7 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_text_font(heater_label, &mdi_icons_40, 0);
   lv_label_set_text(heater_label, MDI_POWER);
   lv_obj_center(heater_label);
+  lv_obj_add_event_cb(heater_btn, heater_event_cb, LV_EVENT_CLICKED, NULL);
 
   steam_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(steam_btn, 80, 80);
@@ -573,17 +593,6 @@ static void draw_ticks_cb(lv_event_t *e)
   }
 }
 
-static void set_label_value(lv_obj_t *label, float value, const char *suffix)
-{
-  if (!label)
-    return;
-  char buf[16];
-  int32_t whole = (int32_t)value;
-  int32_t frac = (int32_t)(fabsf(value) * 10.0f + 0.5f) % 10;
-  snprintf(buf, sizeof(buf), "%" PRId32 ".%" PRId32 "%s", whole, frac, suffix);
-  lv_label_set_text(label, buf);
-}
-
 void example1_increase_lvgl_tick(lv_timer_t *t)
 {
   float current = MQTT_GetCurrentTemp();
@@ -593,6 +602,37 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   float shot_vol = MQTT_GetShotVolume();
   bool heater = MQTT_GetHeaterState();
   bool steam = MQTT_GetSteamState();
+
+  enum
+  {
+    CONN_NONE,
+    CONN_MQTT,
+    CONN_ESPNOW
+  };
+  int conn = CONN_NONE;
+  if (Wireless_UsingEspNow())
+    conn = CONN_ESPNOW;
+  else if (Wireless_IsMQTTConnected())
+    conn = CONN_MQTT;
+
+  if (conn_label && conn != last_conn_type)
+  {
+    switch (conn)
+    {
+    case CONN_MQTT:
+      lv_label_set_text(conn_label, "MQTT");
+      lv_obj_set_style_text_color(conn_label, lv_palette_main(LV_PALETTE_ORANGE), 0);
+      break;
+    case CONN_ESPNOW:
+      lv_label_set_text(conn_label, "ESP-NOW");
+      lv_obj_set_style_text_color(conn_label, lv_palette_main(LV_PALETTE_CYAN), 0);
+      break;
+    default:
+      lv_label_set_text(conn_label, "");
+      break;
+    }
+    last_conn_type = conn;
+  }
 
   if (isnan(current_p) || current_p < 0.0f)
     current_p = 0.0f;
@@ -681,7 +721,7 @@ void Backlight_adjustment_event_cb(lv_event_t *e)
     LVGL_Backlight_adjustment(Backlight);
   }
   else
-    printf("Volume out of range: %d\n", Backlight);
+    ESP_LOGW("LVGL", "Volume out of range: %d", Backlight);
 }
 
 void LVGL_Backlight_adjustment(uint8_t Backlight) { Set_Backlight(Backlight); }
