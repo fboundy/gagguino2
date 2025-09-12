@@ -215,8 +215,7 @@ unsigned int lastVol = 0;
 bool prevSteamFlag = false, ac = false;
 int acCount = 0;
 bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
-     steamHwFlag = false, steamResetPending = false, setupComplete = false,
-     debugData = false;
+     steamHwFlag = false, steamResetPending = false, setupComplete = false, debugData = false;
 
 // OTA
 static bool otaInitialized = false;
@@ -1469,14 +1468,15 @@ static void ensureMqtt() {
     static unsigned long lastAttempt = 0;
     if (millis() - lastAttempt < 2000) return;
     lastAttempt = millis();
-    LOG("MQTT: connecting to %s:%u as '%s' (user=%s)…", MQTT_HOST, MQTT_PORT, MQTT_CLIENTID,
-        (MQTT_USER && MQTT_USER[0]) ? MQTT_USER : "(none)");
+    LOG("MQTT: connecting to %s:%u as '%s' (user=%s)…", MQTT_HOST, MQTT_PORT,
+        MQTT_CONTROLLER_CLIENT_ID, (MQTT_USER && MQTT_USER[0]) ? MQTT_USER : "(none)");
     bool ok;
     if (MQTT_USER && MQTT_USER[0])
-        ok = mqttClient.connect(MQTT_CLIENTID, MQTT_USER, MQTT_PASS, MQTT_STATUS, 0, true,
-                                "offline");
+        ok = mqttClient.connect(MQTT_CONTROLLER_CLIENT_ID, MQTT_USER, MQTT_PASS, MQTT_STATUS, 0,
+                                true, "offline");
     else
-        ok = mqttClient.connect(MQTT_CLIENTID, nullptr, nullptr, MQTT_STATUS, 0, true, "offline");
+        ok = mqttClient.connect(MQTT_CONTROLLER_CLIENT_ID, nullptr, nullptr, MQTT_STATUS, 0, true,
+                                "offline");
     if (!ok)
         LOG_ERROR("MQTT: connect failed rc=%d (%s)  WiFi=%s RSSI=%d IP=%s GW=%s",
                   mqttClient.state(), mqttStateName(mqttClient.state()),
@@ -1556,7 +1556,7 @@ void setup() {
     LOG("Pins: FLOW=%d ZC=%d HEAT=%d AC_SENS=%d PRESS=%d  SPI{CS=%d}", FLOW_PIN, ZC_PIN, HEAT_PIN,
         AC_SENS, PRESS_PIN, MAX_CS);
     LOG("WiFi: connecting to '%s'…  MQTT: %s:%u id=%s", WIFI_SSID, MQTT_HOST, MQTT_PORT,
-        MQTT_CLIENTID);
+        MQTT_CONTROLLER_CLIENT_ID);
 }
 
 /**
