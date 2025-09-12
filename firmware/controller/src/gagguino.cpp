@@ -82,6 +82,8 @@ constexpr uint8_t ESPNOW_HANDSHAKE_REQ = 0xAA;
 constexpr uint8_t ESPNOW_HANDSHAKE_ACK = 0x55;
 constexpr uint8_t ESPNOW_CMD_HEATER_ON = 0xA1;
 constexpr uint8_t ESPNOW_CMD_HEATER_OFF = 0xA0;
+constexpr uint8_t ESPNOW_CMD_STEAM_ON = 0xB1;
+constexpr uint8_t ESPNOW_CMD_STEAM_OFF = 0xB0;
 
 constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when idle (reduced chatter)
 constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
@@ -212,7 +214,9 @@ int vol = 0, preFlowVol = 0, shotVol = 0;
 unsigned int lastVol = 0;
 bool prevSteamFlag = false, ac = false;
 int acCount = 0;
-bool shotFlag = false, preFlow = false, steamFlag = false, setupComplete = false, debugData = false;
+bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
+     steamHwFlag = false, steamResetPending = false, setupComplete = false,
+     debugData = false;
 
 // OTA
 static bool otaInitialized = false;
@@ -247,7 +251,7 @@ char t_shotvol_state[96], t_settemp_state[96], t_curtemp_state[96], t_press_stat
 // OTA command topic
 char t_ota_cmd[96];
 // Switch state/command topics
-char t_heater_state[96], t_heater_cmd[96];
+char t_heater_state[96], t_heater_cmd[96], t_steam_cmd[96];
 // Diagnostics state topics
 char t_accnt_state[96], t_zccnt_state[96], t_pulsecnt_state[96];
 // Binary sensor state topics
@@ -612,12 +616,20 @@ static void updateSteamFlag() {
     if ((now - lastZcTime) > ZC_OFF * 1000 && ac) {
         acCount++;
         if (acCount > STEAM_MIN) {
-            steamFlag = true;
+            if (!steamHwFlag && steamDispFlag) steamResetPending = true;
+            steamHwFlag = true;
         }
     } else {
-        steamFlag = false;
+        if (steamHwFlag) {
+            if (steamDispFlag && steamResetPending) {
+                steamDispFlag = false;
+                steamResetPending = false;
+            }
+            steamHwFlag = false;
+        }
         acCount = 0;
     }
+    steamFlag = steamDispFlag || steamHwFlag;
 }
 
 /**
@@ -698,9 +710,10 @@ static void buildTopics() {
     snprintf(t_espnow_last_state, sizeof(t_espnow_last_state), "%s/%s/espnow/last", STATE_BASE,
              uid_suffix);
     snprintf(t_espnow_cmd, sizeof(t_espnow_cmd), "%s/%s/espnow/cmd", STATE_BASE, uid_suffix);
-    // heater switch topics
+    // switch topics
     snprintf(t_heater_state, sizeof(t_heater_state), "%s/%s/heater/state", STATE_BASE, uid_suffix);
     snprintf(t_heater_cmd, sizeof(t_heater_cmd), "%s/%s/heater/set", STATE_BASE, uid_suffix);
+    snprintf(t_steam_cmd, sizeof(t_steam_cmd), "%s/%s/steam/set", STATE_BASE, uid_suffix);
     // diagnostic counters states
     snprintf(t_accnt_state, sizeof(t_accnt_state), "%s/%s/ac_count/state", STATE_BASE, uid_suffix);
     snprintf(t_zccnt_state, sizeof(t_zccnt_state), "%s/%s/zc_count/state", STATE_BASE, uid_suffix);
@@ -1125,6 +1138,13 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
         }
         publishBool(t_heater_state, heaterEnabled, true);
         LOG("ESP-NOW: Heater -> %s", heaterEnabled ? "ON" : "OFF");
+    } else if (len == 1 && (data[0] == ESPNOW_CMD_STEAM_ON || data[0] == ESPNOW_CMD_STEAM_OFF)) {
+        bool sv = (data[0] == ESPNOW_CMD_STEAM_ON);
+        steamDispFlag = sv;
+        steamResetPending = false;
+        steamFlag = steamDispFlag || steamHwFlag;
+        publishBool(t_steam_state, steamFlag, true);
+        LOG("ESP-NOW: Steam -> %s", steamFlag ? "ON" : "OFF");
     }
 }
 
@@ -1207,6 +1227,13 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         }
         publishBool(t_heater_state, heaterEnabled, true);
         LOG("HA: Heater -> %s", heaterEnabled ? "ON" : "OFF");
+    }
+    if (parse_onoff(t_steam_cmd, hv)) {
+        steamDispFlag = hv;
+        steamResetPending = false;
+        steamFlag = steamDispFlag || steamHwFlag;
+        publishBool(t_steam_state, steamFlag, true);
+        LOG("HA: Steam -> %s", steamFlag ? "ON" : "OFF");
     }
     if (parse_onoff(t_espnow_cmd, hv)) {
         g_mqttDisabled = !hv;
@@ -1418,6 +1445,7 @@ static void ensureMqtt() {
             mqttClient.subscribe(t_piddtau_cmd);
             // heater switch
             mqttClient.subscribe(t_heater_cmd);
+            mqttClient.subscribe(t_steam_cmd);
             mqttClient.subscribe(t_espnow_cmd);
             // ✅ B) Immediately publish a full snapshot so HA has data right away
             // Do this only once, right after a successful (re)connect.
