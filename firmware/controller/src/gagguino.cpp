@@ -71,10 +71,14 @@ static inline void LOG(const char* fmt, ...) {
  */
 
 namespace {
-constexpr int FLOW_PIN = 26, ZC_PIN = 25, HEAT_PIN = 27, AC_SENS = 14;
-constexpr int MAX_CS = 16;
+constexpr int FLOW_PIN = 26;  // Flowmeter Pulses (Arduino D2)
+constexpr int ZC_PIN = 25;    // Triac Zero Crossing output (Arduino D3)
+constexpr int PUMP_PIN = 17;  // Triac PWM output (Arduino D4)
+constexpr int MAX_CS = 16;    // MAX31865 CS (Arduino D5)
+constexpr int HEAT_PIN = 27;  // Heater SSR control (Arduino D6)
+constexpr int AC_SENS = 14;   // Steam AC sense (Arduino D7)
+
 constexpr int PRESS_PIN = 35;
-constexpr int PUMP_PIN = 23;  // Triac PWM output (Arduino D4)
 
 // Pump PWM (ESP32 LEDC)
 constexpr int PUMP_PWM_CHANNEL = 0;
@@ -979,15 +983,14 @@ static void publishDiscovery() {
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
-    publishRetained(c_pump_number,
-                    String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id +
-                        "_pump_power\",\"cmd_t\":\"" + t_pump_cmd + "\",\"stat_t\":\"" +
-                        t_pump_state +
-                        "\",\"unit_of_meas\":\"%\",\"min\":0,\"max\":100,\"step\":1,\"mode\":\"auto\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
-                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                        "}");
-
+    publishRetained(
+        c_pump_number,
+        String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id + "_pump_power\",\"cmd_t\":\"" +
+            t_pump_cmd + "\",\"stat_t\":\"" + t_pump_state +
+            "\",\"unit_of_meas\":\"%\",\"min\":0,\"max\":100,\"step\":1,\"mode\":\"auto\",\"avty_"
+            "t\":\"" +
+            String(MQTT_STATUS) +
+            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     // --- number: PID D Tau (seconds) ---
     publishRetained(c_piddtau_number, String("{\"name\":\"PID D Tau\",\"uniq_id\":\"") + dev_id +
