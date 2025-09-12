@@ -1537,7 +1537,10 @@ void setup() {
         LOG("Pressure Intercept reset to %f", pressInt);
     }
 
-    attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, RISING);
+    // Count both rising and falling edges from the flow sensor to
+    // double the pulse resolution.  CHANGE triggers the ISR on any
+    // transition and `PULSE_MIN` guards against spurious bounce.
+    attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
     attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
 
     pulseCount = 0;
