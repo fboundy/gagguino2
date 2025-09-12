@@ -13,7 +13,7 @@
  * - FLOW_PIN (26)   : Flow sensor input (interrupt on CHANGE)
  * - ZC_PIN (25)     : AC zero‑cross detect (interrupt on RISING)
  * - HEAT_PIN (27)   : Boiler relay/SSR output (PWM windowing)
- * - PUMP_PIN (33)   : Pump power control (PWM to triac dimmer)
+ * - PUMP_PIN (23)   : Pump power control (PWM to triac dimmer)
  * - AC_SENS (14)    : Steam switch sense (digital input)
  * - MAX_CS (16)     : MAX31865 SPI chip‑select
  * - PRESS_PIN (35)  : Analog pressure sensor input
@@ -74,7 +74,7 @@ namespace {
 constexpr int FLOW_PIN = 26, ZC_PIN = 25, HEAT_PIN = 27, AC_SENS = 14;
 constexpr int MAX_CS = 16;
 constexpr int PRESS_PIN = 35;
-constexpr int PUMP_PIN = 33;  // Triac PWM output
+constexpr int PUMP_PIN = 23;  // Triac PWM output (Arduino D4)
 
 // Pump PWM (ESP32 LEDC)
 constexpr int PUMP_PWM_CHANNEL = 0;

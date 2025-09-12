@@ -16,7 +16,7 @@ Hardware / Pinout (ESP32 dev board defaults)
 - `FLOW_PIN` 26: Flow sensor input (interrupt on CHANGE)
 - `ZC_PIN` 25: AC zero‑cross detect (interrupt on RISING)
 - `HEAT_PIN` 27: Boiler relay/SSR output (time‑proportioning)
-- `PUMP_PIN` 33: Pump power control via triac dimmer (PWM 0–100%)
+- `PUMP_PIN` 23: Pump power control via triac dimmer (PWM 0–100%)
 - `AC_SENS` 14: Steam switch sense (digital input)
 - `MAX_CS` 16: MAX31865 SPI chip‑select
 - `PRESS_PIN` 35: Analog pressure sensor input
