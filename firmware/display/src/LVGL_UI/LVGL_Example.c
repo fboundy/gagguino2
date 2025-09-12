@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include "esp_log.h"
+#include "esp_system.h"
 
 /* Fallback symbol definitions for environments where newer LVGL symbols are
  * not provided. These values correspond to Font Awesome code points and allow
@@ -37,6 +38,7 @@ static void Status_create(lv_obj_t *parent);
 static void Settings_create(void);
 static void open_settings_event_cb(lv_event_t *e);
 static void back_event_cb(lv_event_t *e);
+static void reset_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
 static void set_label_value(lv_obj_t *label, float value, const char *suffix);
 static void heater_event_cb(lv_event_t *e);
@@ -209,6 +211,11 @@ static void steam_event_cb(lv_event_t *e)
   MQTT_SetSteamState(!steam);
 }
 
+static void reset_event_cb(lv_event_t *e)
+{
+  esp_restart();
+}
+
 static void back_event_cb(lv_event_t *e) { lv_scr_load(main_screen); }
 
 static void open_settings_event_cb(lv_event_t *e)
@@ -231,15 +238,6 @@ static void Settings_create(void)
       LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT,
       LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
   lv_obj_set_grid_dsc_array(settings_scr, grid_main_col_dsc, grid_main_row_dsc);
-
-  lv_obj_t *back_btn = lv_btn_create(settings_scr);
-  lv_obj_set_size(back_btn, 80, 80);
-  lv_obj_set_grid_cell(back_btn, LV_GRID_ALIGN_CENTER, 0, 2,
-                       LV_GRID_ALIGN_CENTER, 5, 1);
-  lv_obj_t *back_label = lv_label_create(back_btn);
-  lv_label_set_text(back_label, LV_SYMBOL_LEFT);
-  lv_obj_center(back_label);
-  lv_obj_add_event_cb(back_btn, back_event_cb, LV_EVENT_CLICKED, NULL);
 
   lv_obj_t *Backlight_label = lv_label_create(settings_scr);
   lv_label_set_text(Backlight_label, "Backlight brightness");
@@ -283,6 +281,50 @@ static void Settings_create(void)
   lv_obj_add_event_cb(sw, led_event_cb, LV_EVENT_VALUE_CHANGED, led);
   lv_obj_set_grid_cell(sw, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 3,
                        1);
+
+  const lv_coord_t H = lv_disp_get_ver_res(NULL);
+  const lv_coord_t W = lv_disp_get_hor_res(NULL);
+
+  lv_obj_t *ctrl_container = lv_obj_create(settings_scr);
+  lv_obj_set_style_bg_opa(ctrl_container, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ctrl_container, 0, 0);
+  lv_obj_clear_flag(ctrl_container, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(ctrl_container, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+
+  static lv_coord_t btn_cols[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t btn_rows[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  lv_obj_set_grid_dsc_array(ctrl_container, btn_cols, btn_rows);
+  lv_obj_set_style_pad_column(ctrl_container, W / 100, 0);
+  lv_obj_set_style_pad_row(ctrl_container, 5, 0);
+  lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100);
+
+  lv_obj_t *back_btn = lv_btn_create(ctrl_container);
+  lv_obj_set_size(back_btn, 80, 80);
+  lv_obj_set_style_border_width(back_btn, 0, 0);
+  lv_obj_set_style_bg_color(back_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_grid_cell(back_btn, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_t *back_label = lv_label_create(back_btn);
+  lv_label_set_text(back_label, LV_SYMBOL_LEFT);
+  lv_obj_center(back_label);
+  lv_obj_add_event_cb(back_btn, back_event_cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *back_text = lv_label_create(ctrl_container);
+  lv_label_set_text(back_text, "Back");
+  lv_obj_set_grid_cell(back_text, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_START, 1, 1);
+
+  lv_obj_t *reset_btn = lv_btn_create(ctrl_container);
+  lv_obj_set_size(reset_btn, 80, 80);
+  lv_obj_set_style_border_width(reset_btn, 0, 0);
+  lv_obj_set_style_bg_color(reset_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_grid_cell(reset_btn, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_t *reset_label = lv_label_create(reset_btn);
+  lv_label_set_text(reset_label, LV_SYMBOL_REFRESH);
+  lv_obj_center(reset_label);
+  lv_obj_add_event_cb(reset_btn, reset_event_cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *reset_text = lv_label_create(ctrl_container);
+  lv_label_set_text(reset_text, "Reset");
+  lv_obj_set_grid_cell(reset_text, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 1, 1);
 }
 
 void Lvgl_Example1_close(void)
