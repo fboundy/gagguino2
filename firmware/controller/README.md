@@ -7,6 +7,7 @@ Features
 --------
 - PID temperature control using MAX31865 (PT100) with anti-windup and derivative on measurement.
 - Heater control via time-proportioning PWM windowing.
+- Pump power dimming via phase-angle triac control.
 - Flow pulses → volume, pressure sampling with moving average, and shot timing.
 - Wi‑Fi + MQTT (PubSubClient) with Home Assistant discovery (sensors, numbers, switch, binary sensors).
 - ArduinoOTA with safety handling (heater disabled during OTA).
@@ -16,9 +17,13 @@ Hardware / Pinout (ESP32 dev board defaults)
 - `FLOW_PIN` 26: Flow sensor input (interrupt on CHANGE)
 - `ZC_PIN` 25: AC zero‑cross detect (interrupt on RISING)
 - `HEAT_PIN` 27: Boiler relay/SSR output (time‑proportioning)
+- `PUMP_PIN` 23: Pump power control via triac dimmer (phase-angle 0–100%)
 - `AC_SENS` 14: Steam switch sense (digital input)
 - `MAX_CS` 16: MAX31865 SPI chip‑select
 - `PRESS_PIN` 35: Analog pressure sensor input
+
+Pump power uses zero‑cross detection to fire a triac after a phase delay,
+mirroring the RobotDyn RBDDimmer approach for AC dimming modules.
 
 Getting Started
 ---------------
@@ -74,6 +79,9 @@ mosquitto_pub -h <broker> -t gaggia_classic/<UID>/pid_p/set -m 20.0
 mosquitto_pub -h <broker> -t gaggia_classic/<UID>/pid_i/set -m 1.0
 mosquitto_pub -h <broker> -t gaggia_classic/<UID>/pid_d/set -m 100.0
 mosquitto_pub -h <broker> -t gaggia_classic/<UID>/pid_guard/set -m 20.0
+
+# Set pump power to 50%
+mosquitto_pub -h <broker> -t gaggia_classic/<UID>/pump_power/set -m 50
 
 # Heater ON/OFF
 mosquitto_pub -h <broker> -t gaggia_classic/<UID>/heater/set -m ON

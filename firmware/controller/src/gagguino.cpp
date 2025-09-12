@@ -13,6 +13,7 @@
  * - FLOW_PIN (26)   : Flow sensor input (interrupt on CHANGE)
  * - ZC_PIN (25)     : AC zero‑cross detect (interrupt on RISING)
  * - HEAT_PIN (27)   : Boiler relay/SSR output (PWM windowing)
+ * - PUMP_PIN (23)   : Pump power control (phase-angle triac gate)
  * - AC_SENS (14)    : Steam switch sense (digital input)
  * - MAX_CS (16)     : MAX31865 SPI chip‑select
  * - PRESS_PIN (35)  : Analog pressure sensor input
@@ -73,6 +74,11 @@ namespace {
 constexpr int FLOW_PIN = 26, ZC_PIN = 25, HEAT_PIN = 27, AC_SENS = 14;
 constexpr int MAX_CS = 16;
 constexpr int PRESS_PIN = 35;
+constexpr int PUMP_PIN = 23;  // Triac gate output (Arduino D4)
+
+#if defined(ARDUINO_ARCH_ESP32)
+constexpr int PUMP_PULSE_US = 100;  // Gate trigger width
+#endif
 
 constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP_CYCLE = 500,
                         LOG_CYCLE = 2000;
@@ -190,6 +196,13 @@ float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;  // HA switch default ON at boot
+float pumpPower = 0.0f;     // HA-controllable pump power 0-100%
+
+#if defined(ARDUINO_ARCH_ESP32)
+hw_timer_t* pumpTimer = nullptr;
+volatile uint32_t pumpHalfCycle = 8333;  // µs, updated on each zero-cross
+volatile bool pumpPulseActive = false;
+#endif
 
 // Pressure
 int rawPress = 0;
@@ -258,6 +271,7 @@ char t_shot_state[96], t_preflow_state[96], t_steam_state[96];
 // Number entities (brew/steam setpoint) command/state topics
 char t_brewset_state[96], t_brewset_cmd[96];
 char t_steamset_state[96], t_steamset_cmd[96];
+char t_pump_state[96], t_pump_cmd[96];
 // PID number entity topics
 char t_pidp_state[96], t_pidp_cmd[96];
 char t_pidi_state[96], t_pidi_cmd[96];
@@ -272,7 +286,7 @@ char c_shotvol[128], c_settemp[128], c_curtemp[128], c_press[128], c_shottime[12
 char c_accnt[128], c_zccnt[128], c_pulsecnt[128];
 char c_pidp_number[128], c_pidi_number[128], c_pidd_number[128], c_pidg_number[128];
 char c_shot[128], c_preflow[128], c_steam[128];
-char c_brewset_number[128], c_steamset_number[128];
+char c_brewset_number[128], c_steamset_number[128], c_pump_number[128];
 char c_piddtau_number[128];  // PID D Tau (seconds)
 // Switch config
 char c_heater[128];
@@ -661,17 +675,45 @@ static void IRAM_ATTR flowInt() {
         lastPulseTime = now;
     }
 }
+
+#if defined(ARDUINO_ARCH_ESP32)
+static void IRAM_ATTR pumpTimerISR() {
+    if (!pumpPulseActive) {
+        digitalWrite(PUMP_PIN, HIGH);
+        pumpPulseActive = true;
+        timerWrite(pumpTimer, 0);
+        timerAlarmWrite(pumpTimer, PUMP_PULSE_US, false);
+        timerAlarmEnable(pumpTimer);
+    } else {
+        digitalWrite(PUMP_PIN, LOW);
+        pumpPulseActive = false;
+        timerAlarmDisable(pumpTimer);
+    }
+}
+#endif
 /**
- * @brief Zero‑cross detect ISR: records pump activity timing.
+ * @brief Zero‑cross detect ISR: schedules pump triac firing.
  */
 static void IRAM_ATTR zcInt() {
     int64_t now = esp_timer_get_time();
     // Guard against spurious re-triggers/noise (<~6 ms @ 50 Hz)
-    if (now - lastZcTime < 6000) {
+    int64_t diff = now - lastZcTime;
+    if (diff < 6000) {
         return;
     }
     lastZcTime = now;
     zcCount++;
+#if defined(ARDUINO_ARCH_ESP32)
+    pumpHalfCycle = (uint32_t)diff;
+    if (pumpPower > 0.0f) {
+        uint32_t delay = (uint32_t)((100.0f - pumpPower) / 100.0f * pumpHalfCycle);
+        if (delay == 0) delay = 1;
+        pumpPulseActive = false;
+        timerWrite(pumpTimer, 0);
+        timerAlarmWrite(pumpTimer, delay, false);
+        timerAlarmEnable(pumpTimer);
+    }
+#endif
 }
 
 // ---------- HA Discovery helpers ----------
@@ -732,6 +774,8 @@ static void buildTopics() {
              uid_suffix);
     snprintf(t_steamset_state, sizeof(t_steamset_state), "%s/%s/steam_setpoint/state", STATE_BASE,
              uid_suffix);
+    snprintf(t_pump_cmd, sizeof(t_pump_cmd), "%s/%s/pump_power/set", STATE_BASE, uid_suffix);
+    snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE, uid_suffix);
     // PID numbers
     snprintf(t_pidp_cmd, sizeof(t_pidp_cmd), "%s/%s/pid_p/set", STATE_BASE, uid_suffix);
     snprintf(t_pidp_state, sizeof(t_pidp_state), "%s/%s/pid_p/state", STATE_BASE, uid_suffix);
@@ -772,6 +816,8 @@ static void buildTopics() {
     snprintf(c_brewset_number, sizeof(c_brewset_number), "%s/number/%s_brew_setpoint/config",
              DISCOVERY_PREFIX, dev_id);
     snprintf(c_steamset_number, sizeof(c_steamset_number), "%s/number/%s_steam_setpoint/config",
+             DISCOVERY_PREFIX, dev_id);
+    snprintf(c_pump_number, sizeof(c_pump_number), "%s/number/%s_pump_power/config",
              DISCOVERY_PREFIX, dev_id);
     // PID numbers
     snprintf(c_pidp_number, sizeof(c_pidp_number), "%s/number/%s_pid_p/config", DISCOVERY_PREFIX,
@@ -954,6 +1000,15 @@ static void publishDiscovery() {
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
+    publishRetained(c_pump_number,
+                    String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id +
+                        "_pump_power\",\"cmd_t\":\"" + t_pump_cmd + "\",\"stat_t\":\"" +
+                        t_pump_state +
+                        "\",\"unit_of_meas\":\"%\",\"min\":0,\"max\":100,\"step\":1,\"mode\":\"auto\",\"avty_t\":\"" +
+                        String(MQTT_STATUS) +
+                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
+                        "}");
+
 
     // --- number: PID D Tau (seconds) ---
     publishRetained(c_piddtau_number, String("{\"name\":\"PID D Tau\",\"uniq_id\":\"") + dev_id +
@@ -1040,6 +1095,7 @@ static void publishBool(const char* topic, bool on, bool retain = true) {
 // Publish retained number/config states once (on connect) or on change.
 static void publishNumberStatesSnapshot() {
     // NOTE: Config/number states are published on connect and on change only.
+    publishNum(t_pump_state, pumpPower, 0, true);
 }
 
 // Helper: immediately disable the heater output and prevent PID updates
@@ -1082,6 +1138,7 @@ static void publishStates() {
     // number entity states (retained so HA persists)
     publishNum(t_brewset_state, brewSetpoint, 1, true);
     publishNum(t_steamset_state, steamSetpoint, 1, true);
+    publishNum(t_pump_state, pumpPower, 0, true);
     // PID number states
     publishNum(t_pidp_state, pGainTemp, 2, true);
     publishNum(t_pidi_state, iGainTemp, 2, true);
@@ -1191,6 +1248,10 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
     if (parse_clamped(t_steamset_cmd, STEAM_MIN_C, STEAM_MAX_C, steamSetpoint)) {
         changed = true;
         LOG("HA: Steam setpoint -> %.1f °C", steamSetpoint);
+    }
+    if (parse_clamped(t_pump_cmd, 0.0f, 100.0f, pumpPower)) {
+        publishNum(t_pump_state, pumpPower, 0, true);
+        LOG("HA: Pump power -> %.0f%%", pumpPower);
     }
     // PID params
     float tmp;
@@ -1439,6 +1500,7 @@ static void ensureMqtt() {
             publishDiscovery();
             mqttClient.subscribe(t_brewset_cmd);
             mqttClient.subscribe(t_steamset_cmd);
+            mqttClient.subscribe(t_pump_cmd);
             // PID control subscriptions
             mqttClient.subscribe(t_pidp_cmd);
             mqttClient.subscribe(t_pidi_cmd);
@@ -1505,6 +1567,8 @@ void setup() {
 #if defined(ARDUINO_ARCH_ESP32)
     analogReadResolution(12);
     analogSetAttenuation(ADC_11db);
+    pumpTimer = timerBegin(0, 80, true);
+    timerAttachInterrupt(pumpTimer, &pumpTimerISR, true);
 #endif
 
     pinMode(MAX_CS, OUTPUT);
@@ -1513,6 +1577,8 @@ void setup() {
     pinMode(FLOW_PIN, INPUT_PULLUP);
     pinMode(ZC_PIN, INPUT);
     pinMode(AC_SENS, INPUT_PULLUP);
+    pinMode(PUMP_PIN, OUTPUT);
+    digitalWrite(PUMP_PIN, LOW);
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
 
