@@ -1494,6 +1494,9 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
     delay(300);
     LOG("Booting… FW %s", VERSION);
+#if defined(CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH)
+    LOG("RTOS: Tmr Svc stack depth=%d (words)", (int)CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH);
+#endif
 
 #if defined(ARDUINO_ARCH_ESP32)
     analogReadResolution(12);
