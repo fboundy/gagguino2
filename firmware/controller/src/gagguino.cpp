@@ -13,7 +13,7 @@
  * - FLOW_PIN (26)   : Flow sensor input (interrupt on CHANGE)
  * - ZC_PIN (25)     : AC zero‑cross detect (interrupt on RISING)
  * - HEAT_PIN (27)   : Boiler relay/SSR output (PWM windowing)
- * - PUMP_PIN (23)   : Pump power control (PWM to triac dimmer)
+ * - PUMP_PIN (17)   : Pump power control via RBDDimmer triac
  * - AC_SENS (14)    : Steam switch sense (digital input)
  * - MAX_CS (16)     : MAX31865 SPI chip‑select
  * - PRESS_PIN (35)  : Analog pressure sensor input
@@ -36,6 +36,8 @@
 
 #include <cstdarg>
 #include <map>
+
+#include <RBDdimmer.h>
 
 #include "espnow_packet.h"
 #include "mqtt_topics.h"  // GAG_TOPIC_ROOT
@@ -73,17 +75,12 @@ static inline void LOG(const char* fmt, ...) {
 namespace {
 constexpr int FLOW_PIN = 26;  // Flowmeter Pulses (Arduino D2)
 constexpr int ZC_PIN = 25;    // Triac Zero Crossing output (Arduino D3)
-constexpr int PUMP_PIN = 17;  // Triac PWM output (Arduino D4)
+constexpr int PUMP_PIN = 17;  // Triac dimmer output (Arduino D4)
 constexpr int MAX_CS = 16;    // MAX31865 CS (Arduino D5)
 constexpr int HEAT_PIN = 27;  // Heater SSR control (Arduino D6)
 constexpr int AC_SENS = 14;   // Steam AC sense (Arduino D7)
 
 constexpr int PRESS_PIN = 35;
-
-// Pump PWM (ESP32 LEDC)
-constexpr int PUMP_PWM_CHANNEL = 0;
-constexpr int PUMP_PWM_FREQ = 1000;  // Hz
-constexpr int PUMP_PWM_BITS = 10;
 
 constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP_CYCLE = 500,
                         LOG_CYCLE = 2000;
@@ -118,6 +115,9 @@ constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
                 WINDUP_GUARD_TEMP = 10.0f;
 // Derivative filter time constant (seconds), exposed to HA
 constexpr float D_TAU_TEMP = 0.8f;
+
+// Pump dimmer instance
+dimmerLamp pumpDimmer(PUMP_PIN, ZC_PIN);
 
 // Pressure calibration constants
 constexpr float PRESSURE_TOL = 1.0f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
@@ -607,12 +607,8 @@ static void updateTempPWM() {
  * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
  */
 static void applyPumpPower() {
-#if defined(ARDUINO_ARCH_ESP32)
-    uint32_t duty = (uint32_t)(pumpPower / 100.0f * ((1 << PUMP_PWM_BITS) - 1));
-    ledcWrite(PUMP_PWM_CHANNEL, duty);
-#else
-    analogWrite(PUMP_PIN, (int)(pumpPower / 100.0f * 255));
-#endif
+    pumpDimmer.setPower((int)pumpPower);
+    pumpDimmer.setState(pumpPower > 0.0f ? ON : OFF);
 }
 
 /**
@@ -1559,10 +1555,7 @@ void setup() {
     pinMode(ZC_PIN, INPUT);
     pinMode(AC_SENS, INPUT_PULLUP);
     pinMode(PUMP_PIN, OUTPUT);
-#if defined(ARDUINO_ARCH_ESP32)
-    ledcSetup(PUMP_PWM_CHANNEL, PUMP_PWM_FREQ, PUMP_PWM_BITS);
-    ledcAttachPin(PUMP_PIN, PUMP_PWM_CHANNEL);
-#endif
+    pumpDimmer.begin(NORMAL_MODE, OFF);
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
     applyPumpPower();
@@ -1592,7 +1585,6 @@ void setup() {
     // double the pulse resolution.  CHANGE triggers the ISR on any
     // transition and `PULSE_MIN` guards against spurious bounce.
     attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
 
     pulseCount = 0;
     startTime = millis();
