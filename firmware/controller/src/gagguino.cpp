@@ -1142,6 +1142,10 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
         steamDispFlag = sv;
         steamResetPending = false;
         steamFlag = steamDispFlag || steamHwFlag;
+        // Ensure the active target temperature reflects the display's steam mode immediately
+        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
+        // Reflect the new active set temperature promptly for HA/telemetry
+        publishNum(t_settemp_state, setTemp, 1, true);
         publishBool(t_steam_state, steamFlag, true);
         LOG("ESP-NOW: Steam -> %s", steamFlag ? "ON" : "OFF");
     }
