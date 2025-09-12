@@ -16,6 +16,7 @@ MQTT topic hierarchy.  All topics are rooted at:
 | `heater/state` | pub by controller, sub by display | Heater on/off state |
 | `heater/set` | cmd to controller (display publishes) | Command to toggle heater |
 | `steam/state` | pub by controller | Steam switch state |
+| `steam/set` | cmd to controller (display publishes) | Command to toggle steam mode |
 | `current_temp/state` | pub by controller | Boiler temperature |
 | `set_temp/state` | pub by controller | Active temperature setpoint |
 | `pressure/state` | pub by controller | Boiler pressure (bar) |

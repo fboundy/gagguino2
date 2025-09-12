@@ -40,6 +40,7 @@ static void back_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
 static void set_label_value(lv_obj_t *label, float value, const char *suffix);
 static void heater_event_cb(lv_event_t *e);
+static void steam_event_cb(lv_event_t *e);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -200,6 +201,12 @@ static void heater_event_cb(lv_event_t *e)
 {
   bool heater = MQTT_GetHeaterState();
   MQTT_SetHeaterState(!heater);
+}
+
+static void steam_event_cb(lv_event_t *e)
+{
+  bool steam = MQTT_GetSteamState();
+  MQTT_SetSteamState(!steam);
 }
 
 static void back_event_cb(lv_event_t *e) { lv_scr_load(main_screen); }
@@ -503,6 +510,7 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_text_font(steam_label, &mdi_icons_40, 0);
   lv_label_set_text(steam_label, MDI_STEAM);
   lv_obj_center(steam_label);
+  lv_obj_add_event_cb(steam_btn, steam_event_cb, LV_EVENT_CLICKED, NULL);
 
   lv_obj_t *steam_text = lv_label_create(ctrl_container);
   lv_label_set_text(steam_text, "Steam");
