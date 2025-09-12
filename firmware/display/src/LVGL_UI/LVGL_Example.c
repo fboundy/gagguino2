@@ -470,12 +470,13 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_bg_opa(ctrl_container, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(ctrl_container, 0, 0);
   lv_obj_clear_flag(ctrl_container, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(ctrl_container, LV_SIZE_CONTENT, 80);
+  lv_obj_set_size(ctrl_container, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 
   static lv_coord_t btn_cols[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t btn_rows[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t btn_rows[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
   lv_obj_set_grid_dsc_array(ctrl_container, btn_cols, btn_rows);
   lv_obj_set_style_pad_column(ctrl_container, W / 100, 0);          /* 1% spacing */
+  lv_obj_set_style_pad_row(ctrl_container, 5, 0);
   lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100); /* 70% */
 
   heater_btn = lv_btn_create(ctrl_container);
@@ -489,6 +490,10 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_center(heater_label);
   lv_obj_add_event_cb(heater_btn, heater_event_cb, LV_EVENT_CLICKED, NULL);
 
+  lv_obj_t *heater_text = lv_label_create(ctrl_container);
+  lv_label_set_text(heater_text, "Heat");
+  lv_obj_set_grid_cell(heater_text, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_START, 1, 1);
+
   steam_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(steam_btn, 80, 80);
   lv_obj_set_style_border_width(steam_btn, 0, 0);
@@ -498,6 +503,10 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_text_font(steam_label, &mdi_icons_40, 0);
   lv_label_set_text(steam_label, MDI_STEAM);
   lv_obj_center(steam_label);
+
+  lv_obj_t *steam_text = lv_label_create(ctrl_container);
+  lv_label_set_text(steam_text, "Steam");
+  lv_obj_set_grid_cell(steam_text, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 1, 1);
 
   settings_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(settings_btn, 80, 80);
@@ -509,6 +518,10 @@ static void Status_create(lv_obj_t *parent)
   lv_label_set_text(settings_label, MDI_COG);
   lv_obj_center(settings_label);
   lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *settings_text = lv_label_create(ctrl_container);
+  lv_label_set_text(settings_text, "Settings");
+  lv_obj_set_grid_cell(settings_text, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_START, 1, 1);
 
   lv_obj_move_foreground(ctrl_container);
 
