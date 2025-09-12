@@ -8,7 +8,7 @@
 
 /* ===== Wi-Fi ===== */
 #define WIFI_SSID "Dlink12"
-#define WIFI_PASSWORD "4d9a4d4652"
+#define WIFI_PASSWORD "********"
 #define WIFI_PASS WIFI_PASSWORD /* alias */
 
 /* ===== MQTT ===== */
@@ -17,7 +17,7 @@
 
 /* auth */
 #define MQTT_USERNAME "mqtt-user"
-#define MQTT_PASSWORD "0pl,mko9"
+#define MQTT_PASSWORD "********"
 #define MQTT_USER MQTT_USERNAME /* aliases for legacy names */
 #define MQTT_PASS MQTT_PASSWORD
 
