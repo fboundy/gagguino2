@@ -40,9 +40,9 @@ static void open_settings_event_cb(lv_event_t *e);
 static void back_event_cb(lv_event_t *e);
 static void reset_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
-static void set_label_value(lv_obj_t *label, float value, const char *suffix);
 static void heater_event_cb(lv_event_t *e);
 static void steam_event_cb(lv_event_t *e);
+static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -282,21 +282,8 @@ static void Settings_create(void)
   lv_obj_set_grid_cell(sw, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 3,
                        1);
 
-  const lv_coord_t H = lv_disp_get_ver_res(NULL);
-  const lv_coord_t W = lv_disp_get_hor_res(NULL);
-
-  lv_obj_t *ctrl_container = lv_obj_create(settings_scr);
-  lv_obj_set_style_bg_opa(ctrl_container, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(ctrl_container, 0, 0);
-  lv_obj_clear_flag(ctrl_container, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(ctrl_container, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-
-  static lv_coord_t btn_cols[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t btn_rows[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  lv_obj_set_grid_dsc_array(ctrl_container, btn_cols, btn_rows);
-  lv_obj_set_style_pad_column(ctrl_container, W / 100, 0);
-  lv_obj_set_style_pad_row(ctrl_container, 5, 0);
-  lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100);
+  /* DRY: Reuse main page button alignment for settings page */
+  lv_obj_t *ctrl_container = create_aligned_button_container(settings_scr, /*cols=*/2);
 
   lv_obj_t *back_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(back_btn, 80, 80);
@@ -310,6 +297,7 @@ static void Settings_create(void)
 
   lv_obj_t *back_text = lv_label_create(ctrl_container);
   lv_label_set_text(back_text, "Back");
+  lv_obj_set_style_text_color(back_text, lv_color_white(), 0);
   lv_obj_set_grid_cell(back_text, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_START, 1, 1);
 
   lv_obj_t *reset_btn = lv_btn_create(ctrl_container);
@@ -324,6 +312,7 @@ static void Settings_create(void)
 
   lv_obj_t *reset_text = lv_label_create(ctrl_container);
   lv_label_set_text(reset_text, "Reset");
+  lv_obj_set_style_text_color(reset_text, lv_color_white(), 0);
   lv_obj_set_grid_cell(reset_text, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 1, 1);
 }
 
@@ -515,18 +504,7 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_move_foreground(row_top);
 
   /* ----------------- Buttons @ 70% with 1% spacing ----------------- */
-  lv_obj_t *ctrl_container = lv_obj_create(parent);
-  lv_obj_set_style_bg_opa(ctrl_container, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(ctrl_container, 0, 0);
-  lv_obj_clear_flag(ctrl_container, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(ctrl_container, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-
-  static lv_coord_t btn_cols[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t btn_rows[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  lv_obj_set_grid_dsc_array(ctrl_container, btn_cols, btn_rows);
-  lv_obj_set_style_pad_column(ctrl_container, W / 100, 0);          /* 1% spacing */
-  lv_obj_set_style_pad_row(ctrl_container, 5, 0);
-  lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100); /* 70% */
+  lv_obj_t *ctrl_container = create_aligned_button_container(parent, /*cols=*/3);
 
   heater_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(heater_btn, 80, 80);
@@ -541,6 +519,7 @@ static void Status_create(lv_obj_t *parent)
 
   lv_obj_t *heater_text = lv_label_create(ctrl_container);
   lv_label_set_text(heater_text, "Heat");
+  lv_obj_set_style_text_color(heater_text, lv_color_white(), 0);
   lv_obj_set_grid_cell(heater_text, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_START, 1, 1);
 
   steam_btn = lv_btn_create(ctrl_container);
@@ -556,6 +535,7 @@ static void Status_create(lv_obj_t *parent)
 
   lv_obj_t *steam_text = lv_label_create(ctrl_container);
   lv_label_set_text(steam_text, "Steam");
+  lv_obj_set_style_text_color(steam_text, lv_color_white(), 0);
   lv_obj_set_grid_cell(steam_text, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 1, 1);
 
   settings_btn = lv_btn_create(ctrl_container);
@@ -571,6 +551,7 @@ static void Status_create(lv_obj_t *parent)
 
   lv_obj_t *settings_text = lv_label_create(ctrl_container);
   lv_label_set_text(settings_text, "Settings");
+  lv_obj_set_style_text_color(settings_text, lv_color_white(), 0);
   lv_obj_set_grid_cell(settings_text, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_START, 1, 1);
 
   lv_obj_move_foreground(ctrl_container);
@@ -788,3 +769,39 @@ void Backlight_adjustment_event_cb(lv_event_t *e)
 }
 
 void LVGL_Backlight_adjustment(uint8_t Backlight) { Set_Backlight(Backlight); }
+/* Create a button container aligned like the main page control row
+ * - Centered horizontally
+ * - Positioned at ~70% screen height (20% below center)
+ * - Grid with given number of columns and 2 rows (icon row + label row)
+ * - Ignores parent layout so it works inside grid-based screens
+ */
+static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols)
+{
+  const lv_coord_t H = lv_disp_get_ver_res(NULL);
+
+  lv_obj_t *ctrl_container = lv_obj_create(parent);
+  lv_obj_set_style_bg_opa(ctrl_container, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ctrl_container, 0, 0);
+  lv_obj_clear_flag(ctrl_container, LV_OBJ_FLAG_SCROLLABLE);
+  /* Ensure parent layouts (e.g., grid) don't override our alignment */
+  lv_obj_add_flag(ctrl_container, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_set_size(ctrl_container, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+
+  /* Build grid descriptor based on requested column count */
+  static lv_coord_t btn_rows[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t btn_cols_1[] = {LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t btn_cols_2[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t btn_cols_3[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  lv_coord_t *cols_dsc = btn_cols_3;
+  switch (cols)
+  {
+  case 1: cols_dsc = btn_cols_1; break;
+  case 2: cols_dsc = btn_cols_2; break;
+  default: cols_dsc = btn_cols_3; break;
+  }
+  lv_obj_set_grid_dsc_array(ctrl_container, cols_dsc, btn_rows);
+  lv_obj_set_style_pad_column(ctrl_container, W / 100, 0); /* 1% spacing */
+  lv_obj_set_style_pad_row(ctrl_container, 5, 0);
+  lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100); /* ~70% */
+  return ctrl_container;
+}
