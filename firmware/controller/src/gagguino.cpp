@@ -11,11 +11,11 @@
  *
  * Hardware pins (ESP32 default board mapping):
  * - FLOW_PIN (26)   : Flow sensor input (interrupt on CHANGE)
- * - ZC_PIN (25)     : AC zero‑cross detect (interrupt on RISING)
- * - HEAT_PIN (27)   : Boiler relay/SSR output (PWM windowing)
- * - PUMP_PIN (17)   : Pump power control via RBDDimmer triac
+ * - ZC_PIN (25)     : Triac Zero Crossing output (interrupt on RISING)
+ * - HEAT_PIN (27)   : Heater SSR control (PWM windowing)
+ * - PUMP_PIN (17)   : Triac PWM output (Arduino D4)
  * - AC_SENS (14)    : Steam switch sense (digital input)
- * - MAX_CS (16)     : MAX31865 SPI chip‑select
+ * - MAX_CS (16)     : MAX31865 SPI chip-select
  * - PRESS_PIN (35)  : Analog pressure sensor input
  */
 #include "gagguino.h"
@@ -75,7 +75,7 @@ static inline void LOG(const char* fmt, ...) {
 namespace {
 constexpr int FLOW_PIN = 26;  // Flowmeter Pulses (Arduino D2)
 constexpr int ZC_PIN = 25;    // Triac Zero Crossing output (Arduino D3)
-constexpr int PUMP_PIN = 17;  // Triac dimmer output (Arduino D4)
+constexpr int PUMP_PIN = 17;  // Triac PWM output (Arduino D4)
 constexpr int MAX_CS = 16;    // MAX31865 CS (Arduino D5)
 constexpr int HEAT_PIN = 27;  // Heater SSR control (Arduino D6)
 constexpr int AC_SENS = 14;   // Steam AC sense (Arduino D7)
@@ -693,6 +693,17 @@ static void IRAM_ATTR zcInt() {
     }
     lastZcTime = now;
     zcCount++;
+}
+
+// RBDdimmer uses the same ZC pin and installs its own ISR.
+// To avoid conflicting attachInterrupt() calls, we provide a hook that the
+// library can call from its ISR to let us track zero-cross events.
+extern "C" void IRAM_ATTR user_zc_hook() {
+    int64_t now = esp_timer_get_time();
+    if (now - lastZcTime >= 6000) {
+        lastZcTime = now;
+        zcCount++;
+    }
 }
 
 // ---------- HA Discovery helpers ----------
