@@ -129,6 +129,9 @@ Adafruit_MAX31865 max31865(MAX_CS);
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
+static const String MQTT_STATUS_TOPIC = String(GAG_TOPIC_ROOT) + "/" + GAGGIA_ID + "/status";
+static const String MQTT_ERRORS_TOPIC = String(GAG_TOPIC_ROOT) + "/" + GAGGIA_ID + "/error";
+
 // Rolling buffer of recent significant error messages
 static String g_errorLog;
 // Tracks whether the RTC has successfully synchronized with NTP
@@ -161,7 +164,8 @@ static inline void LOG_ERROR(const char* fmt, ...) {
         if (cut >= 0) g_errorLog = g_errorLog.substring(cut + 1);
     }
 
-    if (mqttClient.connected()) mqttClient.publish(MQTT_ERRORS, g_errorLog.c_str(), true);
+    if (mqttClient.connected())
+        mqttClient.publish(MQTT_ERRORS_TOPIC.c_str(), g_errorLog.c_str(), true);
 }
 
 static void syncClock() {
@@ -813,7 +817,7 @@ static void publishDiscovery() {
                         "_shot_volume\",\"stat_t\":\"" + t_shotvol_state +
                         "\",\"dev_cla\":\"volume\",\"unit_of_meas\":\"mL\",\"stat_cla\":"
                         "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
+                        MQTT_STATUS_TOPIC +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
     publishRetained(c_settemp,
@@ -821,7 +825,7 @@ static void publishDiscovery() {
                         "_set_temp\",\"stat_t\":\"" + t_settemp_state +
                         "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"°C\",\"stat_cla\":"
                         "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
+                        MQTT_STATUS_TOPIC +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
     publishRetained(c_curtemp,
@@ -829,7 +833,7 @@ static void publishDiscovery() {
                         "_current_temp\",\"stat_t\":\"" + t_curtemp_state +
                         "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"°C\",\"stat_cla\":"
                         "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
+                        MQTT_STATUS_TOPIC +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
     publishRetained(c_press,
@@ -837,7 +841,7 @@ static void publishDiscovery() {
                         "_pressure\",\"stat_t\":\"" + t_press_state +
                         "\",\"dev_cla\":\"pressure\",\"unit_of_meas\":\"bar\",\"stat_cla\":"
                         "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
+                        MQTT_STATUS_TOPIC +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
     publishRetained(c_shottime,
@@ -845,7 +849,7 @@ static void publishDiscovery() {
                         "_shot_time\",\"stat_t\":\"" + t_shottime_state +
                         "\",\"dev_cla\":\"duration\",\"unit_of_meas\":\"s\",\"stat_cla\":"
                         "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
+                        MQTT_STATUS_TOPIC +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
 
@@ -853,13 +857,13 @@ static void publishDiscovery() {
     publishRetained(
         c_ota, String("{\"name\":\"OTA Status\",\"uniq_id\":\"") + dev_id +
                    "_ota_status\",\"stat_t\":\"" + t_ota_state +
-                   "\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" + String(MQTT_STATUS) +
+                   "\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" + MQTT_STATUS_TOPIC +
                    "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     publishRetained(
         c_espnow, String("{\"name\":\"ESP-NOW Status\",\"uniq_id\":\"") + dev_id +
                       "_espnow_status\",\"stat_t\":\"" + t_espnow_state +
-                      "\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" + String(MQTT_STATUS) +
+                      "\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" + MQTT_STATUS_TOPIC +
                       "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                       "}");
     publishRetained(
@@ -867,7 +871,7 @@ static void publishDiscovery() {
         String("{\"name\":\"ESP-NOW Channel\",\"uniq_id\":\"") + dev_id +
             "_espnow_channel\",\"stat_t\":\"" + t_espnow_chan_state +
             "\",\"stat_cla\":\"measurement\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
+            MQTT_STATUS_TOPIC +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     // Diagnostic counters
@@ -876,21 +880,21 @@ static void publishDiscovery() {
         String("{\"name\":\"AC Count\",\"uniq_id\":\"") + dev_id + "_ac_count\",\"stat_t\":\"" +
             t_accnt_state +
             "\",\"stat_cla\":\"measurement\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
+            MQTT_STATUS_TOPIC +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
     publishRetained(
         c_zccnt,
         String("{\"name\":\"ZC Count\",\"uniq_id\":\"") + dev_id + "_zc_count\",\"stat_t\":\"" +
             t_zccnt_state +
             "\",\"stat_cla\":\"measurement\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
+            MQTT_STATUS_TOPIC +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
     publishRetained(
         c_pulsecnt,
         String("{\"name\":\"Pulse Count\",\"uniq_id\":\"") + dev_id +
             "_pulse_count\",\"stat_t\":\"" + t_pulsecnt_state +
             "\",\"stat_cla\":\"measurement\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
+            MQTT_STATUS_TOPIC +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     // --- binary sensors ---
@@ -898,21 +902,21 @@ static void publishDiscovery() {
         c_shot, String("{\"name\":\"Shot\",\"uniq_id\":\"") + dev_id + "_shot\",\"stat_t\":\"" +
                     t_shot_state +
                     "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"dev_cla\":\"running\",\"avty_t\":\"" +
-                    String(MQTT_STATUS) +
+                    MQTT_STATUS_TOPIC +
                     "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
     publishRetained(
         c_preflow,
         String("{\"name\":\"Pre-Flow\",\"uniq_id\":\"") + dev_id + "_preflow\",\"stat_t\":\"" +
             t_preflow_state +
             "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"dev_cla\":\"running\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
+            MQTT_STATUS_TOPIC +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
     publishRetained(
         c_steam,
         String("{\"name\":\"Steam\",\"uniq_id\":\"") + dev_id + "_steam\",\"stat_t\":\"" +
             t_steam_state +
             "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"dev_cla\":\"running\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
+            MQTT_STATUS_TOPIC +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     // --- switch: heater enable ---
@@ -920,7 +924,7 @@ static void publishDiscovery() {
         c_heater,
         String("{\"name\":\"Heater\",\"uniq_id\":\"") + dev_id + "_heater\",\"cmd_t\":\"" +
             t_heater_cmd + "\",\"stat_t\":\"" + t_heater_state +
-            "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + String(MQTT_STATUS) +
+            "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + MQTT_STATUS_TOPIC +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     // --- numbers (controllable) ---
@@ -930,7 +934,7 @@ static void publishDiscovery() {
             "_brew_setpoint\",\"cmd_t\":\"" + t_brewset_cmd + "\",\"stat_t\":\"" + t_brewset_state +
             "\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"min\":90,\"max\":99,\"step\":"
             "1,\"mode\":\"auto\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
+            MQTT_STATUS_TOPIC +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     publishRetained(c_steamset_number,
@@ -939,7 +943,7 @@ static void publishDiscovery() {
                         t_steamset_state +
                         "\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"min\":145,"
                         "\"max\":155,\"step\":1,\"mode\":\"auto\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
+                        MQTT_STATUS_TOPIC +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
 
@@ -949,7 +953,7 @@ static void publishDiscovery() {
                                           "\",\"stat_t\":\"" + t_piddtau_state +
                                           "\",\"unit_of_meas\":\"s\",\"min\":0.1,\"max\":5.0,"
                                           "\"step\":0.1,\"mode\":\"auto\",\"avty_t\":\"" +
-                                          String(MQTT_STATUS) +
+                                          MQTT_STATUS_TOPIC +
                                           "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\","
                                           "\"entity_category\":\"config\",\"dev\":" +
                                           dev + "}");
@@ -959,21 +963,21 @@ static void publishDiscovery() {
                     String("{\"name\":\"PID P\",\"uniq_id\":\"") + dev_id +
                         "_pid_p\",\"cmd_t\":\"" + t_pidp_cmd + "\",\"stat_t\":\"" + t_pidp_state +
                         "\",\"min\":0,\"max\":20,\"step\":0.1,\"mode\":\"auto\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
+                        MQTT_STATUS_TOPIC +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
     publishRetained(c_pidi_number,
                     String("{\"name\":\"PID I\",\"uniq_id\":\"") + dev_id +
                         "_pid_i\",\"cmd_t\":\"" + t_pidi_cmd + "\",\"stat_t\":\"" + t_pidi_state +
                         "\",\"min\":0,\"max\":1,\"step\":0.05,\"mode\":\"auto\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
+                        MQTT_STATUS_TOPIC +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
     publishRetained(c_pidd_number,
                     String("{\"name\":\"PID D\",\"uniq_id\":\"") + dev_id +
                         "_pid_d\",\"cmd_t\":\"" + t_pidd_cmd + "\",\"stat_t\":\"" + t_pidd_state +
                         "\",\"min\":50,\"max\":100,\"step\":0.5,\"mode\":\"auto\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
+                        MQTT_STATUS_TOPIC +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
     publishRetained(
@@ -981,7 +985,7 @@ static void publishDiscovery() {
         String("{\"name\":\"PID Guard\",\"uniq_id\":\"") + dev_id + "_pid_guard\",\"cmd_t\":\"" +
             t_pidg_cmd + "\",\"stat_t\":\"" + t_pidg_state +
             "\",\"min\":0,\"max\":20,\"step\":0.5,\"mode\":\"auto\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
+            MQTT_STATUS_TOPIC +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 }
 
@@ -1403,7 +1407,7 @@ static void ensureMqtt() {
         if (!lastConn) {
             LOG("MQTT: connected (state=%d %s)", mqttClient.state(),
                 mqttStateName(mqttClient.state()));
-            mqttClient.publish(MQTT_STATUS, "online", true);
+            mqttClient.publish(MQTT_STATUS_TOPIC.c_str(), "online", true);
             makeIdsFromMac();
             buildTopics();
             publishDiscovery();
@@ -1441,14 +1445,16 @@ static void ensureMqtt() {
     static unsigned long lastAttempt = 0;
     if (millis() - lastAttempt < 2000) return;
     lastAttempt = millis();
-    LOG("MQTT: connecting to %s:%u as '%s' (user=%s)…", MQTT_HOST, MQTT_PORT, MQTT_CLIENTID,
-        (MQTT_USER && MQTT_USER[0]) ? MQTT_USER : "(none)");
+    LOG("MQTT: connecting to %s:%u as '%s' (user=%s)…", MQTT_HOST, MQTT_PORT,
+        MQTT_CONTROLLER_CLIENT_ID,
+        (MQTT_USERNAME && MQTT_USERNAME[0]) ? MQTT_USERNAME : "(none)");
     bool ok;
-    if (MQTT_USER && MQTT_USER[0])
-        ok = mqttClient.connect(MQTT_CLIENTID, MQTT_USER, MQTT_PASS, MQTT_STATUS, 0, true,
-                                "offline");
+    if (MQTT_USERNAME && MQTT_USERNAME[0])
+        ok = mqttClient.connect(MQTT_CONTROLLER_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD,
+                                MQTT_STATUS_TOPIC.c_str(), 0, true, "offline");
     else
-        ok = mqttClient.connect(MQTT_CLIENTID, nullptr, nullptr, MQTT_STATUS, 0, true, "offline");
+        ok = mqttClient.connect(MQTT_CONTROLLER_CLIENT_ID, nullptr, nullptr,
+                                MQTT_STATUS_TOPIC.c_str(), 0, true, "offline");
     if (!ok)
         LOG_ERROR("MQTT: connect failed rc=%d (%s)  WiFi=%s RSSI=%d IP=%s GW=%s",
                   mqttClient.state(), mqttStateName(mqttClient.state()),
@@ -1528,7 +1534,7 @@ void setup() {
     LOG("Pins: FLOW=%d ZC=%d HEAT=%d AC_SENS=%d PRESS=%d  SPI{CS=%d}", FLOW_PIN, ZC_PIN, HEAT_PIN,
         AC_SENS, PRESS_PIN, MAX_CS);
     LOG("WiFi: connecting to '%s'…  MQTT: %s:%u id=%s", WIFI_SSID, MQTT_HOST, MQTT_PORT,
-        MQTT_CLIENTID);
+        MQTT_CONTROLLER_CLIENT_ID);
 }
 
 /**
