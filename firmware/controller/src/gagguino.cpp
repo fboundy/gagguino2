@@ -1476,7 +1476,7 @@ static void ensureMqtt() {
         MQTT_CONTROLLER_CLIENT_ID, (MQTT_USER && MQTT_USER[0]) ? MQTT_USER : "(none)");
     bool ok;
     if (MQTT_USER && MQTT_USER[0])
-        ok = mqttClient.connect(MQTT_CONTROLLER_CLIENT_ID, MQTT_USER, MQTT_PASS, MQTT_STATUS, 0,
+        ok = mqttClient.connect(MQTT_CONTROLLER_CLIENT_ID, MQTT_USER, MQTT_PASSWORD, MQTT_STATUS, 0,
                                 true, "offline");
     else
         ok = mqttClient.connect(MQTT_CONTROLLER_CLIENT_ID, nullptr, nullptr, MQTT_STATUS, 0, true,

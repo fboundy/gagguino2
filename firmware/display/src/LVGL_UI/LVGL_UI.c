@@ -1,4 +1,4 @@
-#include "LVGL_Example.h"
+#include "LVGL_UI.h"
 #include <inttypes.h>
 #include <math.h>
 #include <stdbool.h>
@@ -470,7 +470,6 @@ static void Status_create(lv_obj_t *parent)
   } while (0)
 
   const lv_coord_t H = lv_disp_get_ver_res(NULL);
-  const lv_coord_t W = lv_disp_get_hor_res(NULL);
 
   /* ----------------- Bottom row @ 50% ----------------- */
   lv_obj_t *row_bottom = lv_obj_create(parent);
@@ -778,6 +777,7 @@ void LVGL_Backlight_adjustment(uint8_t Backlight) { Set_Backlight(Backlight); }
 static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols)
 {
   const lv_coord_t H = lv_disp_get_ver_res(NULL);
+  const lv_coord_t W = lv_disp_get_hor_res(NULL);
 
   lv_obj_t *ctrl_container = lv_obj_create(parent);
   lv_obj_set_style_bg_opa(ctrl_container, LV_OPA_TRANSP, 0);

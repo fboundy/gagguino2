@@ -11,7 +11,7 @@ set(app_sources
     ${DEMO_MAIN_DIR}/LVGL_Driver/LVGL_Driver.c
     ${DEMO_MAIN_DIR}/I2C_Driver/I2C_Driver.c
     ${DEMO_MAIN_DIR}/SD_Card/SD_MMC.c
-    ${DEMO_MAIN_DIR}/LVGL_UI/LVGL_Example.c
+    ${DEMO_MAIN_DIR}/LVGL_UI/LVGL_UI.c
     ${DEMO_MAIN_DIR}/Wireless/Wireless.c
     ${DEMO_MAIN_DIR}/Buzzer/Buzzer.c
     ${DEMO_MAIN_DIR}/fonts/mdi_icons_40.c

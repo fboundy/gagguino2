@@ -119,7 +119,7 @@ void WIFI_Init(void *arg)
     // Apply credentials from secrets.h
     wifi_config_t sta_cfg = {0};
     strncpy((char *)sta_cfg.sta.ssid, WIFI_SSID, sizeof(sta_cfg.sta.ssid));
-    strncpy((char *)sta_cfg.sta.password, WIFI_PASS,
+    strncpy((char *)sta_cfg.sta.password, WIFI_PASSWORD,
             sizeof(sta_cfg.sta.password));
     sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
@@ -350,8 +350,8 @@ void MQTT_Start(void)
 #endif
         },
         .credentials = {
-#ifdef MQTT_USERNAME
-            .username = MQTT_USERNAME,
+#ifdef MQTT_USER
+            .username = MQTT_USER,
 #endif
 #ifdef MQTT_PASSWORD
             .authentication.password = MQTT_PASSWORD,

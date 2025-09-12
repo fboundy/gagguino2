@@ -37,7 +37,7 @@ static int log_vprintf(const char *fmt, va_list args)
 #include "CST820.h"
 #include "SD_MMC.h"
 #include "LVGL_Driver.h"
-#include "LVGL_Example.h"
+#include "LVGL_UI.h"
 #include "Wireless.h"
 
 /**
