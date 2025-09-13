@@ -607,8 +607,8 @@ static void updateTempPWM() {
  * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
  */
 static void applyPumpPower() {
-    pumpDimmer.setPower((int)pumpPower);
-    pumpDimmer.setState(pumpPower > 0.0f ? ON : OFF);
+    // pumpDimmer.setPower((int)pumpPower);
+    // pumpDimmer.setState(pumpPower > 0.0f ? ON : OFF);
 }
 
 /**
@@ -764,8 +764,8 @@ static void buildTopics() {
              uid_suffix);
     snprintf(t_steamset_state, sizeof(t_steamset_state), "%s/%s/steam_setpoint/state", STATE_BASE,
              uid_suffix);
-    snprintf(t_pump_cmd, sizeof(t_pump_cmd), "%s/%s/pump_power/set", STATE_BASE, uid_suffix);
-    snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE, uid_suffix);
+    // snprintf(t_pump_cmd, sizeof(t_pump_cmd), "%s/%s/pump_power/set", STATE_BASE, uid_suffix);
+    // snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE, uid_suffix);
     // PID numbers
     snprintf(t_pidp_cmd, sizeof(t_pidp_cmd), "%s/%s/pid_p/set", STATE_BASE, uid_suffix);
     snprintf(t_pidp_state, sizeof(t_pidp_state), "%s/%s/pid_p/state", STATE_BASE, uid_suffix);
@@ -807,8 +807,8 @@ static void buildTopics() {
              DISCOVERY_PREFIX, dev_id);
     snprintf(c_steamset_number, sizeof(c_steamset_number), "%s/number/%s_steam_setpoint/config",
              DISCOVERY_PREFIX, dev_id);
-    snprintf(c_pump_number, sizeof(c_pump_number), "%s/number/%s_pump_power/config",
-             DISCOVERY_PREFIX, dev_id);
+    // snprintf(c_pump_number, sizeof(c_pump_number), "%s/number/%s_pump_power/config",
+    //          DISCOVERY_PREFIX, dev_id);
     // PID numbers
     snprintf(c_pidp_number, sizeof(c_pidp_number), "%s/number/%s_pid_p/config", DISCOVERY_PREFIX,
              dev_id);
@@ -990,14 +990,14 @@ static void publishDiscovery() {
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
-    publishRetained(
-        c_pump_number,
-        String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id + "_pump_power\",\"cmd_t\":\"" +
-            t_pump_cmd + "\",\"stat_t\":\"" + t_pump_state +
-            "\",\"unit_of_meas\":\"%\",\"min\":0,\"max\":100,\"step\":1,\"mode\":\"auto\",\"avty_"
-            "t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+    // publishRetained(
+    // c_pump_number,
+    // String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id + "_pump_power\",\"cmd_t\":\"" +
+    // t_pump_cmd + "\",\"stat_t\":\"" + t_pump_state +
+    // "\",\"unit_of_meas\":\"%\",\"min\":0,\"max\":100,\"step\":1,\"mode\":\"auto\",\"avty_"
+    // "t\":\"" +
+    // String(MQTT_STATUS) +
+    // "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     // --- number: PID D Tau (seconds) ---
     publishRetained(c_piddtau_number, String("{\"name\":\"PID D Tau\",\"uniq_id\":\"") + dev_id +
@@ -1084,7 +1084,7 @@ static void publishBool(const char* topic, bool on, bool retain = true) {
 // Publish retained number/config states once (on connect) or on change.
 static void publishNumberStatesSnapshot() {
     // NOTE: Config/number states are published on connect and on change only.
-    publishNum(t_pump_state, pumpPower, 0, true);
+    // publishNum(t_pump_state, pumpPower, 0, true);
 }
 
 // Helper: immediately disable the heater output and prevent PID updates
@@ -1127,7 +1127,7 @@ static void publishStates() {
     // number entity states (retained so HA persists)
     publishNum(t_brewset_state, brewSetpoint, 1, true);
     publishNum(t_steamset_state, steamSetpoint, 1, true);
-    publishNum(t_pump_state, pumpPower, 0, true);
+    // publishNum(t_pump_state, pumpPower, 0, true);
     // PID number states
     publishNum(t_pidp_state, pGainTemp, 2, true);
     publishNum(t_pidi_state, iGainTemp, 2, true);
@@ -1238,11 +1238,11 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         changed = true;
         LOG("HA: Steam setpoint -> %.1f °C", steamSetpoint);
     }
-    if (parse_clamped(t_pump_cmd, 0.0f, 100.0f, pumpPower)) {
-        applyPumpPower();
-        publishNum(t_pump_state, pumpPower, 0, true);
-        LOG("HA: Pump power -> %.0f%%", pumpPower);
-    }
+    // if (parse_clamped(t_pump_cmd, 0.0f, 100.0f, pumpPower)) {
+    // applyPumpPower();
+    // publishNum(t_pump_state, pumpPower, 0, true);
+    // LOG("HA: Pump power -> %.0f%%", pumpPower);
+    // }
     // PID params
     float tmp;
     if (parse_clamped(t_pidp_cmd, 0.0f, 200.0f, tmp)) {
@@ -1490,7 +1490,7 @@ static void ensureMqtt() {
             publishDiscovery();
             mqttClient.subscribe(t_brewset_cmd);
             mqttClient.subscribe(t_steamset_cmd);
-            mqttClient.subscribe(t_pump_cmd);
+            // mqttClient.subscribe(t_pump_cmd);
             // PID control subscriptions
             mqttClient.subscribe(t_pidp_cmd);
             mqttClient.subscribe(t_pidi_cmd);
@@ -1566,10 +1566,10 @@ void setup() {
     pinMode(ZC_PIN, INPUT);
     pinMode(AC_SENS, INPUT_PULLUP);
     pinMode(PUMP_PIN, OUTPUT);
-    pumpDimmer.begin(NORMAL_MODE, OFF);
+    // pumpDimmer.begin(NORMAL_MODE, OFF);
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
-    applyPumpPower();
+    // applyPumpPower();
 
     // Initialize MAX31865 (set wiring: 2/3/4-wire as appropriate)
     max31865.begin(MAX31865_2WIRE);
