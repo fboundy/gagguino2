@@ -54,6 +54,7 @@ static void shot_def_dd_event_cb(lv_event_t *e);
 static void shot_duration_slider_event_cb(lv_event_t *e);
 static void shot_volume_slider_event_cb(lv_event_t *e);
 static void beep_on_shot_btn_event_cb(lv_event_t *e);
+static void buzzer_timer_cb(lv_timer_t *t);
 
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
@@ -111,6 +112,8 @@ static lv_obj_t *conn_label;
 static lv_obj_t *conn_status_label;
 static int last_conn_type = -1;
 static int last_conn_status = -1;
+static lv_timer_t *buzzer_timer;
+static bool shot_target_reached;
 
 void Lvgl_Example1(void)
 {
@@ -892,6 +895,90 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     lv_label_set_text(shot_volume_label, buf);
   }
 
+  /* shot definition highlighting & buzzer */
+  if (shot_def_dd)
+  {
+    uint16_t sel = lv_dropdown_get_selected(shot_def_dd);
+    bool shot_active = (shot_time > 0.0f || shot_vol > 0.0f);
+    if (!shot_active)
+      shot_target_reached = false;
+    lv_color_t white = lv_color_white();
+    lv_color_t yellow = lv_palette_main(LV_PALETTE_YELLOW);
+    bool beep_enabled = beep_on_shot_btn && lv_obj_has_state(beep_on_shot_btn, LV_STATE_CHECKED);
+    if (sel == 1)
+    {
+      int target = shot_duration_slider ? lv_slider_get_value(shot_duration_slider) : 0;
+      lv_color_t col = white;
+      if (shot_active && shot_time >= (float)target)
+      {
+        col = yellow;
+        if (!shot_target_reached && beep_enabled)
+        {
+          Buzzer_On();
+          if (!buzzer_timer)
+            buzzer_timer = lv_timer_create(buzzer_timer_cb, 500, NULL);
+        }
+        shot_target_reached = true;
+      }
+      if (shot_time_icon)
+        lv_obj_set_style_text_color(shot_time_icon, col, 0);
+      if (shot_time_label)
+        lv_obj_set_style_text_color(shot_time_label, col, 0);
+      if (shot_time_units_label)
+        lv_obj_set_style_text_color(shot_time_units_label, col, 0);
+      if (shot_volume_icon)
+        lv_obj_set_style_text_color(shot_volume_icon, white, 0);
+      if (shot_volume_label)
+        lv_obj_set_style_text_color(shot_volume_label, white, 0);
+      if (shot_volume_units_label)
+        lv_obj_set_style_text_color(shot_volume_units_label, white, 0);
+    }
+    else if (sel == 2)
+    {
+      int target = shot_volume_slider ? lv_slider_get_value(shot_volume_slider) : 0;
+      lv_color_t col = white;
+      if (shot_active && shot_vol >= (float)target)
+      {
+        col = yellow;
+        if (!shot_target_reached && beep_enabled)
+        {
+          Buzzer_On();
+          if (!buzzer_timer)
+            buzzer_timer = lv_timer_create(buzzer_timer_cb, 500, NULL);
+        }
+        shot_target_reached = true;
+      }
+      if (shot_volume_icon)
+        lv_obj_set_style_text_color(shot_volume_icon, col, 0);
+      if (shot_volume_label)
+        lv_obj_set_style_text_color(shot_volume_label, col, 0);
+      if (shot_volume_units_label)
+        lv_obj_set_style_text_color(shot_volume_units_label, col, 0);
+      if (shot_time_icon)
+        lv_obj_set_style_text_color(shot_time_icon, white, 0);
+      if (shot_time_label)
+        lv_obj_set_style_text_color(shot_time_label, white, 0);
+      if (shot_time_units_label)
+        lv_obj_set_style_text_color(shot_time_units_label, white, 0);
+    }
+    else
+    {
+      if (shot_time_icon)
+        lv_obj_set_style_text_color(shot_time_icon, white, 0);
+      if (shot_time_label)
+        lv_obj_set_style_text_color(shot_time_label, white, 0);
+      if (shot_time_units_label)
+        lv_obj_set_style_text_color(shot_time_units_label, white, 0);
+      if (shot_volume_icon)
+        lv_obj_set_style_text_color(shot_volume_icon, white, 0);
+      if (shot_volume_label)
+        lv_obj_set_style_text_color(shot_volume_label, white, 0);
+      if (shot_volume_units_label)
+        lv_obj_set_style_text_color(shot_volume_units_label, white, 0);
+      shot_target_reached = false;
+    }
+  }
+
   /* backlight */
   if (Backlight_slider)
     lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
@@ -983,6 +1070,13 @@ static void beep_on_shot_btn_event_cb(lv_event_t *e)
   {
     lv_label_set_text(label, "Off");
   }
+}
+
+static void buzzer_timer_cb(lv_timer_t *t)
+{
+  Buzzer_Off();
+  lv_timer_del(t);
+  buzzer_timer = NULL;
 }
 
 void LVGL_Backlight_adjustment(uint8_t Backlight) { Set_Backlight(Backlight); }
