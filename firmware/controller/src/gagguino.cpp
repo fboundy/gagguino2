@@ -37,7 +37,12 @@
 #include <cstdarg>
 #include <map>
 
+// Optional: triac dimmer (ESP32 AC pump control). Disabled by default to avoid
+// bringing in ESP-IDF intr headers that emit deprecation warnings. Define
+// USE_PUMP_DIMMER in build flags to enable.
+#ifdef USE_PUMP_DIMMER
 #include <RBDdimmer.h>
+#endif
 
 #include "espnow_packet.h"
 #include "mqtt_topics.h"  // GAG_TOPIC_ROOT
@@ -115,8 +120,10 @@ constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
 // Derivative filter time constant (seconds), exposed to HA
 constexpr float D_TAU_TEMP = 0.8f;
 
-// Pump dimmer instance
+// Pump dimmer instance (enabled only if USE_PUMP_DIMMER is set)
+#ifdef USE_PUMP_DIMMER
 dimmerLamp pumpDimmer(PUMP_PIN, ZC_PIN);
+#endif
 
 // Pressure calibration constants
 constexpr float PRESSURE_TOL = 1.0f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
@@ -1120,7 +1127,7 @@ static void publishNum(const char* topic, float v, uint8_t decimals = 1, bool re
     dtostrf(v, 0, decimals, tmp);
     publishStr(topic, String(tmp), retain);
 }
-static void publishBool(const char* topic, bool on, bool retain = true) {
+static void publishBool(const char* topic, bool on, bool retain) {
     auto it = s_lastBool.find(topic);
     if (it != s_lastBool.end() && it->second == on) return;
     s_lastBool[String(topic)] = on;
