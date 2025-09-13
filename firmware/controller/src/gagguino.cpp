@@ -222,8 +222,8 @@ float shotTime = 0;  //
 volatile unsigned long pulseCount = 0;
 volatile unsigned long zcCount = 0;
 volatile int64_t lastZcTime = 0;  // microsecond timestamp
-int vol = 0, preFlowVol = 0, shotVol = 0;
-unsigned int lastVol = 0;
+float vol = 0, preFlowVol = 0, shotVol = 0;
+float lastVol = 0;
 bool prevSteamFlag = false, ac = false;
 int acCount = 0;
 bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
@@ -666,9 +666,9 @@ static void updatePreFlow() {
  * @brief Convert pulse counts to volumes and maintain shot volume.
  */
 static void updateVols() {
-    vol = (int)(pulseCount * FLOW_CAL);
+    vol = pulseCount * FLOW_CAL;
     lastVol = vol;
-    shotVol = (preFlow || !shotFlag) ? 0 : (vol - preFlowVol);
+    shotVol = (preFlow || !shotFlag) ? 0.0f : (vol - preFlowVol);
 }
 
 // ISRs
@@ -1107,7 +1107,7 @@ static void forceHeaterOff() {
  */
 static void publishStates() {
     // measurements
-    publishNum(t_shotvol_state, shotVol, 0);  // mL
+    publishNum(t_shotvol_state, shotVol, 1);  // mL
     publishNum(t_settemp_state, setTemp, 1);  // active target
     publishNum(t_curtemp_state, currentTemp, 1);
     publishNum(t_press_state, lastPress, 1);
@@ -1690,7 +1690,7 @@ void loop() {
         LOG("Pressure: Raw=%d, Now=%0.2f Last=%0.2f", rawPress, pressNow, lastPress);
         LOG("Temp: Set=%0.1f, Current=%0.2f", setTemp, currentTemp);
         LOG("Heat: Power=%0.1f, Cycles=%d", heatPower, heatCycles);
-        LOG("Vol: Pulses=%lu, Vol=%d", pulseCount, vol);
+        LOG("Vol: Pulses=%lu, Vol=%0.2f", pulseCount, vol);
         LOG("Pump: ZC Count =%lu", zcCount);
         LOG("Flags: Steam=%d, Shot=%d", steamFlag, shotFlag);
         LOG("AC Count=%d", acCount);
