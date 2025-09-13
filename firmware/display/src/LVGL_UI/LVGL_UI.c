@@ -22,6 +22,10 @@
 #define LV_SYMBOL_TIMER "\xEF\x80\x97"
 #endif
 
+#ifndef LV_SYMBOL_BRIGHTNESS
+#define LV_SYMBOL_BRIGHTNESS "\xEF\x86\x85"
+#endif
+
 /**********************
  *      TYPEDEFS
  **********************/
@@ -174,9 +178,10 @@ void Lvgl_Example1(void)
 
   lv_style_init(&style_text_muted);
   lv_style_set_text_opa(&style_text_muted, LV_OPA_90);
+  lv_style_set_text_font(&style_text_muted, &lv_font_montserrat_28);
 
   lv_style_init(&style_title);
-  lv_style_set_text_font(&style_title, font_large);
+  lv_style_set_text_font(&style_title, &lv_font_montserrat_40);
 
   lv_style_init(&style_icon);
   lv_style_set_text_color(&style_icon, lv_theme_get_color_primary(NULL));
@@ -242,22 +247,22 @@ static void Settings_create(void)
   lv_obj_set_style_border_width(settings_scr, 0, 0);
   lv_obj_set_style_text_color(settings_scr, lv_color_white(), 0);
 
-  static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1),
+  static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(4),
                                            LV_GRID_TEMPLATE_LAST};
   static lv_coord_t grid_main_row_dsc[] = {
       LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT,
       LV_GRID_CONTENT, LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
   lv_obj_set_grid_dsc_array(settings_scr, grid_main_col_dsc, grid_main_row_dsc);
 
-  lv_obj_t *Backlight_label = lv_label_create(settings_scr);
-  lv_label_set_text(Backlight_label, "Backlight brightness");
-  lv_obj_add_style(Backlight_label, &style_text_muted, 0);
-  lv_obj_set_grid_cell(Backlight_label, LV_GRID_ALIGN_CENTER, 0, 2,
+  lv_obj_t *Backlight_icon = lv_label_create(settings_scr);
+  lv_label_set_text(Backlight_icon, LV_SYMBOL_BRIGHTNESS);
+  lv_obj_add_style(Backlight_icon, &style_icon, 0);
+  lv_obj_set_grid_cell(Backlight_icon, LV_GRID_ALIGN_START, 0, 1,
                        LV_GRID_ALIGN_START, 0, 1);
 
   Backlight_slider = lv_slider_create(settings_scr);
   lv_obj_add_flag(Backlight_slider, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_size(Backlight_slider, 200, 35);
+  lv_obj_set_size(Backlight_slider, 35, 200);
   lv_obj_set_style_radius(Backlight_slider, 3, LV_PART_KNOB);
   lv_obj_set_style_bg_opa(Backlight_slider, LV_OPA_TRANSP, LV_PART_KNOB);
   lv_obj_set_style_bg_color(Backlight_slider, lv_color_hex(0xAAAAAA),
@@ -271,18 +276,19 @@ static void Settings_create(void)
   lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
   lv_obj_add_event_cb(Backlight_slider, Backlight_adjustment_event_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
-  lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_CENTER, 0, 2,
-                       LV_GRID_ALIGN_START, 1, 1);
+  lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_START, 0, 1,
+                       LV_GRID_ALIGN_CENTER, 1, 5);
 
   lv_obj_t *shot_section_label = lv_label_create(settings_scr);
   lv_label_set_text(shot_section_label, "Shot definition");
   lv_obj_add_style(shot_section_label, &style_title, 0);
-  lv_obj_set_grid_cell(shot_section_label, LV_GRID_ALIGN_CENTER, 0, 2,
+  lv_obj_set_grid_cell(shot_section_label, LV_GRID_ALIGN_START, 1, 1,
                        LV_GRID_ALIGN_START, 2, 1);
 
   lv_obj_t *beep_on_shot_label = lv_label_create(settings_scr);
   lv_label_set_text(beep_on_shot_label, "Beep on shot");
-  lv_obj_set_grid_cell(beep_on_shot_label, LV_GRID_ALIGN_START, 0, 1,
+  lv_obj_add_style(beep_on_shot_label, &style_text_muted, 0);
+  lv_obj_set_grid_cell(beep_on_shot_label, LV_GRID_ALIGN_START, 1, 1,
                        LV_GRID_ALIGN_START, 3, 1);
 
   beep_on_shot_btn = lv_btn_create(settings_scr);
@@ -303,7 +309,7 @@ static void Settings_create(void)
   lv_obj_t *shot_def_label = lv_label_create(settings_scr);
   lv_label_set_text(shot_def_label, "Shot definition");
   lv_obj_add_style(shot_def_label, &style_text_muted, 0);
-  lv_obj_set_grid_cell(shot_def_label, LV_GRID_ALIGN_START, 0, 1,
+  lv_obj_set_grid_cell(shot_def_label, LV_GRID_ALIGN_START, 1, 1,
                        LV_GRID_ALIGN_START, 4, 1);
 
   shot_def_dd = lv_dropdown_create(settings_scr);
@@ -318,7 +324,7 @@ static void Settings_create(void)
   shot_duration_label = lv_label_create(settings_scr);
   lv_label_set_text(shot_duration_label, "Shot Duration");
   lv_obj_add_style(shot_duration_label, &style_text_muted, 0);
-  lv_obj_set_grid_cell(shot_duration_label, LV_GRID_ALIGN_START, 0, 1,
+  lv_obj_set_grid_cell(shot_duration_label, LV_GRID_ALIGN_START, 1, 1,
                        LV_GRID_ALIGN_START, 5, 1);
 
   shot_duration_slider = lv_slider_create(settings_scr);
@@ -338,7 +344,7 @@ static void Settings_create(void)
   shot_volume_label = lv_label_create(settings_scr);
   lv_label_set_text(shot_volume_label, "Shot Volume");
   lv_obj_add_style(shot_volume_label, &style_text_muted, 0);
-  lv_obj_set_grid_cell(shot_volume_label, LV_GRID_ALIGN_START, 0, 1,
+  lv_obj_set_grid_cell(shot_volume_label, LV_GRID_ALIGN_START, 1, 1,
                        LV_GRID_ALIGN_START, 5, 1);
 
   shot_volume_slider = lv_slider_create(settings_scr);
