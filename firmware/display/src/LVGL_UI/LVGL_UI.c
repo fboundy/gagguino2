@@ -48,6 +48,7 @@ static void add_version_label(lv_obj_t *parent);
 static void shot_def_dd_event_cb(lv_event_t *e);
 static void shot_duration_slider_event_cb(lv_event_t *e);
 static void shot_volume_slider_event_cb(lv_event_t *e);
+static void beep_on_shot_btn_event_cb(lv_event_t *e);
 
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
@@ -92,7 +93,7 @@ static lv_obj_t *pressure_units_label;
 static lv_obj_t *shot_time_units_label;
 static lv_obj_t *shot_volume_units_label;
 lv_obj_t *Backlight_slider;
-static lv_obj_t *beep_on_shot_cb;
+static lv_obj_t *beep_on_shot_btn;
 static lv_obj_t *shot_def_dd;
 static lv_obj_t *shot_duration_label;
 static lv_obj_t *shot_duration_slider;
@@ -271,22 +272,37 @@ static void Settings_create(void)
   lv_obj_set_grid_cell(shot_section_label, LV_GRID_ALIGN_CENTER, 0, 2,
                        LV_GRID_ALIGN_START, 2, 1);
 
-  beep_on_shot_cb = lv_checkbox_create(settings_scr);
-  lv_checkbox_set_text(beep_on_shot_cb, "Beep on shot");
-  lv_obj_set_grid_cell(beep_on_shot_cb, LV_GRID_ALIGN_START, 0, 2,
+  lv_obj_t *beep_on_shot_label = lv_label_create(settings_scr);
+  lv_label_set_text(beep_on_shot_label, "Beep on shot");
+  lv_obj_set_grid_cell(beep_on_shot_label, LV_GRID_ALIGN_START, 0, 1,
                        LV_GRID_ALIGN_START, 3, 1);
+
+  beep_on_shot_btn = lv_btn_create(settings_scr);
+  lv_obj_add_flag(beep_on_shot_btn, LV_OBJ_FLAG_CHECKABLE);
+  lv_obj_set_style_bg_color(beep_on_shot_btn,
+                            lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_style_bg_color(beep_on_shot_btn,
+                            lv_palette_main(LV_PALETTE_YELLOW),
+                            LV_STATE_CHECKED);
+  lv_obj_set_grid_cell(beep_on_shot_btn, LV_GRID_ALIGN_CENTER, 1, 1,
+                       LV_GRID_ALIGN_START, 3, 1);
+  lv_obj_add_event_cb(beep_on_shot_btn, beep_on_shot_btn_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+  lv_obj_t *beep_btn_label = lv_label_create(beep_on_shot_btn);
+  lv_label_set_text(beep_btn_label, "Off");
+  lv_obj_center(beep_btn_label);
 
   lv_obj_t *shot_def_label = lv_label_create(settings_scr);
   lv_label_set_text(shot_def_label, "Shot definition");
   lv_obj_add_style(shot_def_label, &style_text_muted, 0);
-  lv_obj_set_grid_cell(shot_def_label, LV_GRID_ALIGN_CENTER, 0, 1,
+  lv_obj_set_grid_cell(shot_def_label, LV_GRID_ALIGN_START, 0, 1,
                        LV_GRID_ALIGN_START, 4, 1);
 
   shot_def_dd = lv_dropdown_create(settings_scr);
   lv_dropdown_set_options(shot_def_dd, "None\nTime\nVolume");
   lv_dropdown_set_selected(shot_def_dd, 0);
   lv_obj_set_width(shot_def_dd, 120);
-  lv_obj_set_grid_cell(shot_def_dd, LV_GRID_ALIGN_START, 1, 1,
+  lv_obj_set_grid_cell(shot_def_dd, LV_GRID_ALIGN_CENTER, 1, 1,
                        LV_GRID_ALIGN_START, 4, 1);
   lv_obj_add_event_cb(shot_def_dd, shot_def_dd_event_cb, LV_EVENT_VALUE_CHANGED,
                       NULL);
@@ -294,7 +310,7 @@ static void Settings_create(void)
   shot_duration_label = lv_label_create(settings_scr);
   lv_label_set_text(shot_duration_label, "Shot Duration");
   lv_obj_add_style(shot_duration_label, &style_text_muted, 0);
-  lv_obj_set_grid_cell(shot_duration_label, LV_GRID_ALIGN_CENTER, 0, 1,
+  lv_obj_set_grid_cell(shot_duration_label, LV_GRID_ALIGN_START, 0, 1,
                        LV_GRID_ALIGN_START, 5, 1);
 
   shot_duration_slider = lv_slider_create(settings_scr);
@@ -303,18 +319,18 @@ static void Settings_create(void)
   lv_slider_set_value(shot_duration_slider, 27, LV_ANIM_OFF);
   lv_obj_add_event_cb(shot_duration_slider, shot_duration_slider_event_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
-  lv_obj_set_grid_cell(shot_duration_slider, LV_GRID_ALIGN_START, 1, 1,
+  lv_obj_set_grid_cell(shot_duration_slider, LV_GRID_ALIGN_CENTER, 1, 1,
                        LV_GRID_ALIGN_START, 5, 1);
 
   shot_duration_value = lv_label_create(settings_scr);
   lv_label_set_text(shot_duration_value, "27s");
-  lv_obj_align_to(shot_duration_value, shot_duration_slider, LV_ALIGN_OUT_RIGHT_MID,
-                  10, 0);
+  lv_obj_align_to(shot_duration_value, shot_duration_slider,
+                  LV_ALIGN_OUT_RIGHT_MID, 10, 0);
 
   shot_volume_label = lv_label_create(settings_scr);
   lv_label_set_text(shot_volume_label, "Shot Volume");
   lv_obj_add_style(shot_volume_label, &style_text_muted, 0);
-  lv_obj_set_grid_cell(shot_volume_label, LV_GRID_ALIGN_CENTER, 0, 1,
+  lv_obj_set_grid_cell(shot_volume_label, LV_GRID_ALIGN_START, 0, 1,
                        LV_GRID_ALIGN_START, 5, 1);
 
   shot_volume_slider = lv_slider_create(settings_scr);
@@ -323,7 +339,7 @@ static void Settings_create(void)
   lv_slider_set_value(shot_volume_slider, 40, LV_ANIM_OFF);
   lv_obj_add_event_cb(shot_volume_slider, shot_volume_slider_event_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
-  lv_obj_set_grid_cell(shot_volume_slider, LV_GRID_ALIGN_START, 1, 1,
+  lv_obj_set_grid_cell(shot_volume_slider, LV_GRID_ALIGN_CENTER, 1, 1,
                        LV_GRID_ALIGN_START, 5, 1);
 
   shot_volume_value = lv_label_create(settings_scr);
@@ -404,7 +420,7 @@ void Lvgl_Example1_close(void)
   last_conn_type = -1;
   last_conn_status = -1;
   Backlight_slider = NULL;
-  beep_on_shot_cb = NULL;
+  beep_on_shot_btn = NULL;
   shot_def_dd = NULL;
   shot_duration_label = NULL;
   shot_duration_slider = NULL;
@@ -921,6 +937,20 @@ static void shot_volume_slider_event_cb(lv_event_t *e)
   char buf[8];
   snprintf(buf, sizeof buf, "%d ml", val);
   lv_label_set_text(shot_volume_value, buf);
+}
+
+static void beep_on_shot_btn_event_cb(lv_event_t *e)
+{
+  lv_obj_t *btn = lv_event_get_target(e);
+  lv_obj_t *label = lv_obj_get_child(btn, 0);
+  if (lv_obj_has_state(btn, LV_STATE_CHECKED))
+  {
+    lv_label_set_text(label, "On");
+  }
+  else
+  {
+    lv_label_set_text(label, "Off");
+  }
 }
 
 void LVGL_Backlight_adjustment(uint8_t Backlight) { Set_Backlight(Backlight); }
