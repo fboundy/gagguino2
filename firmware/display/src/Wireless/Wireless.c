@@ -657,6 +657,11 @@ bool Wireless_ControllerStillSendingEspNow(void)
     return s_mqtt_espnow_last > s_espnow_last_rx;
 }
 
+bool Wireless_IsEspNowActive(void)
+{
+    return s_espnow_active;
+}
+
 static void Wireless_Poll(void)
 {
     // Handle deferred ESP-NOW timeout actions
