@@ -178,10 +178,10 @@ void Lvgl_Example1(void)
 
   lv_style_init(&style_text_muted);
   lv_style_set_text_opa(&style_text_muted, LV_OPA_90);
-  lv_style_set_text_font(&style_text_muted, &lv_font_montserrat_28);
+  lv_style_set_text_font(&style_text_muted, &lv_font_montserrat_20);
 
   lv_style_init(&style_title);
-  lv_style_set_text_font(&style_title, &lv_font_montserrat_40);
+  lv_style_set_text_font(&style_title, &lv_font_montserrat_28);
 
   lv_style_init(&style_icon);
   lv_style_set_text_color(&style_icon, lv_theme_get_color_primary(NULL));
@@ -278,6 +278,7 @@ static void Settings_create(void)
                       LV_EVENT_VALUE_CHANGED, NULL);
   lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_START, 0, 1,
                        LV_GRID_ALIGN_CENTER, 1, 5);
+  lv_obj_set_style_translate_x(Backlight_slider, LV_HOR_RES / 10, 0);
 
   lv_obj_t *shot_section_label = lv_label_create(settings_scr);
   lv_label_set_text(shot_section_label, "Shot definition");
