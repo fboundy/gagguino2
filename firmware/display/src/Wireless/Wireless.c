@@ -40,6 +40,8 @@ static char TOPIC_ESPNOW_CHAN[128];
 static char TOPIC_ESPNOW_MAC[128];
 static char TOPIC_ESPNOW_CMD[128];
 static char TOPIC_ESPNOW_LAST[128];
+static char TOPIC_OTA_STATUS[128];
+static char TOPIC_OTA_ENABLE[128];
 
 static inline void build_topics(void)
 {
@@ -58,6 +60,8 @@ static inline void build_topics(void)
     snprintf(TOPIC_ESPNOW_MAC, sizeof TOPIC_ESPNOW_MAC, "%s/%s/espnow/mac", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_ESPNOW_CMD, sizeof TOPIC_ESPNOW_CMD, "%s/%s/espnow/cmd", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_ESPNOW_LAST, sizeof TOPIC_ESPNOW_LAST, "%s/%s/espnow/last", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_OTA_STATUS, sizeof TOPIC_OTA_STATUS, "%s/%s/ota/status", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_OTA_ENABLE, sizeof TOPIC_OTA_ENABLE, "%s/%s/ota/enable", GAG_TOPIC_ROOT, GAGGIA_ID);
 }
 
 // tolerant bool parse: "1"/"true"/"on" => true
@@ -184,6 +188,7 @@ static float s_shot_time = 0.0f;
 static float s_shot_volume = 0.0f;
 static bool s_heater = false;
 static bool s_steam = false;
+static bool s_ota = false;
 static bool s_use_espnow = false;
 static bool s_mqtt_connected = false;
 static bool s_mqtt_stopping = false; // avoid repeated stop requests
@@ -260,6 +265,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_CHAN, 1);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_MAC, 1);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_LAST, 1);
+        esp_mqtt_client_subscribe(event->client, TOPIC_OTA_STATUS, 1);
 #ifdef MQTT_STATUS
         esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
 #endif
@@ -295,6 +301,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             s_heater = parse_bool_str(d_copy);
         else if (strcmp(t_copy, TOPIC_STEAM) == 0)
             s_steam = parse_bool_str(d_copy);
+        else if (strcmp(t_copy, TOPIC_OTA_STATUS) == 0)
+            s_ota = parse_bool_str(d_copy);
         else if (strcmp(t_copy, TOPIC_ESPNOW_CHAN) == 0)
         {
             s_espnow_channel = atoi(d_copy);
@@ -426,6 +434,20 @@ void MQTT_SetSteamState(bool steam)
         {
             uint8_t cmd = s_steam ? ESPNOW_CMD_STEAM_ON : ESPNOW_CMD_STEAM_OFF;
             esp_now_send(s_espnow_peer, &cmd, 1);
+        }
+    }
+}
+
+bool MQTT_GetOtaState(void) { return s_ota; }
+
+void MQTT_SetOtaState(bool ota)
+{
+    if (ota != s_ota)
+    {
+        s_ota = ota;
+        if (s_mqtt)
+        {
+            MQTT_Publish(TOPIC_OTA_ENABLE, s_ota ? "ON" : "OFF", 1, true);
         }
     }
 }

@@ -284,7 +284,7 @@ char t_piddtau_state[96], t_piddtau_cmd[96];
 
 // Config topics
 char c_shotvol[128], c_settemp[128], c_curtemp[128], c_press[128], c_shottime[128], c_ota[128],
-    c_espnow[128], c_espnow_chan[128];
+    c_ota_switch[128], c_espnow[128], c_espnow_chan[128];
 char c_accnt[128], c_zccnt[128], c_pulsecnt[128];
 char c_pidp_number[128], c_pidi_number[128], c_pidd_number[128], c_pidg_number[128];
 char c_shot[128], c_preflow[128], c_steam[128];
@@ -377,6 +377,7 @@ static void resolveBrokerIfNeeded() {
 // ---------- OTA ----------
 // Forward declaration for MQTT publish helper used in OTA callbacks
 static void publishStr(const char* topic, const String& v, bool retain = true);
+static void publishBool(const char* topic, bool on, bool retain = true);
 /**
  * @brief Initialize ArduinoOTA once Wi‑Fi is connected.
  *
@@ -390,7 +391,7 @@ static void ensureOta() {
     if (otaActive && otaStart && (millis() - otaStart >= OTA_ENABLE_MS)) {
         otaActive = false;
         otaStart = 0;
-        publishStr(t_ota_state, "idle", true);
+        publishBool(t_ota_state, false, true);
         LOG("OTA: window expired");
     }
 
@@ -413,7 +414,7 @@ static void ensureOta() {
         LOG("OTA: Start (%s)", ArduinoOTA.getCommand() == U_FLASH ? "flash" : "fs");
         otaActive = true;  // signal loop to reduce load and suppress MQTT publishing
         otaStart = millis();
-        publishStr(t_ota_state, "active", true);
+        publishBool(t_ota_state, true, true);
         // Turn off heater to reduce power/noise during OTA
         digitalWrite(HEAT_PIN, LOW);
         heaterState = false;
@@ -422,7 +423,7 @@ static void ensureOta() {
         LOG("OTA: End");
         otaActive = false;
         otaStart = 0;
-        publishStr(t_ota_state, "idle", true);
+        publishBool(t_ota_state, false, true);
         // (Optional) re-attach interrupts if you detached them on start
         // attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
         // attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
@@ -458,7 +459,7 @@ static void ensureOta() {
         LOG_ERROR("OTA: Error %d (%s)", (int)error, msg);
         otaActive = false;
         otaStart = 0;
-        publishStr(t_ota_state, "error", true);
+        publishBool(t_ota_state, false, true);
     });
 
     ArduinoOTA.begin();
@@ -826,6 +827,8 @@ static void buildTopics() {
     snprintf(c_shottime, sizeof(c_shottime), "%s/sensor/%s_shot_time/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_ota, sizeof(c_ota), "%s/sensor/%s_ota_status/config", DISCOVERY_PREFIX, dev_id);
+    snprintf(c_ota_switch, sizeof(c_ota_switch), "%s/switch/%s_ota/config", DISCOVERY_PREFIX,
+             dev_id);
     snprintf(c_espnow, sizeof(c_espnow), "%s/sensor/%s_espnow_status/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_espnow_chan, sizeof(c_espnow_chan), "%s/sensor/%s_espnow_channel/config",
@@ -1006,6 +1009,14 @@ static void publishDiscovery() {
             "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + String(MQTT_STATUS) +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
+    // --- switch: OTA window ---
+    publishRetained(
+        c_ota_switch,
+        String("{\"name\":\"OTA\",\"uniq_id\":\"") + dev_id + "_ota\",\"cmd_t\":\"" + t_ota_cmd +
+            "\",\"stat_t\":\"" + t_ota_state +
+            "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + String(MQTT_STATUS) +
+            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+
     // --- numbers (controllable) ---
     publishRetained(
         c_brewset_number,
@@ -1159,6 +1170,7 @@ static void publishStates() {
     char espnow_last_buf[24];
     snprintf(espnow_last_buf, sizeof(espnow_last_buf), "%lu", g_lastEspnowEpoch);
     publishStr(t_espnow_last_state, espnow_last_buf, true);
+    publishBool(t_ota_state, otaActive, true);
 
     // flags
     publishBool(t_shot_state, shotFlag);
@@ -1340,11 +1352,11 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
             LOG("HA: MQTT enabled");
         }
     }
-    if (strcmp(topic, t_ota_cmd) == 0) {
-        otaActive = true;
-        otaStart = millis();
-        publishStr(t_ota_state, "enabled", true);
-        LOG("HA: OTA enabled for %lus", OTA_ENABLE_MS / 1000);
+    if (parse_onoff(t_ota_cmd, hv)) {
+        otaActive = hv;
+        otaStart = otaActive ? millis() : 0;
+        publishBool(t_ota_state, otaActive, true);
+        LOG("HA: OTA -> %s", otaActive ? "ON" : "OFF");
     }
     if (changed) {
         if (!steamFlag) setTemp = brewSetpoint;  // if brewing, apply immediately
