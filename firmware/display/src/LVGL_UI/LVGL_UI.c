@@ -55,7 +55,6 @@ static void shot_duration_slider_event_cb(lv_event_t *e);
 static void shot_volume_slider_event_cb(lv_event_t *e);
 static void beep_on_shot_btn_event_cb(lv_event_t *e);
 
-
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
  *  STATIC VARIABLES
@@ -1022,9 +1021,15 @@ static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols)
   lv_coord_t *cols_dsc = btn_cols_3;
   switch (cols)
   {
-  case 1: cols_dsc = btn_cols_1; break;
-  case 2: cols_dsc = btn_cols_2; break;
-  default: cols_dsc = btn_cols_3; break;
+  case 1:
+    cols_dsc = btn_cols_1;
+    break;
+  case 2:
+    cols_dsc = btn_cols_2;
+    break;
+  default:
+    cols_dsc = btn_cols_3;
+    break;
   }
   lv_obj_set_grid_dsc_array(ctrl_container, cols_dsc, btn_rows);
   lv_obj_set_style_pad_column(ctrl_container, W / 100, 0); /* 1% spacing */
