@@ -87,7 +87,9 @@ static lv_obj_t *shot_time_units_label;
 static lv_obj_t *shot_volume_units_label;
 lv_obj_t *Backlight_slider;
 static lv_obj_t *conn_label;
+static lv_obj_t *conn_status_label;
 static int last_conn_type = -1;
+static int last_conn_status = -1;
 
 void Lvgl_Example1(void)
 {
@@ -341,6 +343,10 @@ void Lvgl_Example1_close(void)
   pressure_units_label = NULL;
   shot_time_units_label = NULL;
   shot_volume_units_label = NULL;
+  conn_label = NULL;
+  conn_status_label = NULL;
+  last_conn_type = -1;
+  last_conn_status = -1;
 
   lv_style_reset(&style_text_muted);
   lv_style_reset(&style_title);
@@ -364,6 +370,11 @@ static void Status_create(lv_obj_t *parent)
 #endif
   lv_obj_align(conn_label, LV_ALIGN_TOP_MID, 0, 0);
   lv_label_set_text(conn_label, "");
+
+  conn_status_label = lv_label_create(parent);
+  lv_obj_set_style_text_font(conn_status_label, LV_FONT_DEFAULT, 0);
+  lv_obj_align(conn_status_label, LV_ALIGN_TOP_MID, 0, 24);
+  lv_label_set_text(conn_status_label, "");
 
   const lv_coord_t current_arc_width = 20;
   lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
@@ -653,10 +664,21 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     CONN_ESPNOW
   };
   int conn = CONN_NONE;
-  if (Wireless_UsingEspNow())
+  bool espnow_active = Wireless_IsEspNowActive();
+  if (espnow_active)
     conn = CONN_ESPNOW;
   else if (Wireless_IsMQTTConnected())
     conn = CONN_MQTT;
+
+  enum
+  {
+    STATUS_NONE,
+    STATUS_CONNECTING,
+    STATUS_CONNECTED
+  };
+  int status = STATUS_NONE;
+  if (espnow_active)
+    status = Wireless_UsingEspNow() ? STATUS_CONNECTED : STATUS_CONNECTING;
 
   if (conn_label && conn != last_conn_type)
   {
@@ -675,6 +697,25 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
       break;
     }
     last_conn_type = conn;
+  }
+
+  if (conn_status_label && status != last_conn_status)
+  {
+    switch (status)
+    {
+    case STATUS_CONNECTING:
+      lv_label_set_text(conn_status_label, "Connecting");
+      lv_obj_set_style_text_color(conn_status_label, lv_palette_main(LV_PALETTE_YELLOW), 0);
+      break;
+    case STATUS_CONNECTED:
+      lv_label_set_text(conn_status_label, "Connected");
+      lv_obj_set_style_text_color(conn_status_label, lv_palette_main(LV_PALETTE_GREEN), 0);
+      break;
+    default:
+      lv_label_set_text(conn_status_label, "");
+      break;
+    }
+    last_conn_status = status;
   }
 
   if (isnan(current_p) || current_p < 0.0f)

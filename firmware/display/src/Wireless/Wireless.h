@@ -31,3 +31,4 @@ void MQTT_SetSteamState(bool state);
 bool Wireless_UsingEspNow(void);
 bool Wireless_IsMQTTConnected(void);
 bool Wireless_ControllerStillSendingEspNow(void);
+bool Wireless_IsEspNowActive(void);
