@@ -42,8 +42,7 @@
 #include "espnow_packet.h"
 #include "mqtt_topics.h"  // GAG_TOPIC_ROOT
 #include "secrets.h"      // WIFI_*, MQTT_*
-
-#define VERSION "7.0"
+#include "version.h"
 #define STARTUP_WAIT 1000
 #define SERIAL_BAUD 115200
 
