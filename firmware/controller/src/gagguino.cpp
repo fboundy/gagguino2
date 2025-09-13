@@ -129,7 +129,8 @@ constexpr float FLOW_CAL = 0.246f;
 constexpr unsigned long PULSE_MIN = 3;  // ms debounce (bounce + double-edges)
 
 constexpr unsigned ZC_MIN = 4;
-constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 30000;
+// Duration thresholds for zero‑cross (pump) activity
+constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 60000;
 constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
 
@@ -217,6 +218,9 @@ unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, last
 volatile int64_t lastPulseTime = 0;
 unsigned long shotStart = 0, startTime = 0;
 float shotTime = 0;  //
+unsigned long shotAccumulatedMs = 0;  //!< total pump‑active time of completed segments
+unsigned long shotTimeMs = 0;        //!< current shot time including active segment
+bool pumpPrevActive = false;         //!< tracks pump activity transitions
 
 // Flow / flags
 volatile unsigned long pulseCount = 0;
@@ -535,6 +539,9 @@ static void checkShotStartStop() {
         ((currentTime - startTime) > ZC_WAIT)) {
         shotStart = currentTime;
         shotTime = 0;
+        shotTimeMs = 0;
+        shotAccumulatedMs = 0;
+        pumpPrevActive = true;
         shotFlag = true;
         pulseCount = 0;
         preFlow = true;
@@ -547,6 +554,9 @@ static void checkShotStartStop() {
         lastVol = 0;
         shotVol = 0;
         shotTime = 0;
+        shotTimeMs = 0;
+        shotAccumulatedMs = 0;
+        pumpPrevActive = false;
         lastPulseTime = esp_timer_get_time();
         shotFlag = false;
         preFlow = false;
@@ -669,6 +679,32 @@ static void updateVols() {
     vol = pulseCount * FLOW_CAL;
     lastVol = vol;
     shotVol = (preFlow || !shotFlag) ? 0.0f : (vol - preFlowVol);
+}
+
+/**
+ * @brief Update shot timer, pausing when pump zero‑crosses cease.
+ */
+static void updateShotTime() {
+    if (!shotFlag) return;
+
+    unsigned long lastZcTimeMs = lastZcTime / 1000;
+    bool pumpActive = (currentTime - lastZcTimeMs) <= ZC_OFF;
+
+    if (pumpActive) {
+        if (!pumpPrevActive) {
+            shotStart = currentTime;
+            pumpPrevActive = true;
+        }
+        shotTimeMs = shotAccumulatedMs + (currentTime - shotStart);
+    } else {
+        if (pumpPrevActive) {
+            shotAccumulatedMs += currentTime - shotStart;
+            pumpPrevActive = false;
+        }
+        shotTimeMs = shotAccumulatedMs;
+    }
+
+    shotTime = shotTimeMs / 1000.0f;
 }
 
 // ISRs
@@ -1147,7 +1183,7 @@ static void sendEspNowPacket() {
     pkt.shotFlag = shotFlag ? 1 : 0;
     pkt.steamFlag = steamFlag ? 1 : 0;
     pkt.heaterSwitch = heaterEnabled ? 1 : 0;
-    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(currentTime - shotStart) : 0;
+    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(shotTimeMs) : 0;
     pkt.shotVolumeMl = static_cast<float>(shotVol);
     pkt.setTempC = setTemp;
     pkt.currentTempC = currentTemp;
@@ -1660,11 +1696,7 @@ void loop() {
         updatePreFlow();
         updateVols();
         updateSteamFlag();
-    }
-
-    // Update shot time continuously while shot is active (seconds)
-    if (shotFlag) {
-        shotTime = (currentTime - shotStart) / 1000.0f;
+        updateShotTime();
     }
 
     ensureWifi();
