@@ -1087,13 +1087,19 @@ static void publishNumberStatesSnapshot() {
     // publishNum(t_pump_state, pumpPower, 0, true);
 }
 
-// Helper: immediately disable the heater output and prevent PID updates
+// Helper: immediately disable the heater output and prevent PID updates.
+// Also disables steam unless hardware AC sense keeps it active.
 static void forceHeaterOff() {
     heaterEnabled = false;
     heatPower = 0.0f;
     heatCycles = PWM_CYCLE;
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
+    if (!steamHwFlag) {
+        steamDispFlag = false;
+        steamFlag = false;
+        publishBool(t_steam_state, steamFlag, true);
+    }
 }
 
 /**
