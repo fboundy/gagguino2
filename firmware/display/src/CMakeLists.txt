@@ -33,6 +33,7 @@ idf_component_register(
         ${DEMO_MAIN_DIR}/Wireless
         ${DEMO_MAIN_DIR}/Buzzer
         ${DEMO_MAIN_DIR}/fonts
+        ${CMAKE_SOURCE_DIR}/../shared/include
     REQUIRES
         lvgl__lvgl
         bt
