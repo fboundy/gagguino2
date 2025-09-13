@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include "esp_log.h"
 #include "esp_system.h"
+#include "version.h"
 
 /* Fallback symbol definitions for environments where newer LVGL symbols are
  * not provided. These values correspond to Font Awesome code points and allow
@@ -43,9 +44,11 @@ static void draw_ticks_cb(lv_event_t *e);
 static void heater_event_cb(lv_event_t *e);
 static void steam_event_cb(lv_event_t *e);
 static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols);
+static void add_version_label(lv_obj_t *parent);
 static void shot_def_dd_event_cb(lv_event_t *e);
 static void shot_duration_slider_event_cb(lv_event_t *e);
 static void shot_volume_slider_event_cb(lv_event_t *e);
+
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -367,6 +370,8 @@ static void Settings_create(void)
   lv_label_set_text(reset_text, "Reset");
   lv_obj_set_style_text_color(reset_text, lv_color_white(), 0);
   lv_obj_set_grid_cell(reset_text, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 1, 1);
+
+  add_version_label(settings_scr);
 }
 
 void Lvgl_Example1_close(void)
@@ -625,6 +630,8 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_grid_cell(settings_text, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_START, 1, 1);
 
   lv_obj_move_foreground(ctrl_container);
+
+  add_version_label(parent);
 
   /* Timer to drive UI updates */
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
@@ -917,6 +924,14 @@ static void shot_volume_slider_event_cb(lv_event_t *e)
 }
 
 void LVGL_Backlight_adjustment(uint8_t Backlight) { Set_Backlight(Backlight); }
+
+static void add_version_label(lv_obj_t *parent)
+{
+  lv_obj_t *ver = lv_label_create(parent);
+  lv_label_set_text_fmt(ver, "v%s", VERSION);
+  lv_obj_set_style_text_color(ver, lv_color_white(), 0);
+  lv_obj_align(ver, LV_ALIGN_BOTTOM_MID, 0, 0);
+}
 /* Create a button container aligned like the main page control row
  * - Centered horizontally
  * - Positioned at ~70% screen height (20% below center)
