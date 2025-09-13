@@ -31,18 +31,14 @@ jobs:
           fi
           new_version="v$major.$minor.$patch"
           echo "version=$new_version" >> $GITHUB_OUTPUT
-      - name: Bump tag
-        id: tag
-        uses: mathieudutour/github-tag-action@v6.2
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          custom_tag: ${{ steps.bump.outputs.version }}
-      - name: Update version in firmware
+      - name: Update version and tag release
         run: |
-          version=${{ steps.bump.outputs.version }}
-          version=${version#v}
+          full_version=${{ steps.bump.outputs.version }}
+          version=${full_version#v}
           sed -i "s/#define VERSION \".*\"/#define VERSION \"${version}\"/" firmware/shared/include/version.h
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git commit -am "chore: release ${version}" || echo 'No changes'
-          git push
+          git tag -a "$full_version" -m "$full_version"
+          git push origin HEAD
+          git push origin "$full_version"
