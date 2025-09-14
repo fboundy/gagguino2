@@ -3,7 +3,12 @@
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 
-#define BAT_ADC_CHANNEL ADC_CHANNEL_6
+// Use ADC1 channel 5 (GPIO6) for battery sensing. Channel 6 (GPIO7)
+// clashes with the I2C SCL line used by the touch controller and
+// causes the bus to malfunction when the ADC is configured on that
+// pin. This matches the default pin assignment used in the Waveshare
+// demo firmware for the display module.
+#define BAT_ADC_CHANNEL ADC_CHANNEL_5
 #define BAT_ADC_ATTEN   ADC_ATTEN_DB_12
 
 static adc_oneshot_unit_handle_t adc_handle;
