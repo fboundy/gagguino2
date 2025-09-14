@@ -39,6 +39,7 @@ static int log_vprintf(const char *fmt, va_list args)
 #include "LVGL_Driver.h"
 #include "LVGL_UI.h"
 #include "Wireless.h"
+#include "Battery.h"
 
 /**
  * @brief Initialize peripheral drivers and start background tasks.
@@ -48,6 +49,7 @@ void Driver_Init(void)
     Flash_Searching();   // Detect storage devices
     I2C_Init();          // Initialize I2C bus for sensors
     EXIO_Init();         // Example: initialize external IO expander
+    Battery_Init();      // Setup battery monitoring
 }
 
 /**

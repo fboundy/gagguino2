@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "version.h"
+#include "Battery.h"
 
 /* Fallback symbol definitions for environments where newer LVGL symbols are
  * not provided. These values correspond to Font Awesome code points and allow
@@ -110,8 +111,10 @@ static lv_obj_t *shot_volume_slider;
 static lv_obj_t *shot_volume_value;
 static lv_obj_t *conn_label;
 static lv_obj_t *conn_status_label;
+static lv_obj_t *battery_label;
 static int last_conn_type = -1;
 static int last_conn_status = -1;
+static int last_battery = -1;
 static lv_timer_t *buzzer_timer;
 static bool shot_target_reached;
 
@@ -499,6 +502,11 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_align(conn_status_label, LV_ALIGN_TOP_MID, 0, 24);
   lv_label_set_text(conn_status_label, "");
 
+  battery_label = lv_label_create(parent);
+  lv_obj_set_style_text_font(battery_label, LV_FONT_DEFAULT, 0);
+  lv_obj_align(battery_label, LV_ALIGN_TOP_RIGHT, 0, 0);
+  lv_label_set_text(battery_label, "");
+
   const lv_coord_t current_arc_width = 20;
   lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
                                  lv_obj_get_content_height(parent)) -
@@ -782,6 +790,7 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   bool heater = MQTT_GetHeaterState();
   bool steam = MQTT_GetSteamState();
   bool ota = MQTT_GetOtaState();
+  char buf[32];
 
   enum
   {
@@ -844,6 +853,20 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     last_conn_status = status;
   }
 
+  int batt = Battery_GetPercentage();
+  if (battery_label && batt != last_battery)
+  {
+    snprintf(buf, sizeof buf, "%d%%", batt);
+    lv_label_set_text(battery_label, buf);
+    lv_color_t col = lv_color_white();
+    if (batt < 20)
+      col = lv_palette_main(LV_PALETTE_RED);
+    else if (batt < 50)
+      col = lv_palette_main(LV_PALETTE_YELLOW);
+    lv_obj_set_style_text_color(battery_label, col, 0);
+    last_battery = batt;
+  }
+
   if (isnan(current_p) || current_p < 0.0f)
     current_p = 0.0f;
 
@@ -883,7 +906,6 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   }
 
   /* value labels ONLY (no units appended!) */
-  char buf[32];
   if (temp_label)
   {
     snprintf(buf, sizeof buf, "%.1f", current);
