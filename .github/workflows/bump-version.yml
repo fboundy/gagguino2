@@ -23,7 +23,13 @@ jobs:
           latest=$(git describe --tags --abbrev=0 || echo v0.0.0)
           latest=${latest#v}
           IFS='.' read -r major minor patch <<< "$latest"
-          patch=$((patch + 1))
+          repo=${GITHUB_REPOSITORY#*/}
+          if [[ "$repo" == *-dev ]]; then
+            minor=$((minor + 1))
+            patch=0
+          else
+            patch=$((patch + 1))
+          fi
           echo "version=v$major.$minor.$patch" >> $GITHUB_OUTPUT
       - name: Update version and tag release
         run: |
