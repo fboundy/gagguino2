@@ -113,7 +113,7 @@ static lv_obj_t *shot_volume_slider;
 static lv_obj_t *shot_volume_value;
 static lv_obj_t *conn_label;
 static lv_obj_t *conn_status_label;
-static lv_obj_t *battery_label;
+static lv_obj_t *battery_bar;
 static int last_conn_type = -1;
 static int last_conn_status = -1;
 static int last_battery = -1;
@@ -507,11 +507,6 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_align(conn_status_label, LV_ALIGN_TOP_MID, 0, 24);
   lv_label_set_text(conn_status_label, "");
 
-  battery_label = lv_label_create(parent);
-  lv_obj_set_style_text_font(battery_label, LV_FONT_DEFAULT, 0);
-  lv_obj_align(battery_label, LV_ALIGN_TOP_RIGHT, 0, 0);
-  lv_label_set_text(battery_label, "");
-
   const lv_coord_t current_arc_width = 20;
   lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
                                  lv_obj_get_content_height(parent)) -
@@ -704,6 +699,15 @@ static void Status_create(lv_obj_t *parent)
 
   add_version_label(parent);
 
+  /* Battery percentage bar above version text */
+  battery_bar = lv_bar_create(parent);
+  lv_obj_set_size(battery_bar, lv_obj_get_width(parent) / 2, 10);
+  lv_obj_align(battery_bar, LV_ALIGN_BOTTOM_MID, 0, -20);
+  lv_bar_set_range(battery_bar, 0, 100);
+  lv_bar_set_value(battery_bar, Battery_GetPercentage(), LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(battery_bar, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_style_bg_color(battery_bar, lv_palette_main(LV_PALETTE_GREEN), LV_PART_INDICATOR);
+
   /* Timer to drive UI updates */
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
 }
@@ -889,16 +893,15 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   }
 
   int batt = Battery_GetPercentage();
-  if (battery_label && batt != last_battery)
+  if (battery_bar && batt != last_battery)
   {
-    snprintf(buf, sizeof buf, "%d%%", batt);
-    lv_label_set_text(battery_label, buf);
-    lv_color_t col = lv_color_white();
+    lv_bar_set_value(battery_bar, batt, LV_ANIM_OFF);
+    lv_color_t col = lv_palette_main(LV_PALETTE_GREEN);
     if (batt < 20)
       col = lv_palette_main(LV_PALETTE_RED);
     else if (batt < 50)
       col = lv_palette_main(LV_PALETTE_YELLOW);
-    lv_obj_set_style_text_color(battery_label, col, 0);
+    lv_obj_set_style_bg_color(battery_bar, col, LV_PART_INDICATOR);
     last_battery = batt;
   }
 
