@@ -87,6 +87,7 @@ static lv_coord_t tab_h_global;
 static lv_obj_t *current_temp_arc;
 static lv_obj_t *set_temp_arc;
 static lv_obj_t *current_pressure_arc;
+static lv_obj_t *tick_layer;
 static lv_obj_t *temp_label;
 static lv_obj_t *pressure_label;
 static lv_obj_t *temp_icon;
@@ -445,6 +446,7 @@ void Lvgl_Example1_close(void)
   current_temp_arc = NULL;
   set_temp_arc = NULL;
   current_pressure_arc = NULL;
+  tick_layer = NULL;
   temp_label = NULL;
   pressure_label = NULL;
   temp_icon = NULL;
@@ -559,7 +561,7 @@ static void Status_create(lv_obj_t *parent)
   lv_arc_set_value(current_pressure_arc, 50);
 
   /* Ticks above arcs */
-  lv_obj_t *tick_layer = lv_obj_create(parent);
+  tick_layer = lv_obj_create(parent);
   lv_obj_set_size(tick_layer, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_bg_opa(tick_layer, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(tick_layer, 0, 0);
@@ -812,6 +814,9 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
 
   set_temp_val = set;
   heater_on = heater;
+
+  if (tick_layer)
+    lv_obj_invalidate(tick_layer);
 
   enum
   {
