@@ -237,8 +237,8 @@ void Touch_Init(void)
         .int_gpio_num = I2C_Touch_INT_IO,
         .flags = {
             .swap_xy = 0,
-            .mirror_x = 0,
-            .mirror_y = 0,
+            .mirror_x = 1,
+            .mirror_y = 1,
         },
     };
     /* Initialize touch */
