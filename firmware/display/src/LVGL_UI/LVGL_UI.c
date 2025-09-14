@@ -114,6 +114,7 @@ static lv_obj_t *shot_volume_value;
 static lv_obj_t *conn_label;
 static lv_obj_t *conn_status_label;
 static lv_obj_t *battery_bar;
+static lv_obj_t *battery_label;
 static int last_conn_type = -1;
 static int last_conn_status = -1;
 static int last_battery = -1;
@@ -701,12 +702,20 @@ static void Status_create(lv_obj_t *parent)
 
   /* Battery percentage bar above version text */
   battery_bar = lv_bar_create(parent);
-  lv_obj_set_size(battery_bar, lv_obj_get_width(parent) / 2, 10);
+  /* Make it shorter and thicker */
+  lv_obj_set_size(battery_bar, lv_obj_get_width(parent) / 3, 18);
   lv_obj_align(battery_bar, LV_ALIGN_BOTTOM_MID, 0, -20);
   lv_bar_set_range(battery_bar, 0, 100);
-  lv_bar_set_value(battery_bar, Battery_GetPercentage(), LV_ANIM_OFF);
+  int batt_init = Battery_GetPercentage();
+  lv_bar_set_value(battery_bar, batt_init, LV_ANIM_OFF);
   lv_obj_set_style_bg_color(battery_bar, lv_palette_main(LV_PALETTE_GREY), 0);
   lv_obj_set_style_bg_color(battery_bar, lv_palette_main(LV_PALETTE_GREEN), LV_PART_INDICATOR);
+
+  /* Add centered percentage label on the bar */
+  battery_label = lv_label_create(battery_bar);
+  lv_label_set_text_fmt(battery_label, "%d%%", batt_init);
+  lv_obj_set_style_text_color(battery_label, lv_color_white(), 0);
+  lv_obj_center(battery_label);
 
   /* Timer to drive UI updates */
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
@@ -902,6 +911,11 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     else if (batt < 50)
       col = lv_palette_main(LV_PALETTE_YELLOW);
     lv_obj_set_style_bg_color(battery_bar, col, LV_PART_INDICATOR);
+    if (battery_label)
+    {
+      lv_label_set_text_fmt(battery_label, "%d%%", batt);
+      lv_obj_center(battery_label);
+    }
     last_battery = batt;
   }
 
