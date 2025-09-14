@@ -23,11 +23,14 @@
 #define ESPNOW_HANDSHAKE_ACK 0x55
 #define ESPNOW_CMD_HEATER_ON 0xA1
 #define ESPNOW_CMD_HEATER_OFF 0xA0
+#define ESPNOW_CMD_STEAM_ON 0xB1
+#define ESPNOW_CMD_STEAM_OFF 0xB0
 
 // --- B: exact topic strings ---------------------------------------------------
 static char TOPIC_HEATER[128];
 static char TOPIC_HEATER_SET[128];
 static char TOPIC_STEAM[128];
+static char TOPIC_STEAM_SET[128];
 static char TOPIC_CURTEMP[128];
 static char TOPIC_SETTEMP[128];
 static char TOPIC_PRESSURE[128];
@@ -37,6 +40,8 @@ static char TOPIC_ESPNOW_CHAN[128];
 static char TOPIC_ESPNOW_MAC[128];
 static char TOPIC_ESPNOW_CMD[128];
 static char TOPIC_ESPNOW_LAST[128];
+static char TOPIC_OTA_STATUS[128];
+static char TOPIC_OTA_ENABLE[128];
 
 static inline void build_topics(void)
 {
@@ -44,6 +49,8 @@ static inline void build_topics(void)
     snprintf(TOPIC_HEATER_SET, sizeof TOPIC_HEATER_SET,
              "%s/%s/heater/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_STEAM, sizeof TOPIC_STEAM, "%s/%s/steam/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_STEAM_SET, sizeof TOPIC_STEAM_SET,
+             "%s/%s/steam/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_CURTEMP, sizeof TOPIC_CURTEMP, "%s/%s/current_temp/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_SETTEMP, sizeof TOPIC_SETTEMP, "%s/%s/set_temp/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PRESSURE, sizeof TOPIC_PRESSURE, "%s/%s/pressure/state", GAG_TOPIC_ROOT, GAGGIA_ID);
@@ -53,6 +60,8 @@ static inline void build_topics(void)
     snprintf(TOPIC_ESPNOW_MAC, sizeof TOPIC_ESPNOW_MAC, "%s/%s/espnow/mac", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_ESPNOW_CMD, sizeof TOPIC_ESPNOW_CMD, "%s/%s/espnow/cmd", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_ESPNOW_LAST, sizeof TOPIC_ESPNOW_LAST, "%s/%s/espnow/last", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_OTA_STATUS, sizeof TOPIC_OTA_STATUS, "%s/%s/ota/status", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_OTA_ENABLE, sizeof TOPIC_OTA_ENABLE, "%s/%s/ota/enable", GAG_TOPIC_ROOT, GAGGIA_ID);
 }
 
 // tolerant bool parse: "1"/"true"/"on" => true
@@ -114,7 +123,7 @@ void WIFI_Init(void *arg)
     // Apply credentials from secrets.h
     wifi_config_t sta_cfg = {0};
     strncpy((char *)sta_cfg.sta.ssid, WIFI_SSID, sizeof(sta_cfg.sta.ssid));
-    strncpy((char *)sta_cfg.sta.password, WIFI_PASS,
+    strncpy((char *)sta_cfg.sta.password, WIFI_PASSWORD,
             sizeof(sta_cfg.sta.password));
     sta_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_cfg));
@@ -179,6 +188,7 @@ static float s_shot_time = 0.0f;
 static float s_shot_volume = 0.0f;
 static bool s_heater = false;
 static bool s_steam = false;
+static bool s_ota = false;
 static bool s_use_espnow = false;
 static bool s_mqtt_connected = false;
 static bool s_mqtt_stopping = false; // avoid repeated stop requests
@@ -255,6 +265,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_CHAN, 1);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_MAC, 1);
         esp_mqtt_client_subscribe(event->client, TOPIC_ESPNOW_LAST, 1);
+        esp_mqtt_client_subscribe(event->client, TOPIC_OTA_STATUS, 1);
 #ifdef MQTT_STATUS
         esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
 #endif
@@ -290,6 +301,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             s_heater = parse_bool_str(d_copy);
         else if (strcmp(t_copy, TOPIC_STEAM) == 0)
             s_steam = parse_bool_str(d_copy);
+        else if (strcmp(t_copy, TOPIC_OTA_STATUS) == 0)
+            s_ota = parse_bool_str(d_copy);
         else if (strcmp(t_copy, TOPIC_ESPNOW_CHAN) == 0)
         {
             s_espnow_channel = atoi(d_copy);
@@ -345,8 +358,8 @@ void MQTT_Start(void)
 #endif
         },
         .credentials = {
-#ifdef MQTT_USERNAME
-            .username = MQTT_USERNAME,
+#ifdef MQTT_USER
+            .username = MQTT_USER,
 #endif
 #ifdef MQTT_PASSWORD
             .authentication.password = MQTT_PASSWORD,
@@ -407,6 +420,37 @@ void MQTT_SetHeaterState(bool heater)
 }
 
 bool MQTT_GetSteamState(void) { return s_steam; }
+
+void MQTT_SetSteamState(bool steam)
+{
+    if (steam != s_steam)
+    {
+        s_steam = steam;
+        if (s_mqtt)
+        {
+            MQTT_Publish(TOPIC_STEAM_SET, s_steam ? "ON" : "OFF", 1, true);
+        }
+        if (s_use_espnow)
+        {
+            uint8_t cmd = s_steam ? ESPNOW_CMD_STEAM_ON : ESPNOW_CMD_STEAM_OFF;
+            esp_now_send(s_espnow_peer, &cmd, 1);
+        }
+    }
+}
+
+bool MQTT_GetOtaState(void) { return s_ota; }
+
+void MQTT_SetOtaState(bool ota)
+{
+    if (ota != s_ota)
+    {
+        s_ota = ota;
+        if (s_mqtt)
+        {
+            MQTT_Publish(TOPIC_OTA_ENABLE, s_ota ? "ON" : "OFF", 1, true);
+        }
+    }
+}
 
 esp_mqtt_client_handle_t MQTT_GetClient(void) { return s_mqtt; }
 
@@ -633,6 +677,11 @@ bool Wireless_IsMQTTConnected(void)
 bool Wireless_ControllerStillSendingEspNow(void)
 {
     return s_mqtt_espnow_last > s_espnow_last_rx;
+}
+
+bool Wireless_IsEspNowActive(void)
+{
+    return s_espnow_active;
 }
 
 static void Wireless_Poll(void)

@@ -492,6 +492,8 @@ void LCD_Init(void)
     ESP_LOGI(LCD_TAG, "Initialize RGB LCD panel");
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
+    // Rotate display 180 degrees
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, true, true));
     ST7701S_CS_Dis();
     Backlight_Init();
 }

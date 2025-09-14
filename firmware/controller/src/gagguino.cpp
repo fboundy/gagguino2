@@ -11,10 +11,11 @@
  *
  * Hardware pins (ESP32 default board mapping):
  * - FLOW_PIN (26)   : Flow sensor input (interrupt on CHANGE)
- * - ZC_PIN (25)     : AC zero‑cross detect (interrupt on RISING)
- * - HEAT_PIN (27)   : Boiler relay/SSR output (PWM windowing)
+ * - ZC_PIN (25)     : Triac Zero Crossing output (interrupt on RISING)
+ * - HEAT_PIN (27)   : Heater SSR control (PWM windowing)
+ * - PUMP_PIN (17)   : Triac PWM output (Arduino D4)
  * - AC_SENS (14)    : Steam switch sense (digital input)
- * - MAX_CS (16)     : MAX31865 SPI chip‑select
+ * - MAX_CS (16)     : MAX31865 SPI chip-select
  * - PRESS_PIN (35)  : Analog pressure sensor input
  */
 #include "gagguino.h"
@@ -36,11 +37,17 @@
 #include <cstdarg>
 #include <map>
 
+// Optional: triac dimmer (ESP32 AC pump control). Disabled by default to avoid
+// bringing in ESP-IDF intr headers that emit deprecation warnings. Define
+// USE_PUMP_DIMMER in build flags to enable.
+#ifdef USE_PUMP_DIMMER
+#include <RBDdimmer.h>
+#endif
+
 #include "espnow_packet.h"
 #include "mqtt_topics.h"  // GAG_TOPIC_ROOT
 #include "secrets.h"      // WIFI_*, MQTT_*
-
-#define VERSION "7.0"
+#include "version.h"
 #define STARTUP_WAIT 1000
 #define SERIAL_BAUD 115200
 
@@ -70,8 +77,13 @@ static inline void LOG(const char* fmt, ...) {
  */
 
 namespace {
-constexpr int FLOW_PIN = 26, ZC_PIN = 25, HEAT_PIN = 27, AC_SENS = 14;
-constexpr int MAX_CS = 16;
+constexpr int FLOW_PIN = 26;  // Flowmeter Pulses (Arduino D2)
+constexpr int ZC_PIN = 25;    // Triac Zero Crossing output (Arduino D3)
+constexpr int PUMP_PIN = 17;  // Triac PWM output (Arduino D4)
+constexpr int MAX_CS = 16;    // MAX31865 CS (Arduino D5)
+constexpr int HEAT_PIN = 27;  // Heater SSR control (Arduino D6)
+constexpr int AC_SENS = 14;   // Steam AC sense (Arduino D7)
+
 constexpr int PRESS_PIN = 35;
 
 constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP_CYCLE = 500,
@@ -82,6 +94,8 @@ constexpr uint8_t ESPNOW_HANDSHAKE_REQ = 0xAA;
 constexpr uint8_t ESPNOW_HANDSHAKE_ACK = 0x55;
 constexpr uint8_t ESPNOW_CMD_HEATER_ON = 0xA1;
 constexpr uint8_t ESPNOW_CMD_HEATER_OFF = 0xA0;
+constexpr uint8_t ESPNOW_CMD_STEAM_ON = 0xB1;
+constexpr uint8_t ESPNOW_CMD_STEAM_OFF = 0xB0;
 
 constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when idle (reduced chatter)
 constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
@@ -106,6 +120,11 @@ constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
 // Derivative filter time constant (seconds), exposed to HA
 constexpr float D_TAU_TEMP = 0.8f;
 
+// Pump dimmer instance (enabled only if USE_PUMP_DIMMER is set)
+#ifdef USE_PUMP_DIMMER
+dimmerLamp pumpDimmer(PUMP_PIN, ZC_PIN);
+#endif
+
 // Pressure calibration constants
 constexpr float PRESSURE_TOL = 1.0f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
 constexpr int PRESS_BUFF_SIZE = 14;
@@ -116,7 +135,8 @@ constexpr float FLOW_CAL = 0.246f;
 constexpr unsigned long PULSE_MIN = 3;  // ms debounce (bounce + double-edges)
 
 constexpr unsigned ZC_MIN = 4;
-constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 30000;
+// Duration thresholds for zero‑cross (pump) activity
+constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 60000;
 constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
 
@@ -188,6 +208,7 @@ float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;  // HA switch default ON at boot
+float pumpPower = 0.0f;     // HA-controllable pump power 0-100%
 
 // Pressure
 int rawPress = 0;
@@ -203,16 +224,20 @@ unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, last
 volatile int64_t lastPulseTime = 0;
 unsigned long shotStart = 0, startTime = 0;
 float shotTime = 0;  //
+unsigned long shotAccumulatedMs = 0;  //!< total pump‑active time of completed segments
+unsigned long shotTimeMs = 0;        //!< current shot time including active segment
+bool pumpPrevActive = false;         //!< tracks pump activity transitions
 
 // Flow / flags
 volatile unsigned long pulseCount = 0;
 volatile unsigned long zcCount = 0;
 volatile int64_t lastZcTime = 0;  // microsecond timestamp
-int vol = 0, preFlowVol = 0, shotVol = 0;
-unsigned int lastVol = 0;
+float vol = 0, preFlowVol = 0, shotVol = 0;
+float lastVol = 0;
 bool prevSteamFlag = false, ac = false;
 int acCount = 0;
-bool shotFlag = false, preFlow = false, steamFlag = false, setupComplete = false, debugData = false;
+bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
+     steamHwFlag = false, steamResetPending = false, setupComplete = false, debugData = false;
 
 // OTA
 static bool otaInitialized = false;
@@ -247,7 +272,7 @@ char t_shotvol_state[96], t_settemp_state[96], t_curtemp_state[96], t_press_stat
 // OTA command topic
 char t_ota_cmd[96];
 // Switch state/command topics
-char t_heater_state[96], t_heater_cmd[96];
+char t_heater_state[96], t_heater_cmd[96], t_steam_cmd[96];
 // Diagnostics state topics
 char t_accnt_state[96], t_zccnt_state[96], t_pulsecnt_state[96];
 // Binary sensor state topics
@@ -255,6 +280,7 @@ char t_shot_state[96], t_preflow_state[96], t_steam_state[96];
 // Number entities (brew/steam setpoint) command/state topics
 char t_brewset_state[96], t_brewset_cmd[96];
 char t_steamset_state[96], t_steamset_cmd[96];
+char t_pump_state[96], t_pump_cmd[96];
 // PID number entity topics
 char t_pidp_state[96], t_pidp_cmd[96];
 char t_pidi_state[96], t_pidi_cmd[96];
@@ -265,11 +291,11 @@ char t_piddtau_state[96], t_piddtau_cmd[96];
 
 // Config topics
 char c_shotvol[128], c_settemp[128], c_curtemp[128], c_press[128], c_shottime[128], c_ota[128],
-    c_espnow[128], c_espnow_chan[128];
+    c_ota_switch[128], c_espnow[128], c_espnow_chan[128];
 char c_accnt[128], c_zccnt[128], c_pulsecnt[128];
 char c_pidp_number[128], c_pidi_number[128], c_pidd_number[128], c_pidg_number[128];
 char c_shot[128], c_preflow[128], c_steam[128];
-char c_brewset_number[128], c_steamset_number[128];
+char c_brewset_number[128], c_steamset_number[128], c_pump_number[128];
 char c_piddtau_number[128];  // PID D Tau (seconds)
 // Switch config
 char c_heater[128];
@@ -358,6 +384,7 @@ static void resolveBrokerIfNeeded() {
 // ---------- OTA ----------
 // Forward declaration for MQTT publish helper used in OTA callbacks
 static void publishStr(const char* topic, const String& v, bool retain = true);
+static void publishBool(const char* topic, bool on, bool retain = true);
 /**
  * @brief Initialize ArduinoOTA once Wi‑Fi is connected.
  *
@@ -371,7 +398,7 @@ static void ensureOta() {
     if (otaActive && otaStart && (millis() - otaStart >= OTA_ENABLE_MS)) {
         otaActive = false;
         otaStart = 0;
-        publishStr(t_ota_state, "idle", true);
+        publishBool(t_ota_state, false, true);
         LOG("OTA: window expired");
     }
 
@@ -394,7 +421,7 @@ static void ensureOta() {
         LOG("OTA: Start (%s)", ArduinoOTA.getCommand() == U_FLASH ? "flash" : "fs");
         otaActive = true;  // signal loop to reduce load and suppress MQTT publishing
         otaStart = millis();
-        publishStr(t_ota_state, "active", true);
+        publishBool(t_ota_state, true, true);
         // Turn off heater to reduce power/noise during OTA
         digitalWrite(HEAT_PIN, LOW);
         heaterState = false;
@@ -403,7 +430,7 @@ static void ensureOta() {
         LOG("OTA: End");
         otaActive = false;
         otaStart = 0;
-        publishStr(t_ota_state, "idle", true);
+        publishBool(t_ota_state, false, true);
         // (Optional) re-attach interrupts if you detached them on start
         // attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
         // attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
@@ -439,7 +466,7 @@ static void ensureOta() {
         LOG_ERROR("OTA: Error %d (%s)", (int)error, msg);
         otaActive = false;
         otaStart = 0;
-        publishStr(t_ota_state, "error", true);
+        publishBool(t_ota_state, false, true);
     });
 
     ArduinoOTA.begin();
@@ -519,6 +546,9 @@ static void checkShotStartStop() {
         ((currentTime - startTime) > ZC_WAIT)) {
         shotStart = currentTime;
         shotTime = 0;
+        shotTimeMs = 0;
+        shotAccumulatedMs = 0;
+        pumpPrevActive = true;
         shotFlag = true;
         pulseCount = 0;
         preFlow = true;
@@ -531,6 +561,9 @@ static void checkShotStartStop() {
         lastVol = 0;
         shotVol = 0;
         shotTime = 0;
+        shotTimeMs = 0;
+        shotAccumulatedMs = 0;
+        pumpPrevActive = false;
         lastPulseTime = esp_timer_get_time();
         shotFlag = false;
         preFlow = false;
@@ -588,6 +621,14 @@ static void updateTempPWM() {
 }
 
 /**
+ * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
+ */
+static void applyPumpPower() {
+    // pumpDimmer.setPower((int)pumpPower);
+    // pumpDimmer.setState(pumpPower > 0.0f ? ON : OFF);
+}
+
+/**
  * @brief Sample pressure ADC and maintain a moving average buffer.
  */
 static void updatePressure() {
@@ -612,12 +653,20 @@ static void updateSteamFlag() {
     if ((now - lastZcTime) > ZC_OFF * 1000 && ac) {
         acCount++;
         if (acCount > STEAM_MIN) {
-            steamFlag = true;
+            if (!steamHwFlag && steamDispFlag) steamResetPending = true;
+            steamHwFlag = true;
         }
     } else {
-        steamFlag = false;
+        if (steamHwFlag) {
+            if (steamDispFlag && steamResetPending) {
+                steamDispFlag = false;
+                steamResetPending = false;
+            }
+            steamHwFlag = false;
+        }
         acCount = 0;
     }
+    steamFlag = steamDispFlag || steamHwFlag;
 }
 
 /**
@@ -634,9 +683,35 @@ static void updatePreFlow() {
  * @brief Convert pulse counts to volumes and maintain shot volume.
  */
 static void updateVols() {
-    vol = (int)(pulseCount * FLOW_CAL);
+    vol = pulseCount * FLOW_CAL;
     lastVol = vol;
-    shotVol = (preFlow || !shotFlag) ? 0 : (vol - preFlowVol);
+    shotVol = (preFlow || !shotFlag) ? 0.0f : (vol - preFlowVol);
+}
+
+/**
+ * @brief Update shot timer, pausing when pump zero‑crosses cease.
+ */
+static void updateShotTime() {
+    if (!shotFlag) return;
+
+    unsigned long lastZcTimeMs = lastZcTime / 1000;
+    bool pumpActive = (currentTime - lastZcTimeMs) <= ZC_OFF;
+
+    if (pumpActive) {
+        if (!pumpPrevActive) {
+            shotStart = currentTime;
+            pumpPrevActive = true;
+        }
+        shotTimeMs = shotAccumulatedMs + (currentTime - shotStart);
+    } else {
+        if (pumpPrevActive) {
+            shotAccumulatedMs += currentTime - shotStart;
+            pumpPrevActive = false;
+        }
+        shotTimeMs = shotAccumulatedMs;
+    }
+
+    shotTime = shotTimeMs / 1000.0f;
 }
 
 // ISRs
@@ -661,6 +736,17 @@ static void IRAM_ATTR zcInt() {
     }
     lastZcTime = now;
     zcCount++;
+}
+
+// RBDdimmer uses the same ZC pin and installs its own ISR.
+// To avoid conflicting attachInterrupt() calls, we provide a hook that the
+// library can call from its ISR to let us track zero-cross events.
+extern "C" void IRAM_ATTR user_zc_hook() {
+    int64_t now = esp_timer_get_time();
+    if (now - lastZcTime >= 6000) {
+        lastZcTime = now;
+        zcCount++;
+    }
 }
 
 // ---------- HA Discovery helpers ----------
@@ -698,9 +784,10 @@ static void buildTopics() {
     snprintf(t_espnow_last_state, sizeof(t_espnow_last_state), "%s/%s/espnow/last", STATE_BASE,
              uid_suffix);
     snprintf(t_espnow_cmd, sizeof(t_espnow_cmd), "%s/%s/espnow/cmd", STATE_BASE, uid_suffix);
-    // heater switch topics
+    // switch topics
     snprintf(t_heater_state, sizeof(t_heater_state), "%s/%s/heater/state", STATE_BASE, uid_suffix);
     snprintf(t_heater_cmd, sizeof(t_heater_cmd), "%s/%s/heater/set", STATE_BASE, uid_suffix);
+    snprintf(t_steam_cmd, sizeof(t_steam_cmd), "%s/%s/steam/set", STATE_BASE, uid_suffix);
     // diagnostic counters states
     snprintf(t_accnt_state, sizeof(t_accnt_state), "%s/%s/ac_count/state", STATE_BASE, uid_suffix);
     snprintf(t_zccnt_state, sizeof(t_zccnt_state), "%s/%s/zc_count/state", STATE_BASE, uid_suffix);
@@ -720,6 +807,8 @@ static void buildTopics() {
              uid_suffix);
     snprintf(t_steamset_state, sizeof(t_steamset_state), "%s/%s/steam_setpoint/state", STATE_BASE,
              uid_suffix);
+    // snprintf(t_pump_cmd, sizeof(t_pump_cmd), "%s/%s/pump_power/set", STATE_BASE, uid_suffix);
+    // snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE, uid_suffix);
     // PID numbers
     snprintf(t_pidp_cmd, sizeof(t_pidp_cmd), "%s/%s/pid_p/set", STATE_BASE, uid_suffix);
     snprintf(t_pidp_state, sizeof(t_pidp_state), "%s/%s/pid_p/state", STATE_BASE, uid_suffix);
@@ -745,6 +834,8 @@ static void buildTopics() {
     snprintf(c_shottime, sizeof(c_shottime), "%s/sensor/%s_shot_time/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_ota, sizeof(c_ota), "%s/sensor/%s_ota_status/config", DISCOVERY_PREFIX, dev_id);
+    snprintf(c_ota_switch, sizeof(c_ota_switch), "%s/switch/%s_ota/config", DISCOVERY_PREFIX,
+             dev_id);
     snprintf(c_espnow, sizeof(c_espnow), "%s/sensor/%s_espnow_status/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_espnow_chan, sizeof(c_espnow_chan), "%s/sensor/%s_espnow_channel/config",
@@ -761,6 +852,8 @@ static void buildTopics() {
              DISCOVERY_PREFIX, dev_id);
     snprintf(c_steamset_number, sizeof(c_steamset_number), "%s/number/%s_steam_setpoint/config",
              DISCOVERY_PREFIX, dev_id);
+    // snprintf(c_pump_number, sizeof(c_pump_number), "%s/number/%s_pump_power/config",
+    //          DISCOVERY_PREFIX, dev_id);
     // PID numbers
     snprintf(c_pidp_number, sizeof(c_pidp_number), "%s/number/%s_pid_p/config", DISCOVERY_PREFIX,
              dev_id);
@@ -923,6 +1016,14 @@ static void publishDiscovery() {
             "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + String(MQTT_STATUS) +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
+    // --- switch: OTA window ---
+    publishRetained(
+        c_ota_switch,
+        String("{\"name\":\"OTA\",\"uniq_id\":\"") + dev_id + "_ota\",\"cmd_t\":\"" + t_ota_cmd +
+            "\",\"stat_t\":\"" + t_ota_state +
+            "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + String(MQTT_STATUS) +
+            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+
     // --- numbers (controllable) ---
     publishRetained(
         c_brewset_number,
@@ -942,6 +1043,14 @@ static void publishDiscovery() {
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
+    // publishRetained(
+    // c_pump_number,
+    // String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id + "_pump_power\",\"cmd_t\":\"" +
+    // t_pump_cmd + "\",\"stat_t\":\"" + t_pump_state +
+    // "\",\"unit_of_meas\":\"%\",\"min\":0,\"max\":100,\"step\":1,\"mode\":\"auto\",\"avty_"
+    // "t\":\"" +
+    // String(MQTT_STATUS) +
+    // "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     // --- number: PID D Tau (seconds) ---
     publishRetained(c_piddtau_number, String("{\"name\":\"PID D Tau\",\"uniq_id\":\"") + dev_id +
@@ -1018,7 +1127,7 @@ static void publishNum(const char* topic, float v, uint8_t decimals = 1, bool re
     dtostrf(v, 0, decimals, tmp);
     publishStr(topic, String(tmp), retain);
 }
-static void publishBool(const char* topic, bool on, bool retain = true) {
+static void publishBool(const char* topic, bool on, bool retain) {
     auto it = s_lastBool.find(topic);
     if (it != s_lastBool.end() && it->second == on) return;
     s_lastBool[String(topic)] = on;
@@ -1028,15 +1137,22 @@ static void publishBool(const char* topic, bool on, bool retain = true) {
 // Publish retained number/config states once (on connect) or on change.
 static void publishNumberStatesSnapshot() {
     // NOTE: Config/number states are published on connect and on change only.
+    // publishNum(t_pump_state, pumpPower, 0, true);
 }
 
-// Helper: immediately disable the heater output and prevent PID updates
+// Helper: immediately disable the heater output and prevent PID updates.
+// Also disables steam unless hardware AC sense keeps it active.
 static void forceHeaterOff() {
     heaterEnabled = false;
     heatPower = 0.0f;
     heatCycles = PWM_CYCLE;
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
+    if (!steamHwFlag) {
+        steamDispFlag = false;
+        steamFlag = false;
+        publishBool(t_steam_state, steamFlag, true);
+    }
 }
 
 /**
@@ -1044,7 +1160,7 @@ static void forceHeaterOff() {
  */
 static void publishStates() {
     // measurements
-    publishNum(t_shotvol_state, shotVol, 0);  // mL
+    publishNum(t_shotvol_state, shotVol, 1);  // mL
     publishNum(t_settemp_state, setTemp, 1);  // active target
     publishNum(t_curtemp_state, currentTemp, 1);
     publishNum(t_press_state, lastPress, 1);
@@ -1061,6 +1177,7 @@ static void publishStates() {
     char espnow_last_buf[24];
     snprintf(espnow_last_buf, sizeof(espnow_last_buf), "%lu", g_lastEspnowEpoch);
     publishStr(t_espnow_last_state, espnow_last_buf, true);
+    publishBool(t_ota_state, otaActive, true);
 
     // flags
     publishBool(t_shot_state, shotFlag);
@@ -1070,6 +1187,7 @@ static void publishStates() {
     // number entity states (retained so HA persists)
     publishNum(t_brewset_state, brewSetpoint, 1, true);
     publishNum(t_steamset_state, steamSetpoint, 1, true);
+    // publishNum(t_pump_state, pumpPower, 0, true);
     // PID number states
     publishNum(t_pidp_state, pGainTemp, 2, true);
     publishNum(t_pidi_state, iGainTemp, 2, true);
@@ -1083,7 +1201,7 @@ static void sendEspNowPacket() {
     pkt.shotFlag = shotFlag ? 1 : 0;
     pkt.steamFlag = steamFlag ? 1 : 0;
     pkt.heaterSwitch = heaterEnabled ? 1 : 0;
-    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(currentTime - shotStart) : 0;
+    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(shotTimeMs) : 0;
     pkt.shotVolumeMl = static_cast<float>(shotVol);
     pkt.setTempC = setTemp;
     pkt.currentTempC = currentTemp;
@@ -1125,6 +1243,17 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
         }
         publishBool(t_heater_state, heaterEnabled, true);
         LOG("ESP-NOW: Heater -> %s", heaterEnabled ? "ON" : "OFF");
+    } else if (len == 1 && (data[0] == ESPNOW_CMD_STEAM_ON || data[0] == ESPNOW_CMD_STEAM_OFF)) {
+        bool sv = (data[0] == ESPNOW_CMD_STEAM_ON);
+        steamDispFlag = sv;
+        steamResetPending = false;
+        steamFlag = steamDispFlag || steamHwFlag;
+        // Ensure the active target temperature reflects the display's steam mode immediately
+        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
+        // Reflect the new active set temperature promptly for HA/telemetry
+        publishNum(t_settemp_state, setTemp, 1, true);
+        publishBool(t_steam_state, steamFlag, true);
+        LOG("ESP-NOW: Steam -> %s", steamFlag ? "ON" : "OFF");
     }
 }
 
@@ -1169,6 +1298,11 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         changed = true;
         LOG("HA: Steam setpoint -> %.1f °C", steamSetpoint);
     }
+    // if (parse_clamped(t_pump_cmd, 0.0f, 100.0f, pumpPower)) {
+    // applyPumpPower();
+    // publishNum(t_pump_state, pumpPower, 0, true);
+    // LOG("HA: Pump power -> %.0f%%", pumpPower);
+    // }
     // PID params
     float tmp;
     if (parse_clamped(t_pidp_cmd, 0.0f, 200.0f, tmp)) {
@@ -1208,6 +1342,13 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         publishBool(t_heater_state, heaterEnabled, true);
         LOG("HA: Heater -> %s", heaterEnabled ? "ON" : "OFF");
     }
+    if (parse_onoff(t_steam_cmd, hv)) {
+        steamDispFlag = hv;
+        steamResetPending = false;
+        steamFlag = steamDispFlag || steamHwFlag;
+        publishBool(t_steam_state, steamFlag, true);
+        LOG("HA: Steam -> %s", steamFlag ? "ON" : "OFF");
+    }
     if (parse_onoff(t_espnow_cmd, hv)) {
         g_mqttDisabled = !hv;
         if (g_mqttDisabled) {
@@ -1218,11 +1359,11 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
             LOG("HA: MQTT enabled");
         }
     }
-    if (strcmp(topic, t_ota_cmd) == 0) {
-        otaActive = true;
-        otaStart = millis();
-        publishStr(t_ota_state, "enabled", true);
-        LOG("HA: OTA enabled for %lus", OTA_ENABLE_MS / 1000);
+    if (parse_onoff(t_ota_cmd, hv)) {
+        otaActive = hv;
+        otaStart = otaActive ? millis() : 0;
+        publishBool(t_ota_state, otaActive, true);
+        LOG("HA: OTA -> %s", otaActive ? "ON" : "OFF");
     }
     if (changed) {
         if (!steamFlag) setTemp = brewSetpoint;  // if brewing, apply immediately
@@ -1409,6 +1550,7 @@ static void ensureMqtt() {
             publishDiscovery();
             mqttClient.subscribe(t_brewset_cmd);
             mqttClient.subscribe(t_steamset_cmd);
+            // mqttClient.subscribe(t_pump_cmd);
             // PID control subscriptions
             mqttClient.subscribe(t_pidp_cmd);
             mqttClient.subscribe(t_pidi_cmd);
@@ -1418,6 +1560,7 @@ static void ensureMqtt() {
             mqttClient.subscribe(t_piddtau_cmd);
             // heater switch
             mqttClient.subscribe(t_heater_cmd);
+            mqttClient.subscribe(t_steam_cmd);
             mqttClient.subscribe(t_espnow_cmd);
             // ✅ B) Immediately publish a full snapshot so HA has data right away
             // Do this only once, right after a successful (re)connect.
@@ -1441,14 +1584,15 @@ static void ensureMqtt() {
     static unsigned long lastAttempt = 0;
     if (millis() - lastAttempt < 2000) return;
     lastAttempt = millis();
-    LOG("MQTT: connecting to %s:%u as '%s' (user=%s)…", MQTT_HOST, MQTT_PORT, MQTT_CLIENTID,
-        (MQTT_USER && MQTT_USER[0]) ? MQTT_USER : "(none)");
+    LOG("MQTT: connecting to %s:%u as '%s' (user=%s)…", MQTT_HOST, MQTT_PORT,
+        MQTT_CONTROLLER_CLIENT_ID, (MQTT_USER && MQTT_USER[0]) ? MQTT_USER : "(none)");
     bool ok;
     if (MQTT_USER && MQTT_USER[0])
-        ok = mqttClient.connect(MQTT_CLIENTID, MQTT_USER, MQTT_PASS, MQTT_STATUS, 0, true,
-                                "offline");
+        ok = mqttClient.connect(MQTT_CONTROLLER_CLIENT_ID, MQTT_USER, MQTT_PASSWORD, MQTT_STATUS, 0,
+                                true, "offline");
     else
-        ok = mqttClient.connect(MQTT_CLIENTID, nullptr, nullptr, MQTT_STATUS, 0, true, "offline");
+        ok = mqttClient.connect(MQTT_CONTROLLER_CLIENT_ID, nullptr, nullptr, MQTT_STATUS, 0, true,
+                                "offline");
     if (!ok)
         LOG_ERROR("MQTT: connect failed rc=%d (%s)  WiFi=%s RSSI=%d IP=%s GW=%s",
                   mqttClient.state(), mqttStateName(mqttClient.state()),
@@ -1466,6 +1610,9 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
     delay(300);
     LOG("Booting… FW %s", VERSION);
+#if defined(CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH)
+    LOG("RTOS: Tmr Svc stack depth=%d (words)", (int)CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH);
+#endif
 
 #if defined(ARDUINO_ARCH_ESP32)
     analogReadResolution(12);
@@ -1478,8 +1625,11 @@ void setup() {
     pinMode(FLOW_PIN, INPUT_PULLUP);
     pinMode(ZC_PIN, INPUT);
     pinMode(AC_SENS, INPUT_PULLUP);
+    pinMode(PUMP_PIN, OUTPUT);
+    // pumpDimmer.begin(NORMAL_MODE, OFF);
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
+    // applyPumpPower();
 
     // Initialize MAX31865 (set wiring: 2/3/4-wire as appropriate)
     max31865.begin(MAX31865_2WIRE);
@@ -1502,8 +1652,10 @@ void setup() {
         LOG("Pressure Intercept reset to %f", pressInt);
     }
 
-    attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, RISING);
-    attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
+    // Count both rising and falling edges from the flow sensor to
+    // double the pulse resolution.  CHANGE triggers the ISR on any
+    // transition and `PULSE_MIN` guards against spurious bounce.
+    attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
 
     pulseCount = 0;
     startTime = millis();
@@ -1528,7 +1680,7 @@ void setup() {
     LOG("Pins: FLOW=%d ZC=%d HEAT=%d AC_SENS=%d PRESS=%d  SPI{CS=%d}", FLOW_PIN, ZC_PIN, HEAT_PIN,
         AC_SENS, PRESS_PIN, MAX_CS);
     LOG("WiFi: connecting to '%s'…  MQTT: %s:%u id=%s", WIFI_SSID, MQTT_HOST, MQTT_PORT,
-        MQTT_CLIENTID);
+        MQTT_CONTROLLER_CLIENT_ID);
 }
 
 /**
@@ -1562,11 +1714,7 @@ void loop() {
         updatePreFlow();
         updateVols();
         updateSteamFlag();
-    }
-
-    // Update shot time continuously while shot is active (seconds)
-    if (shotFlag) {
-        shotTime = (currentTime - shotStart) / 1000.0f;
+        updateShotTime();
     }
 
     ensureWifi();
@@ -1592,7 +1740,7 @@ void loop() {
         LOG("Pressure: Raw=%d, Now=%0.2f Last=%0.2f", rawPress, pressNow, lastPress);
         LOG("Temp: Set=%0.1f, Current=%0.2f", setTemp, currentTemp);
         LOG("Heat: Power=%0.1f, Cycles=%d", heatPower, heatCycles);
-        LOG("Vol: Pulses=%lu, Vol=%d", pulseCount, vol);
+        LOG("Vol: Pulses=%lu, Vol=%0.2f", pulseCount, vol);
         LOG("Pump: ZC Count =%lu", zcCount);
         LOG("Flags: Steam=%d, Shot=%d", steamFlag, shotFlag);
         LOG("AC Count=%d", acCount);

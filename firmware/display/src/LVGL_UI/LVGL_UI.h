@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "lvgl.h"
 // #include "demos/lv_demos.h"

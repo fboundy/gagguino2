@@ -1,9 +1,11 @@
-#include "LVGL_Example.h"
+#include "LVGL_UI.h"
 #include <inttypes.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include "esp_log.h"
+#include "esp_system.h"
+#include "version.h"
 
 /* Fallback symbol definitions for environments where newer LVGL symbols are
  * not provided. These values correspond to Font Awesome code points and allow
@@ -18,6 +20,10 @@
 
 #ifndef LV_SYMBOL_TIMER
 #define LV_SYMBOL_TIMER "\xEF\x80\x97"
+#endif
+
+#ifndef LV_SYMBOL_BRIGHTNESS
+#define LV_SYMBOL_BRIGHTNESS "\xEF\x86\x85"
 #endif
 
 /**********************
@@ -37,9 +43,18 @@ static void Status_create(lv_obj_t *parent);
 static void Settings_create(void);
 static void open_settings_event_cb(lv_event_t *e);
 static void back_event_cb(lv_event_t *e);
+static void reset_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
-static void set_label_value(lv_obj_t *label, float value, const char *suffix);
 static void heater_event_cb(lv_event_t *e);
+static void steam_event_cb(lv_event_t *e);
+static void ota_event_cb(lv_event_t *e);
+static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols);
+static void add_version_label(lv_obj_t *parent);
+static void shot_def_dd_event_cb(lv_event_t *e);
+static void shot_duration_slider_event_cb(lv_event_t *e);
+static void shot_volume_slider_event_cb(lv_event_t *e);
+static void beep_on_shot_btn_event_cb(lv_event_t *e);
+static void buzzer_timer_cb(lv_timer_t *t);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -64,6 +79,7 @@ static lv_obj_t *main_screen;
 static lv_obj_t *settings_scr;
 static lv_obj_t *heater_btn;
 static lv_obj_t *steam_btn;
+static lv_obj_t *ota_btn;
 static lv_obj_t *settings_btn;
 static lv_coord_t tab_h_global;
 
@@ -83,8 +99,21 @@ static lv_obj_t *pressure_units_label;
 static lv_obj_t *shot_time_units_label;
 static lv_obj_t *shot_volume_units_label;
 lv_obj_t *Backlight_slider;
+static lv_obj_t *beep_on_shot_btn;
+static lv_obj_t *beep_on_shot_label;
+static lv_obj_t *shot_def_dd;
+static lv_obj_t *shot_duration_label;
+static lv_obj_t *shot_duration_slider;
+static lv_obj_t *shot_duration_value;
+static lv_obj_t *shot_volume_label;
+static lv_obj_t *shot_volume_slider;
+static lv_obj_t *shot_volume_value;
 static lv_obj_t *conn_label;
+static lv_obj_t *conn_status_label;
 static int last_conn_type = -1;
+static int last_conn_status = -1;
+static lv_timer_t *buzzer_timer;
+static bool shot_target_reached;
 
 void Lvgl_Example1(void)
 {
@@ -152,9 +181,10 @@ void Lvgl_Example1(void)
 
   lv_style_init(&style_text_muted);
   lv_style_set_text_opa(&style_text_muted, LV_OPA_90);
+  lv_style_set_text_font(&style_text_muted, &lv_font_montserrat_20);
 
   lv_style_init(&style_title);
-  lv_style_set_text_font(&style_title, font_large);
+  lv_style_set_text_font(&style_title, &lv_font_montserrat_28);
 
   lv_style_init(&style_icon);
   lv_style_set_text_color(&style_icon, lv_theme_get_color_primary(NULL));
@@ -180,26 +210,27 @@ void Lvgl_Example1(void)
   Status_create(main_screen);
 }
 
-static void led_event_cb(lv_event_t *e)
-{
-  lv_obj_t *led = (lv_obj_t *)lv_event_get_user_data(e);
-  lv_obj_t *sw = lv_event_get_target(e);
-  if (lv_obj_get_state(sw) & LV_STATE_CHECKED)
-  {
-    lv_led_on(led);
-    Buzzer_On();
-  }
-  else
-  {
-    lv_led_off(led);
-    Buzzer_Off();
-  }
-}
-
 static void heater_event_cb(lv_event_t *e)
 {
   bool heater = MQTT_GetHeaterState();
   MQTT_SetHeaterState(!heater);
+}
+
+static void steam_event_cb(lv_event_t *e)
+{
+  bool steam = MQTT_GetSteamState();
+  MQTT_SetSteamState(!steam);
+}
+
+static void ota_event_cb(lv_event_t *e)
+{
+  bool ota = MQTT_GetOtaState();
+  MQTT_SetOtaState(!ota);
+}
+
+static void reset_event_cb(lv_event_t *e)
+{
+  esp_restart();
 }
 
 static void back_event_cb(lv_event_t *e) { lv_scr_load(main_screen); }
@@ -217,32 +248,24 @@ static void Settings_create(void)
   lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(settings_scr, LV_OPA_COVER, 0);
   lv_obj_set_style_border_width(settings_scr, 0, 0);
+  lv_obj_set_style_text_color(settings_scr, lv_color_white(), 0);
 
-  static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(1),
+  static lv_coord_t grid_main_col_dsc[] = {LV_GRID_FR(1), LV_GRID_FR(4),
                                            LV_GRID_TEMPLATE_LAST};
   static lv_coord_t grid_main_row_dsc[] = {
       LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT,
-      LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+      LV_GRID_CONTENT, LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
   lv_obj_set_grid_dsc_array(settings_scr, grid_main_col_dsc, grid_main_row_dsc);
 
-  lv_obj_t *back_btn = lv_btn_create(settings_scr);
-  lv_obj_set_size(back_btn, 80, 80);
-  lv_obj_set_grid_cell(back_btn, LV_GRID_ALIGN_CENTER, 0, 2,
-                       LV_GRID_ALIGN_CENTER, 5, 1);
-  lv_obj_t *back_label = lv_label_create(back_btn);
-  lv_label_set_text(back_label, LV_SYMBOL_LEFT);
-  lv_obj_center(back_label);
-  lv_obj_add_event_cb(back_btn, back_event_cb, LV_EVENT_CLICKED, NULL);
-
-  lv_obj_t *Backlight_label = lv_label_create(settings_scr);
-  lv_label_set_text(Backlight_label, "Backlight brightness");
-  lv_obj_add_style(Backlight_label, &style_text_muted, 0);
-  lv_obj_set_grid_cell(Backlight_label, LV_GRID_ALIGN_CENTER, 0, 2,
+  lv_obj_t *Backlight_icon = lv_label_create(settings_scr);
+  lv_label_set_text(Backlight_icon, LV_SYMBOL_BRIGHTNESS);
+  lv_obj_add_style(Backlight_icon, &style_icon, 0);
+  lv_obj_set_grid_cell(Backlight_icon, LV_GRID_ALIGN_START, 0, 1,
                        LV_GRID_ALIGN_START, 0, 1);
 
   Backlight_slider = lv_slider_create(settings_scr);
   lv_obj_add_flag(Backlight_slider, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_size(Backlight_slider, 200, 35);
+  lv_obj_set_size(Backlight_slider, 35, 200);
   lv_obj_set_style_radius(Backlight_slider, 3, LV_PART_KNOB);
   lv_obj_set_style_bg_opa(Backlight_slider, LV_OPA_TRANSP, LV_PART_KNOB);
   lv_obj_set_style_bg_color(Backlight_slider, lv_color_hex(0xAAAAAA),
@@ -256,26 +279,156 @@ static void Settings_create(void)
   lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
   lv_obj_add_event_cb(Backlight_slider, Backlight_adjustment_event_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
-  lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_CENTER, 0, 2,
-                       LV_GRID_ALIGN_START, 1, 1);
+  lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_START, 0, 1,
+                       LV_GRID_ALIGN_CENTER, 1, 5);
+  lv_obj_set_style_translate_x(Backlight_slider, LV_HOR_RES / 10, 0);
 
-  lv_obj_t *panel2_title = lv_label_create(settings_scr);
-  lv_label_set_text(panel2_title, "The buzzer tes");
-  lv_obj_add_style(panel2_title, &style_title, 0);
-  lv_obj_set_grid_cell(panel2_title, LV_GRID_ALIGN_CENTER, 0, 2,
+  lv_obj_t *shot_section_label = lv_label_create(settings_scr);
+  lv_label_set_text(shot_section_label, "Shot definition");
+  lv_obj_add_style(shot_section_label, &style_title, 0);
+  lv_obj_set_grid_cell(shot_section_label, LV_GRID_ALIGN_START, 1, 1,
                        LV_GRID_ALIGN_START, 2, 1);
 
-  lv_obj_t *led = lv_led_create(settings_scr);
-  lv_obj_set_size(led, 50, 50);
-  lv_led_off(led);
-  lv_obj_set_grid_cell(led, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_START, 3,
-                       1);
+  beep_on_shot_label = lv_label_create(settings_scr);
+  lv_label_set_text(beep_on_shot_label, "Beep on shot");
+  lv_obj_add_style(beep_on_shot_label, &style_text_muted, 0);
+  lv_obj_set_grid_cell(beep_on_shot_label, LV_GRID_ALIGN_START, 1, 1,
+                       LV_GRID_ALIGN_START, 5, 1);
 
-  lv_obj_t *sw = lv_switch_create(settings_scr);
-  lv_obj_set_size(sw, 65, 40);
-  lv_obj_add_event_cb(sw, led_event_cb, LV_EVENT_VALUE_CHANGED, led);
-  lv_obj_set_grid_cell(sw, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 3,
-                       1);
+  beep_on_shot_btn = lv_btn_create(settings_scr);
+  lv_obj_add_flag(beep_on_shot_btn, LV_OBJ_FLAG_CHECKABLE);
+  lv_obj_set_style_bg_color(beep_on_shot_btn,
+                            lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_style_bg_color(beep_on_shot_btn,
+                            lv_palette_main(LV_PALETTE_YELLOW),
+                            LV_STATE_CHECKED);
+  lv_obj_set_grid_cell(beep_on_shot_btn, LV_GRID_ALIGN_END, 1, 1,
+                       LV_GRID_ALIGN_START, 5, 1);
+  lv_obj_set_style_translate_x(beep_on_shot_btn, LV_HOR_RES / 10, 0);
+  lv_obj_add_event_cb(beep_on_shot_btn, beep_on_shot_btn_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+  lv_obj_t *beep_btn_label = lv_label_create(beep_on_shot_btn);
+  lv_label_set_text(beep_btn_label, "Off");
+  lv_obj_center(beep_btn_label);
+  lv_obj_add_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t *shot_def_label = lv_label_create(settings_scr);
+  lv_label_set_text(shot_def_label, "Source");
+  lv_obj_add_style(shot_def_label, &style_text_muted, 0);
+  lv_obj_set_grid_cell(shot_def_label, LV_GRID_ALIGN_START, 1, 1,
+                       LV_GRID_ALIGN_START, 3, 1);
+
+  shot_def_dd = lv_dropdown_create(settings_scr);
+  lv_dropdown_set_options(shot_def_dd, "None\nTime\nVolume");
+  lv_dropdown_set_selected(shot_def_dd, 0);
+  lv_obj_set_width(shot_def_dd, 120);
+  lv_obj_set_grid_cell(shot_def_dd, LV_GRID_ALIGN_END, 1, 1,
+                       LV_GRID_ALIGN_START, 3, 1);
+  lv_obj_set_style_translate_x(shot_def_dd, LV_HOR_RES / 10, 0);
+  lv_obj_add_event_cb(shot_def_dd, shot_def_dd_event_cb, LV_EVENT_VALUE_CHANGED,
+                      NULL);
+
+  shot_duration_label = lv_label_create(settings_scr);
+  lv_label_set_text(shot_duration_label, "Shot Duration");
+  lv_obj_add_style(shot_duration_label, &style_text_muted, 0);
+  lv_obj_set_grid_cell(shot_duration_label, LV_GRID_ALIGN_START, 1, 1,
+                       LV_GRID_ALIGN_START, 4, 1);
+
+  shot_duration_slider = lv_slider_create(settings_scr);
+  lv_obj_set_size(shot_duration_slider, 200, 35);
+  lv_slider_set_range(shot_duration_slider, 20, 40);
+  lv_slider_set_value(shot_duration_slider, 27, LV_ANIM_OFF);
+  lv_obj_add_event_cb(shot_duration_slider, shot_duration_slider_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+  lv_obj_set_grid_cell(shot_duration_slider, LV_GRID_ALIGN_END, 1, 1,
+                       LV_GRID_ALIGN_START, 4, 1);
+  lv_obj_set_style_translate_x(shot_duration_slider, LV_HOR_RES / 10, 0);
+  lv_obj_set_style_translate_y(shot_duration_slider, 20, 0);
+
+  shot_duration_value = lv_label_create(settings_scr);
+  lv_label_set_text(shot_duration_value, "27s");
+  lv_obj_align_to(shot_duration_value, shot_duration_slider,
+                  LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+
+  shot_volume_label = lv_label_create(settings_scr);
+  lv_label_set_text(shot_volume_label, "Shot Volume");
+  lv_obj_add_style(shot_volume_label, &style_text_muted, 0);
+  lv_obj_set_grid_cell(shot_volume_label, LV_GRID_ALIGN_START, 1, 1,
+                       LV_GRID_ALIGN_START, 4, 1);
+
+  shot_volume_slider = lv_slider_create(settings_scr);
+  lv_obj_set_size(shot_volume_slider, 200, 35);
+  lv_slider_set_range(shot_volume_slider, 30, 60);
+  lv_slider_set_value(shot_volume_slider, 40, LV_ANIM_OFF);
+  lv_obj_add_event_cb(shot_volume_slider, shot_volume_slider_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+  lv_obj_set_grid_cell(shot_volume_slider, LV_GRID_ALIGN_END, 1, 1,
+                       LV_GRID_ALIGN_START, 4, 1);
+  lv_obj_set_style_translate_x(shot_volume_slider, LV_HOR_RES / 10, 0);
+  lv_obj_set_style_translate_y(shot_volume_slider, 20, 0);
+
+  shot_volume_value = lv_label_create(settings_scr);
+  lv_label_set_text(shot_volume_value, "40 ml");
+  lv_obj_align_to(shot_volume_value, shot_volume_slider, LV_ALIGN_OUT_RIGHT_MID,
+                  10, 0);
+
+  lv_obj_add_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(shot_duration_slider, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(shot_duration_value, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(shot_volume_slider, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(shot_volume_value, LV_OBJ_FLAG_HIDDEN);
+
+  /* DRY: Reuse main page button alignment for settings page */
+  lv_obj_t *ctrl_container = create_aligned_button_container(settings_scr, /*cols=*/3);
+
+  lv_obj_t *back_btn = lv_btn_create(ctrl_container);
+  lv_obj_set_size(back_btn, 80, 80);
+  lv_obj_set_style_border_width(back_btn, 0, 0);
+  lv_obj_set_style_bg_color(back_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_grid_cell(back_btn, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_t *back_label = lv_label_create(back_btn);
+  lv_label_set_text(back_label, LV_SYMBOL_LEFT);
+  lv_obj_center(back_label);
+  lv_obj_add_event_cb(back_btn, back_event_cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *back_text = lv_label_create(ctrl_container);
+  lv_label_set_text(back_text, "Back");
+  lv_obj_set_style_text_color(back_text, lv_color_white(), 0);
+  lv_obj_set_grid_cell(back_text, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_START, 1, 1);
+
+  lv_obj_t *reset_btn = lv_btn_create(ctrl_container);
+  lv_obj_set_size(reset_btn, 80, 80);
+  lv_obj_set_style_border_width(reset_btn, 0, 0);
+  lv_obj_set_style_bg_color(reset_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_grid_cell(reset_btn, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_t *reset_label = lv_label_create(reset_btn);
+  lv_label_set_text(reset_label, LV_SYMBOL_REFRESH);
+  lv_obj_center(reset_label);
+  lv_obj_add_event_cb(reset_btn, reset_event_cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *reset_text = lv_label_create(ctrl_container);
+  lv_label_set_text(reset_text, "Reset");
+  lv_obj_set_style_text_color(reset_text, lv_color_white(), 0);
+  lv_obj_set_grid_cell(reset_text, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 1, 1);
+
+  ota_btn = lv_btn_create(ctrl_container);
+  lv_obj_set_size(ota_btn, 80, 80);
+  lv_obj_set_style_border_width(ota_btn, 0, 0);
+  lv_obj_set_style_bg_color(ota_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_grid_cell(ota_btn, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_t *ota_label = lv_label_create(ota_btn);
+  lv_label_set_text(ota_label, "OTA");
+  lv_obj_center(ota_label);
+  lv_obj_add_event_cb(ota_btn, ota_event_cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *ota_text = lv_label_create(ctrl_container);
+  lv_label_set_text(ota_text, "OTA");
+  lv_obj_set_style_text_color(ota_text, lv_color_white(), 0);
+  lv_obj_set_grid_cell(ota_text, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_START, 1, 1);
+
+  add_version_label(settings_scr);
 }
 
 void Lvgl_Example1_close(void)
@@ -303,6 +456,20 @@ void Lvgl_Example1_close(void)
   pressure_units_label = NULL;
   shot_time_units_label = NULL;
   shot_volume_units_label = NULL;
+  conn_label = NULL;
+  conn_status_label = NULL;
+  last_conn_type = -1;
+  last_conn_status = -1;
+  Backlight_slider = NULL;
+  beep_on_shot_btn = NULL;
+  beep_on_shot_label = NULL;
+  shot_def_dd = NULL;
+  shot_duration_label = NULL;
+  shot_duration_slider = NULL;
+  shot_duration_value = NULL;
+  shot_volume_label = NULL;
+  shot_volume_slider = NULL;
+  shot_volume_value = NULL;
 
   lv_style_reset(&style_text_muted);
   lv_style_reset(&style_title);
@@ -326,6 +493,11 @@ static void Status_create(lv_obj_t *parent)
 #endif
   lv_obj_align(conn_label, LV_ALIGN_TOP_MID, 0, 0);
   lv_label_set_text(conn_label, "");
+
+  conn_status_label = lv_label_create(parent);
+  lv_obj_set_style_text_font(conn_status_label, LV_FONT_DEFAULT, 0);
+  lv_obj_align(conn_status_label, LV_ALIGN_TOP_MID, 0, 24);
+  lv_label_set_text(conn_status_label, "");
 
   const lv_coord_t current_arc_width = 20;
   lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
@@ -432,7 +604,6 @@ static void Status_create(lv_obj_t *parent)
   } while (0)
 
   const lv_coord_t H = lv_disp_get_ver_res(NULL);
-  const lv_coord_t W = lv_disp_get_hor_res(NULL);
 
   /* ----------------- Bottom row @ 50% ----------------- */
   lv_obj_t *row_bottom = lv_obj_create(parent);
@@ -466,17 +637,7 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_move_foreground(row_top);
 
   /* ----------------- Buttons @ 70% with 1% spacing ----------------- */
-  lv_obj_t *ctrl_container = lv_obj_create(parent);
-  lv_obj_set_style_bg_opa(ctrl_container, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(ctrl_container, 0, 0);
-  lv_obj_clear_flag(ctrl_container, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(ctrl_container, LV_SIZE_CONTENT, 80);
-
-  static lv_coord_t btn_cols[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t btn_rows[] = {LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST};
-  lv_obj_set_grid_dsc_array(ctrl_container, btn_cols, btn_rows);
-  lv_obj_set_style_pad_column(ctrl_container, W / 100, 0);          /* 1% spacing */
-  lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100); /* 70% */
+  lv_obj_t *ctrl_container = create_aligned_button_container(parent, /*cols=*/3);
 
   heater_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(heater_btn, 80, 80);
@@ -489,6 +650,11 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_center(heater_label);
   lv_obj_add_event_cb(heater_btn, heater_event_cb, LV_EVENT_CLICKED, NULL);
 
+  lv_obj_t *heater_text = lv_label_create(ctrl_container);
+  lv_label_set_text(heater_text, "Heat");
+  lv_obj_set_style_text_color(heater_text, lv_color_white(), 0);
+  lv_obj_set_grid_cell(heater_text, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_START, 1, 1);
+
   steam_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(steam_btn, 80, 80);
   lv_obj_set_style_border_width(steam_btn, 0, 0);
@@ -498,6 +664,12 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_text_font(steam_label, &mdi_icons_40, 0);
   lv_label_set_text(steam_label, MDI_STEAM);
   lv_obj_center(steam_label);
+  lv_obj_add_event_cb(steam_btn, steam_event_cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *steam_text = lv_label_create(ctrl_container);
+  lv_label_set_text(steam_text, "Steam");
+  lv_obj_set_style_text_color(steam_text, lv_color_white(), 0);
+  lv_obj_set_grid_cell(steam_text, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 1, 1);
 
   settings_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(settings_btn, 80, 80);
@@ -510,7 +682,14 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_center(settings_label);
   lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED, NULL);
 
+  lv_obj_t *settings_text = lv_label_create(ctrl_container);
+  lv_label_set_text(settings_text, "Settings");
+  lv_obj_set_style_text_color(settings_text, lv_color_white(), 0);
+  lv_obj_set_grid_cell(settings_text, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_START, 1, 1);
+
   lv_obj_move_foreground(ctrl_container);
+
+  add_version_label(parent);
 
   /* Timer to drive UI updates */
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
@@ -602,6 +781,7 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   float shot_vol = MQTT_GetShotVolume();
   bool heater = MQTT_GetHeaterState();
   bool steam = MQTT_GetSteamState();
+  bool ota = MQTT_GetOtaState();
 
   enum
   {
@@ -610,10 +790,21 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     CONN_ESPNOW
   };
   int conn = CONN_NONE;
-  if (Wireless_UsingEspNow())
+  bool espnow_active = Wireless_IsEspNowActive();
+  if (espnow_active)
     conn = CONN_ESPNOW;
   else if (Wireless_IsMQTTConnected())
     conn = CONN_MQTT;
+
+  enum
+  {
+    STATUS_NONE,
+    STATUS_CONNECTING,
+    STATUS_CONNECTED
+  };
+  int status = STATUS_NONE;
+  if (espnow_active)
+    status = Wireless_UsingEspNow() ? STATUS_CONNECTED : STATUS_CONNECTING;
 
   if (conn_label && conn != last_conn_type)
   {
@@ -632,6 +823,25 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
       break;
     }
     last_conn_type = conn;
+  }
+
+  if (conn_status_label && status != last_conn_status)
+  {
+    switch (status)
+    {
+    case STATUS_CONNECTING:
+      lv_label_set_text(conn_status_label, "Connecting");
+      lv_obj_set_style_text_color(conn_status_label, lv_palette_main(LV_PALETTE_YELLOW), 0);
+      break;
+    case STATUS_CONNECTED:
+      lv_label_set_text(conn_status_label, "Connected");
+      lv_obj_set_style_text_color(conn_status_label, lv_palette_main(LV_PALETTE_GREEN), 0);
+      break;
+    default:
+      lv_label_set_text(conn_status_label, "");
+      break;
+    }
+    last_conn_status = status;
   }
 
   if (isnan(current_p) || current_p < 0.0f)
@@ -695,6 +905,90 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     lv_label_set_text(shot_volume_label, buf);
   }
 
+  /* shot definition highlighting & buzzer */
+  if (shot_def_dd)
+  {
+    uint16_t sel = lv_dropdown_get_selected(shot_def_dd);
+    bool shot_active = (shot_time > 0.0f || shot_vol > 0.0f);
+    if (!shot_active)
+      shot_target_reached = false;
+    lv_color_t white = lv_color_white();
+    lv_color_t yellow = lv_palette_main(LV_PALETTE_YELLOW);
+    bool beep_enabled = beep_on_shot_btn && lv_obj_has_state(beep_on_shot_btn, LV_STATE_CHECKED);
+    if (sel == 1)
+    {
+      int target = shot_duration_slider ? lv_slider_get_value(shot_duration_slider) : 0;
+      lv_color_t col = white;
+      if (shot_active && shot_time >= (float)target)
+      {
+        col = yellow;
+        if (!shot_target_reached && beep_enabled)
+        {
+          Buzzer_On();
+          if (!buzzer_timer)
+            buzzer_timer = lv_timer_create(buzzer_timer_cb, 500, NULL);
+        }
+        shot_target_reached = true;
+      }
+      if (shot_time_icon)
+        lv_obj_set_style_text_color(shot_time_icon, col, 0);
+      if (shot_time_label)
+        lv_obj_set_style_text_color(shot_time_label, col, 0);
+      if (shot_time_units_label)
+        lv_obj_set_style_text_color(shot_time_units_label, col, 0);
+      if (shot_volume_icon)
+        lv_obj_set_style_text_color(shot_volume_icon, white, 0);
+      if (shot_volume_label)
+        lv_obj_set_style_text_color(shot_volume_label, white, 0);
+      if (shot_volume_units_label)
+        lv_obj_set_style_text_color(shot_volume_units_label, white, 0);
+    }
+    else if (sel == 2)
+    {
+      int target = shot_volume_slider ? lv_slider_get_value(shot_volume_slider) : 0;
+      lv_color_t col = white;
+      if (shot_active && shot_vol >= (float)target)
+      {
+        col = yellow;
+        if (!shot_target_reached && beep_enabled)
+        {
+          Buzzer_On();
+          if (!buzzer_timer)
+            buzzer_timer = lv_timer_create(buzzer_timer_cb, 500, NULL);
+        }
+        shot_target_reached = true;
+      }
+      if (shot_volume_icon)
+        lv_obj_set_style_text_color(shot_volume_icon, col, 0);
+      if (shot_volume_label)
+        lv_obj_set_style_text_color(shot_volume_label, col, 0);
+      if (shot_volume_units_label)
+        lv_obj_set_style_text_color(shot_volume_units_label, col, 0);
+      if (shot_time_icon)
+        lv_obj_set_style_text_color(shot_time_icon, white, 0);
+      if (shot_time_label)
+        lv_obj_set_style_text_color(shot_time_label, white, 0);
+      if (shot_time_units_label)
+        lv_obj_set_style_text_color(shot_time_units_label, white, 0);
+    }
+    else
+    {
+      if (shot_time_icon)
+        lv_obj_set_style_text_color(shot_time_icon, white, 0);
+      if (shot_time_label)
+        lv_obj_set_style_text_color(shot_time_label, white, 0);
+      if (shot_time_units_label)
+        lv_obj_set_style_text_color(shot_time_units_label, white, 0);
+      if (shot_volume_icon)
+        lv_obj_set_style_text_color(shot_volume_icon, white, 0);
+      if (shot_volume_label)
+        lv_obj_set_style_text_color(shot_volume_label, white, 0);
+      if (shot_volume_units_label)
+        lv_obj_set_style_text_color(shot_volume_units_label, white, 0);
+      shot_target_reached = false;
+    }
+  }
+
   /* backlight */
   if (Backlight_slider)
     lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
@@ -707,6 +1001,8 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     lv_obj_set_style_bg_color(heater_btn, heater ? on : off, 0);
   if (steam_btn)
     lv_obj_set_style_bg_color(steam_btn, steam ? on : off, 0);
+  if (ota_btn)
+    lv_obj_set_style_bg_color(ota_btn, ota ? on : off, 0);
   if (settings_btn)
     lv_obj_set_style_bg_color(settings_btn, off, 0);
 }
@@ -724,4 +1020,130 @@ void Backlight_adjustment_event_cb(lv_event_t *e)
     ESP_LOGW("LVGL", "Volume out of range: %d", Backlight);
 }
 
+static void shot_def_dd_event_cb(lv_event_t *e)
+{
+  uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+  switch (sel)
+  {
+  case 1: /* Time */
+    lv_obj_clear_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(shot_duration_slider, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(shot_duration_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_volume_slider, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_volume_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
+    break;
+  case 2: /* Volume */
+    lv_obj_clear_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(shot_volume_slider, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(shot_volume_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_duration_slider, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_duration_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
+    break;
+  default:
+    lv_obj_add_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_duration_slider, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_duration_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_volume_slider, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_volume_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
+    break;
+  }
+}
+
+static void shot_duration_slider_event_cb(lv_event_t *e)
+{
+  int val = lv_slider_get_value(lv_event_get_target(e));
+  char buf[8];
+  snprintf(buf, sizeof buf, "%ds", val);
+  lv_label_set_text(shot_duration_value, buf);
+}
+
+static void shot_volume_slider_event_cb(lv_event_t *e)
+{
+  int val = lv_slider_get_value(lv_event_get_target(e));
+  char buf[8];
+  snprintf(buf, sizeof buf, "%d ml", val);
+  lv_label_set_text(shot_volume_value, buf);
+}
+
+static void beep_on_shot_btn_event_cb(lv_event_t *e)
+{
+  lv_obj_t *btn = lv_event_get_target(e);
+  lv_obj_t *label = lv_obj_get_child(btn, 0);
+  if (lv_obj_has_state(btn, LV_STATE_CHECKED))
+  {
+    lv_label_set_text(label, "On");
+  }
+  else
+  {
+    lv_label_set_text(label, "Off");
+  }
+}
+
+static void buzzer_timer_cb(lv_timer_t *t)
+{
+  Buzzer_Off();
+  lv_timer_del(t);
+  buzzer_timer = NULL;
+}
+
 void LVGL_Backlight_adjustment(uint8_t Backlight) { Set_Backlight(Backlight); }
+
+static void add_version_label(lv_obj_t *parent)
+{
+  lv_obj_t *ver = lv_label_create(parent);
+  lv_label_set_text_fmt(ver, "v%s", VERSION);
+  lv_obj_set_style_text_color(ver, lv_color_white(), 0);
+  lv_obj_align(ver, LV_ALIGN_BOTTOM_MID, 0, 0);
+}
+/* Create a button container aligned like the main page control row
+ * - Centered horizontally
+ * - Positioned at ~70% screen height (20% below center)
+ * - Grid with given number of columns and 2 rows (icon row + label row)
+ * - Ignores parent layout so it works inside grid-based screens
+ */
+static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols)
+{
+  const lv_coord_t H = lv_disp_get_ver_res(NULL);
+  const lv_coord_t W = lv_disp_get_hor_res(NULL);
+
+  lv_obj_t *ctrl_container = lv_obj_create(parent);
+  lv_obj_set_style_bg_opa(ctrl_container, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(ctrl_container, 0, 0);
+  lv_obj_clear_flag(ctrl_container, LV_OBJ_FLAG_SCROLLABLE);
+  /* Ensure parent layouts (e.g., grid) don't override our alignment */
+  lv_obj_add_flag(ctrl_container, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_set_size(ctrl_container, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+
+  /* Build grid descriptor based on requested column count */
+  static lv_coord_t btn_rows[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t btn_cols_1[] = {LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t btn_cols_2[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t btn_cols_3[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  lv_coord_t *cols_dsc = btn_cols_3;
+  switch (cols)
+  {
+  case 1:
+    cols_dsc = btn_cols_1;
+    break;
+  case 2:
+    cols_dsc = btn_cols_2;
+    break;
+  default:
+    cols_dsc = btn_cols_3;
+    break;
+  }
+  lv_obj_set_grid_dsc_array(ctrl_container, cols_dsc, btn_rows);
+  lv_obj_set_style_pad_column(ctrl_container, W / 100, 0); /* 1% spacing */
+  lv_obj_set_style_pad_row(ctrl_container, 5, 0);
+  lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100); /* ~70% */
+  return ctrl_container;
+}

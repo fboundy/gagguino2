@@ -16,6 +16,7 @@ Hardware / Pinout (ESP32 dev board defaults)
 - `FLOW_PIN` 26: Flow sensor input (interrupt on CHANGE)
 - `ZC_PIN` 25: AC zero‑cross detect (interrupt on RISING)
 - `HEAT_PIN` 27: Boiler relay/SSR output (time‑proportioning)
+- `PUMP_PIN` 17: Pump power control via RBDDimmer triac (0–100%)
 - `AC_SENS` 14: Steam switch sense (digital input)
 - `MAX_CS` 16: MAX31865 SPI chip‑select
 - `PRESS_PIN` 35: Analog pressure sensor input
@@ -74,6 +75,9 @@ mosquitto_pub -h <broker> -t gaggia_classic/<UID>/pid_p/set -m 20.0
 mosquitto_pub -h <broker> -t gaggia_classic/<UID>/pid_i/set -m 1.0
 mosquitto_pub -h <broker> -t gaggia_classic/<UID>/pid_d/set -m 100.0
 mosquitto_pub -h <broker> -t gaggia_classic/<UID>/pid_guard/set -m 20.0
+
+# Set pump power to 50%
+mosquitto_pub -h <broker> -t gaggia_classic/<UID>/pump_power/set -m 50
 
 # Heater ON/OFF
 mosquitto_pub -h <broker> -t gaggia_classic/<UID>/heater/set -m ON
