@@ -1334,6 +1334,9 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         steamDispFlag = hv;
         steamResetPending = false;
         steamFlag = steamDispFlag || steamHwFlag;
+        // Update active setpoint to match current mode and reflect it via MQTT
+        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
+        publishNum(t_settemp_state, setTemp, 1, true);
         publishBool(t_steam_state, steamFlag, true);
         LOG("HA: Steam -> %s", steamFlag ? "ON" : "OFF");
     }
@@ -1354,10 +1357,11 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         LOG("HA: OTA -> %s", otaActive ? "ON" : "OFF");
     }
     if (changed) {
-        if (!steamFlag) setTemp = brewSetpoint;  // if brewing, apply immediately
-        // reflect new values
+        // Update the active set temperature and mirror all setpoints
+        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
         publishNum(t_brewset_state, brewSetpoint, 1, true);
         publishNum(t_steamset_state, steamSetpoint, 1, true);
+        publishNum(t_settemp_state, setTemp, 1, true);
     }
 }
 
