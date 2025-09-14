@@ -737,18 +737,6 @@ static void IRAM_ATTR zcInt() {
     lastZcTime = now;
     zcCount++;
 }
-
-// RBDdimmer uses the same ZC pin and installs its own ISR.
-// To avoid conflicting attachInterrupt() calls, we provide a hook that the
-// library can call from its ISR to let us track zero-cross events.
-extern "C" void IRAM_ATTR user_zc_hook() {
-    int64_t now = esp_timer_get_time();
-    if (now - lastZcTime >= 6000) {
-        lastZcTime = now;
-        zcCount++;
-    }
-}
-
 // ---------- HA Discovery helpers ----------
 /**
  * @brief Build stable device identifiers from the MAC address.
@@ -1600,6 +1588,17 @@ static void ensureMqtt() {
                   WiFi.gatewayIP().toString().c_str());
 }
 }  // namespace
+
+// RBDdimmer uses the same ZC pin and installs its own ISR. To avoid
+// conflicting attachInterrupt() calls, provide a global hook that the library
+// can invoke from its ISR so we still record zero-cross events.
+extern "C" void IRAM_ATTR user_zc_hook() {
+    int64_t now = esp_timer_get_time();
+    if (now - lastZcTime >= 6000) {
+        lastZcTime = now;
+        zcCount++;
+    }
+}
 
 namespace gag {
 
