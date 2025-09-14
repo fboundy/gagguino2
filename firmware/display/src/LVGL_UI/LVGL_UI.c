@@ -49,6 +49,7 @@ static void heater_event_cb(lv_event_t *e);
 static void steam_event_cb(lv_event_t *e);
 static void ota_event_cb(lv_event_t *e);
 static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols);
+static void align_settings_controls(void);
 static void add_version_label(lv_obj_t *parent);
 static void shot_def_dd_event_cb(lv_event_t *e);
 static void shot_duration_slider_event_cb(lv_event_t *e);
@@ -307,7 +308,6 @@ static void Settings_create(void)
                             LV_STATE_CHECKED);
   lv_obj_set_grid_cell(beep_on_shot_btn, LV_GRID_ALIGN_END, 1, 1,
                        LV_GRID_ALIGN_START, 5, 1);
-  lv_obj_set_style_translate_x(beep_on_shot_btn, LV_HOR_RES / 10, 0);
   lv_obj_add_event_cb(beep_on_shot_btn, beep_on_shot_btn_event_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
   lv_obj_t *beep_btn_label = lv_label_create(beep_on_shot_btn);
@@ -328,7 +328,6 @@ static void Settings_create(void)
   lv_obj_set_width(shot_def_dd, 120);
   lv_obj_set_grid_cell(shot_def_dd, LV_GRID_ALIGN_END, 1, 1,
                        LV_GRID_ALIGN_START, 3, 1);
-  lv_obj_set_style_translate_x(shot_def_dd, LV_HOR_RES / 10, 0);
   lv_obj_add_event_cb(shot_def_dd, shot_def_dd_event_cb, LV_EVENT_VALUE_CHANGED,
                       NULL);
 
@@ -346,7 +345,6 @@ static void Settings_create(void)
                       LV_EVENT_VALUE_CHANGED, NULL);
   lv_obj_set_grid_cell(shot_duration_slider, LV_GRID_ALIGN_END, 1, 1,
                        LV_GRID_ALIGN_START, 4, 1);
-  lv_obj_set_style_translate_x(shot_duration_slider, LV_HOR_RES / 10, 0);
   lv_obj_set_style_translate_y(shot_duration_slider, 20, 0);
 
   shot_duration_value = lv_label_create(settings_scr);
@@ -368,7 +366,6 @@ static void Settings_create(void)
                       LV_EVENT_VALUE_CHANGED, NULL);
   lv_obj_set_grid_cell(shot_volume_slider, LV_GRID_ALIGN_END, 1, 1,
                        LV_GRID_ALIGN_START, 4, 1);
-  lv_obj_set_style_translate_x(shot_volume_slider, LV_HOR_RES / 10, 0);
   lv_obj_set_style_translate_y(shot_volume_slider, 20, 0);
 
   shot_volume_value = lv_label_create(settings_scr);
@@ -432,6 +429,8 @@ static void Settings_create(void)
   lv_obj_set_grid_cell(ota_text, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_START, 1, 1);
 
   add_version_label(settings_scr);
+
+  align_settings_controls();
 }
 
 void Lvgl_Example1_close(void)
@@ -815,6 +814,7 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
 
   set_temp_val = set;
   heater_on = heater;
+
   if (tick_layer)
     lv_obj_invalidate(tick_layer);
 
@@ -1181,4 +1181,43 @@ static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols)
   lv_obj_set_style_pad_row(ctrl_container, 5, 0);
   lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100); /* ~70% */
   return ctrl_container;
+}
+
+static void align_settings_controls(void)
+{
+  if (!ota_btn || !settings_scr)
+    return;
+
+  /* Ensure layout is calculated so coordinates are valid */
+  lv_obj_update_layout(settings_scr);
+
+  lv_area_t ota_coords;
+  lv_obj_get_coords(ota_btn, &ota_coords);
+  lv_coord_t ota_right = ota_coords.x2;
+
+  lv_area_t coords;
+
+  if (shot_def_dd)
+  {
+    lv_obj_get_coords(shot_def_dd, &coords);
+    lv_obj_set_style_translate_x(shot_def_dd, ota_right - coords.x2, 0);
+  }
+
+  if (shot_duration_slider)
+  {
+    lv_obj_get_coords(shot_duration_slider, &coords);
+    lv_obj_set_style_translate_x(shot_duration_slider, ota_right - coords.x2, 0);
+  }
+
+  if (shot_volume_slider)
+  {
+    lv_obj_get_coords(shot_volume_slider, &coords);
+    lv_obj_set_style_translate_x(shot_volume_slider, ota_right - coords.x2, 0);
+  }
+
+  if (beep_on_shot_btn)
+  {
+    lv_obj_get_coords(beep_on_shot_btn, &coords);
+    lv_obj_set_style_translate_x(beep_on_shot_btn, ota_right - coords.x2, 0);
+  }
 }
