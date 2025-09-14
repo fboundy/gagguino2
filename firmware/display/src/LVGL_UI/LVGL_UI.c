@@ -114,6 +114,8 @@ static int last_conn_type = -1;
 static int last_conn_status = -1;
 static lv_timer_t *buzzer_timer;
 static bool shot_target_reached;
+static float set_temp_val;
+static bool heater_on;
 
 void Lvgl_Example1(void)
 {
@@ -470,6 +472,8 @@ void Lvgl_Example1_close(void)
   shot_volume_label = NULL;
   shot_volume_slider = NULL;
   shot_volume_value = NULL;
+  set_temp_val = 0.0f;
+  heater_on = false;
 
   lv_style_reset(&style_text_muted);
   lv_style_reset(&style_title);
@@ -741,6 +745,30 @@ static void draw_ticks_cb(lv_event_t *e)
       lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
       lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
     }
+
+    if (heater_on)
+    {
+      float v = set_temp_val;
+      if (!isnan(v))
+      {
+        if (v < TEMP_ARC_MIN)
+          v = TEMP_ARC_MIN;
+        else if (v > TEMP_ARC_MAX)
+          v = TEMP_ARC_MAX;
+        float angle = TEMP_ARC_START + (v - TEMP_ARC_MIN) *
+                                        TEMP_ARC_SIZE /
+                                        (float)(TEMP_ARC_MAX - TEMP_ARC_MIN);
+        float rad = angle * 3.14159265f / 180.0f;
+        lv_coord_t len = 20;
+        lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
+                         cy + (lv_coord_t)((radius - len) * sinf(rad))};
+        lv_point_t p2 = {cx + (lv_coord_t)(radius * cosf(rad)),
+                         cy + (lv_coord_t)(radius * sinf(rad))};
+        lv_draw_line_dsc_t red_dsc = line_dsc;
+        red_dsc.color = lv_palette_main(LV_PALETTE_RED);
+        lv_draw_line(draw_ctx, &red_dsc, &p1, &p2);
+      }
+    }
   }
 
   if (current_pressure_arc)
@@ -782,6 +810,9 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   bool heater = MQTT_GetHeaterState();
   bool steam = MQTT_GetSteamState();
   bool ota = MQTT_GetOtaState();
+
+  set_temp_val = set;
+  heater_on = heater;
 
   enum
   {
