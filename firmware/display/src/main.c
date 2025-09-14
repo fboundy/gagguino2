@@ -12,6 +12,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <string.h>
+#include <stdbool.h>
 #include "esp_rom_sys.h"
 
 static int log_vprintf(const char *fmt, va_list args)
@@ -40,6 +41,15 @@ static int log_vprintf(const char *fmt, va_list args)
 #include "LVGL_UI.h"
 #include "Wireless.h"
 #include "Battery.h"
+
+// Track user interaction and heater state to control LCD backlight.
+// g_last_touch_tick is updated by the touch driver whenever the screen is
+// touched.  heat_off_tick records the time when the heater was last seen off.
+volatile TickType_t g_last_touch_tick = 0;
+static TickType_t heat_off_tick = 0;
+static bool lcd_backlight_off = false;
+
+#define LCD_IDLE_TIMEOUT pdMS_TO_TICKS(30000)
 
 /**
  * @brief Initialize peripheral drivers and start background tasks.
@@ -82,11 +92,40 @@ void app_main(void)
     // lv_demo_stress();
     // lv_demo_music();
 
+    // Initialize timers
+    g_last_touch_tick = xTaskGetTickCount();
+
     while (1) {
-        // Raise task priority or reduce handler period to improve performance
         // Run lv_timer_handler every 250 ms
         vTaskDelay(pdMS_TO_TICKS(250));
-        // Task running lv_timer_handler should have lower priority than that running `lv_tick_inc`
         lv_timer_handler();
+
+        TickType_t now = xTaskGetTickCount();
+        bool heater_on = MQTT_GetHeaterState();
+
+        if (!heater_on) {
+            if (heat_off_tick == 0) {
+                heat_off_tick = now;
+            }
+        } else {
+            heat_off_tick = 0; // reset if heater active
+        }
+
+        if (!lcd_backlight_off) {
+            if ((heat_off_tick && (now - heat_off_tick) >= LCD_IDLE_TIMEOUT) ||
+                ((now - g_last_touch_tick) >= LCD_IDLE_TIMEOUT)) {
+                Set_Backlight(0);
+                lcd_backlight_off = true;
+            }
+        } else {
+            if (heater_on || (now - g_last_touch_tick) < LCD_IDLE_TIMEOUT) {
+                Set_Backlight(LCD_Backlight);
+                lcd_backlight_off = false;
+                if (!heater_on) {
+                    // Reset heater timer so display stays on briefly after touch
+                    heat_off_tick = now;
+                }
+            }
+        }
     }
 }

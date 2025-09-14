@@ -1,4 +1,10 @@
 #include "LVGL_Driver.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+// Timestamp (in RTOS ticks) of the most recent touch event.  Defined in
+// main.c and updated here whenever the user interacts with the screen.
+extern volatile TickType_t g_last_touch_tick;
 
 static const char *LVGL_TAG = "LVGL";   
 lv_disp_draw_buf_t disp_buf; // contains internal graphic buffer(s) called draw buffer(s)
@@ -55,6 +61,9 @@ void example_touchpad_read( lv_indev_drv_t * drv, lv_indev_data_t * data )
         data->point.x = touchpad_x[0];
         data->point.y = touchpad_y[0];
         data->state = LV_INDEV_STATE_PR;
+        // Record the time of the touch so the main application can wake the
+        // LCD backlight if it was previously turned off due to inactivity.
+        g_last_touch_tick = xTaskGetTickCount();
         ESP_LOGI(LVGL_TAG, "X=%u Y=%u", data->point.x, data->point.y);
     } else {
         data->state = LV_INDEV_STATE_REL;
