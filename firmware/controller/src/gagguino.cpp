@@ -737,18 +737,6 @@ static void IRAM_ATTR zcInt() {
     lastZcTime = now;
     zcCount++;
 }
-
-// RBDdimmer uses the same ZC pin and installs its own ISR.
-// To avoid conflicting attachInterrupt() calls, we provide a hook that the
-// library can call from its ISR to let us track zero-cross events.
-extern "C" void IRAM_ATTR user_zc_hook() {
-    int64_t now = esp_timer_get_time();
-    if (now - lastZcTime >= 6000) {
-        lastZcTime = now;
-        zcCount++;
-    }
-}
-
 // ---------- HA Discovery helpers ----------
 /**
  * @brief Build stable device identifiers from the MAC address.
@@ -1346,6 +1334,9 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         steamDispFlag = hv;
         steamResetPending = false;
         steamFlag = steamDispFlag || steamHwFlag;
+        // Update active setpoint to match current mode and reflect it via MQTT
+        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
+        publishNum(t_settemp_state, setTemp, 1, true);
         publishBool(t_steam_state, steamFlag, true);
         LOG("HA: Steam -> %s", steamFlag ? "ON" : "OFF");
     }
@@ -1366,10 +1357,11 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         LOG("HA: OTA -> %s", otaActive ? "ON" : "OFF");
     }
     if (changed) {
-        if (!steamFlag) setTemp = brewSetpoint;  // if brewing, apply immediately
-        // reflect new values
+        // Update the active set temperature and mirror all setpoints
+        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
         publishNum(t_brewset_state, brewSetpoint, 1, true);
         publishNum(t_steamset_state, steamSetpoint, 1, true);
+        publishNum(t_settemp_state, setTemp, 1, true);
     }
 }
 
@@ -1600,6 +1592,17 @@ static void ensureMqtt() {
                   WiFi.gatewayIP().toString().c_str());
 }
 }  // namespace
+
+// RBDdimmer uses the same ZC pin and installs its own ISR. To avoid
+// conflicting attachInterrupt() calls, provide a global hook that the library
+// can invoke from its ISR so we still record zero-cross events.
+extern "C" void IRAM_ATTR user_zc_hook() {
+    int64_t now = esp_timer_get_time();
+    if (now - lastZcTime >= 6000) {
+        lastZcTime = now;
+        zcCount++;
+    }
+}
 
 namespace gag {
 

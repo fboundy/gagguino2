@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "version.h"
+#include "Battery.h"
 
 /* Fallback symbol definitions for environments where newer LVGL symbols are
  * not provided. These values correspond to Font Awesome code points and allow
@@ -49,6 +50,7 @@ static void heater_event_cb(lv_event_t *e);
 static void steam_event_cb(lv_event_t *e);
 static void ota_event_cb(lv_event_t *e);
 static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols);
+static void align_settings_controls(void);
 static void add_version_label(lv_obj_t *parent);
 static void shot_def_dd_event_cb(lv_event_t *e);
 static void shot_duration_slider_event_cb(lv_event_t *e);
@@ -86,6 +88,7 @@ static lv_coord_t tab_h_global;
 static lv_obj_t *current_temp_arc;
 static lv_obj_t *set_temp_arc;
 static lv_obj_t *current_pressure_arc;
+static lv_obj_t *tick_layer;
 static lv_obj_t *temp_label;
 static lv_obj_t *pressure_label;
 static lv_obj_t *temp_icon;
@@ -99,6 +102,7 @@ static lv_obj_t *pressure_units_label;
 static lv_obj_t *shot_time_units_label;
 static lv_obj_t *shot_volume_units_label;
 lv_obj_t *Backlight_slider;
+static bool s_syncing_backlight = false; /* guard to avoid event from programmatic update */
 static lv_obj_t *beep_on_shot_btn;
 static lv_obj_t *beep_on_shot_label;
 static lv_obj_t *shot_def_dd;
@@ -110,10 +114,15 @@ static lv_obj_t *shot_volume_slider;
 static lv_obj_t *shot_volume_value;
 static lv_obj_t *conn_label;
 static lv_obj_t *conn_status_label;
+static lv_obj_t *battery_bar;
+static lv_obj_t *battery_label;
 static int last_conn_type = -1;
 static int last_conn_status = -1;
+static int last_battery = -1;
 static lv_timer_t *buzzer_timer;
 static bool shot_target_reached;
+static float set_temp_val;
+static bool heater_on;
 
 void Lvgl_Example1(void)
 {
@@ -276,7 +285,7 @@ static void Settings_create(void)
   lv_obj_set_style_outline_color(Backlight_slider, lv_color_hex(0xD3D3D3),
                                  LV_PART_INDICATOR);
   lv_slider_set_range(Backlight_slider, 5, Backlight_MAX);
-  lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
+  lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_OFF);
   lv_obj_add_event_cb(Backlight_slider, Backlight_adjustment_event_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
   lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_START, 0, 1,
@@ -304,7 +313,6 @@ static void Settings_create(void)
                             LV_STATE_CHECKED);
   lv_obj_set_grid_cell(beep_on_shot_btn, LV_GRID_ALIGN_END, 1, 1,
                        LV_GRID_ALIGN_START, 5, 1);
-  lv_obj_set_style_translate_x(beep_on_shot_btn, LV_HOR_RES / 10, 0);
   lv_obj_add_event_cb(beep_on_shot_btn, beep_on_shot_btn_event_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
   lv_obj_t *beep_btn_label = lv_label_create(beep_on_shot_btn);
@@ -325,7 +333,6 @@ static void Settings_create(void)
   lv_obj_set_width(shot_def_dd, 120);
   lv_obj_set_grid_cell(shot_def_dd, LV_GRID_ALIGN_END, 1, 1,
                        LV_GRID_ALIGN_START, 3, 1);
-  lv_obj_set_style_translate_x(shot_def_dd, LV_HOR_RES / 10, 0);
   lv_obj_add_event_cb(shot_def_dd, shot_def_dd_event_cb, LV_EVENT_VALUE_CHANGED,
                       NULL);
 
@@ -343,7 +350,6 @@ static void Settings_create(void)
                       LV_EVENT_VALUE_CHANGED, NULL);
   lv_obj_set_grid_cell(shot_duration_slider, LV_GRID_ALIGN_END, 1, 1,
                        LV_GRID_ALIGN_START, 4, 1);
-  lv_obj_set_style_translate_x(shot_duration_slider, LV_HOR_RES / 10, 0);
   lv_obj_set_style_translate_y(shot_duration_slider, 20, 0);
 
   shot_duration_value = lv_label_create(settings_scr);
@@ -365,7 +371,6 @@ static void Settings_create(void)
                       LV_EVENT_VALUE_CHANGED, NULL);
   lv_obj_set_grid_cell(shot_volume_slider, LV_GRID_ALIGN_END, 1, 1,
                        LV_GRID_ALIGN_START, 4, 1);
-  lv_obj_set_style_translate_x(shot_volume_slider, LV_HOR_RES / 10, 0);
   lv_obj_set_style_translate_y(shot_volume_slider, 20, 0);
 
   shot_volume_value = lv_label_create(settings_scr);
@@ -429,6 +434,8 @@ static void Settings_create(void)
   lv_obj_set_grid_cell(ota_text, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_START, 1, 1);
 
   add_version_label(settings_scr);
+
+  align_settings_controls();
 }
 
 void Lvgl_Example1_close(void)
@@ -444,6 +451,7 @@ void Lvgl_Example1_close(void)
   current_temp_arc = NULL;
   set_temp_arc = NULL;
   current_pressure_arc = NULL;
+  tick_layer = NULL;
   temp_label = NULL;
   pressure_label = NULL;
   temp_icon = NULL;
@@ -470,6 +478,8 @@ void Lvgl_Example1_close(void)
   shot_volume_label = NULL;
   shot_volume_slider = NULL;
   shot_volume_value = NULL;
+  set_temp_val = 0.0f;
+  heater_on = false;
 
   lv_style_reset(&style_text_muted);
   lv_style_reset(&style_title);
@@ -556,7 +566,7 @@ static void Status_create(lv_obj_t *parent)
   lv_arc_set_value(current_pressure_arc, 50);
 
   /* Ticks above arcs */
-  lv_obj_t *tick_layer = lv_obj_create(parent);
+  tick_layer = lv_obj_create(parent);
   lv_obj_set_size(tick_layer, LV_PCT(100), LV_PCT(100));
   lv_obj_set_style_bg_opa(tick_layer, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(tick_layer, 0, 0);
@@ -691,6 +701,23 @@ static void Status_create(lv_obj_t *parent)
 
   add_version_label(parent);
 
+  /* Battery percentage bar above version text */
+  battery_bar = lv_bar_create(parent);
+  /* Make it shorter and thicker */
+  lv_obj_set_size(battery_bar, lv_obj_get_width(parent) / 3, 18);
+  lv_obj_align(battery_bar, LV_ALIGN_BOTTOM_MID, 0, -20);
+  lv_bar_set_range(battery_bar, 0, 100);
+  int batt_init = Battery_GetPercentage();
+  lv_bar_set_value(battery_bar, batt_init, LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(battery_bar, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_style_bg_color(battery_bar, lv_palette_main(LV_PALETTE_GREEN), LV_PART_INDICATOR);
+
+  /* Add centered percentage label on the bar */
+  battery_label = lv_label_create(battery_bar);
+  lv_label_set_text_fmt(battery_label, "%d%%", batt_init);
+  lv_obj_set_style_text_color(battery_label, lv_color_white(), 0);
+  lv_obj_center(battery_label);
+
   /* Timer to drive UI updates */
   auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
 }
@@ -741,6 +768,30 @@ static void draw_ticks_cb(lv_event_t *e)
       lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
       lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
     }
+
+    if (heater_on)
+    {
+      float v = set_temp_val;
+      if (!isnan(v))
+      {
+        if (v < TEMP_ARC_MIN)
+          v = TEMP_ARC_MIN;
+        else if (v > TEMP_ARC_MAX)
+          v = TEMP_ARC_MAX;
+        float angle = TEMP_ARC_START + (v - TEMP_ARC_MIN) *
+                                        TEMP_ARC_SIZE /
+                                        (float)(TEMP_ARC_MAX - TEMP_ARC_MIN);
+        float rad = angle * 3.14159265f / 180.0f;
+        lv_coord_t len = 20;
+        lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
+                         cy + (lv_coord_t)((radius - len) * sinf(rad))};
+        lv_point_t p2 = {cx + (lv_coord_t)(radius * cosf(rad)),
+                         cy + (lv_coord_t)(radius * sinf(rad))};
+        lv_draw_line_dsc_t red_dsc = line_dsc;
+        red_dsc.color = lv_palette_main(LV_PALETTE_RED);
+        lv_draw_line(draw_ctx, &red_dsc, &p1, &p2);
+      }
+    }
   }
 
   if (current_pressure_arc)
@@ -782,6 +833,13 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   bool heater = MQTT_GetHeaterState();
   bool steam = MQTT_GetSteamState();
   bool ota = MQTT_GetOtaState();
+  char buf[32];
+
+  set_temp_val = set;
+  heater_on = heater;
+
+  if (tick_layer)
+    lv_obj_invalidate(tick_layer);
 
   enum
   {
@@ -844,6 +902,24 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     last_conn_status = status;
   }
 
+  int batt = Battery_GetPercentage();
+  if (battery_bar && batt != last_battery)
+  {
+    lv_bar_set_value(battery_bar, batt, LV_ANIM_OFF);
+    lv_color_t col = lv_palette_main(LV_PALETTE_GREEN);
+    if (batt < 20)
+      col = lv_palette_main(LV_PALETTE_RED);
+    else if (batt < 50)
+      col = lv_palette_main(LV_PALETTE_YELLOW);
+    lv_obj_set_style_bg_color(battery_bar, col, LV_PART_INDICATOR);
+    if (battery_label)
+    {
+      lv_label_set_text_fmt(battery_label, "%d%%", batt);
+      lv_obj_center(battery_label);
+    }
+    last_battery = batt;
+  }
+
   if (isnan(current_p) || current_p < 0.0f)
     current_p = 0.0f;
 
@@ -883,7 +959,6 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   }
 
   /* value labels ONLY (no units appended!) */
-  char buf[32];
   if (temp_label)
   {
     snprintf(buf, sizeof buf, "%.1f", current);
@@ -989,10 +1064,21 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     }
   }
 
-  /* backlight */
+  /* backlight
+   * Keep the slider UI in sync, but avoid forcing the backlight every cycle.
+   * The main loop handles idle dim/off; Set_Backlight should only be called
+   * from the slider event handler when the user changes the value.
+   */
   if (Backlight_slider)
-    lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
-  LVGL_Backlight_adjustment(LCD_Backlight);
+  {
+    int v = lv_slider_get_value(Backlight_slider);
+    if (v != LCD_Backlight)
+    {
+      s_syncing_backlight = true;
+      lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_OFF);
+      s_syncing_backlight = false;
+    }
+  }
 
   /* buttons */
   lv_color_t off = lv_palette_main(LV_PALETTE_GREY);
@@ -1009,6 +1095,8 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
 
 void Backlight_adjustment_event_cb(lv_event_t *e)
 {
+  if (s_syncing_backlight)
+    return; // ignore programmatic updates
   uint8_t Backlight = lv_slider_get_value(lv_event_get_target(e));
   if (Backlight <= Backlight_MAX)
   {
@@ -1146,4 +1234,43 @@ static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols)
   lv_obj_set_style_pad_row(ctrl_container, 5, 0);
   lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100); /* ~70% */
   return ctrl_container;
+}
+
+static void align_settings_controls(void)
+{
+  if (!ota_btn || !settings_scr)
+    return;
+
+  /* Ensure layout is calculated so coordinates are valid */
+  lv_obj_update_layout(settings_scr);
+
+  lv_area_t ota_coords;
+  lv_obj_get_coords(ota_btn, &ota_coords);
+  lv_coord_t ota_right = ota_coords.x2;
+
+  lv_area_t coords;
+
+  if (shot_def_dd)
+  {
+    lv_obj_get_coords(shot_def_dd, &coords);
+    lv_obj_set_style_translate_x(shot_def_dd, ota_right - coords.x2, 0);
+  }
+
+  if (shot_duration_slider)
+  {
+    lv_obj_get_coords(shot_duration_slider, &coords);
+    lv_obj_set_style_translate_x(shot_duration_slider, ota_right - coords.x2, 0);
+  }
+
+  if (shot_volume_slider)
+  {
+    lv_obj_get_coords(shot_volume_slider, &coords);
+    lv_obj_set_style_translate_x(shot_volume_slider, ota_right - coords.x2, 0);
+  }
+
+  if (beep_on_shot_btn)
+  {
+    lv_obj_get_coords(beep_on_shot_btn, &coords);
+    lv_obj_set_style_translate_x(beep_on_shot_btn, ota_right - coords.x2, 0);
+  }
 }
