@@ -68,6 +68,8 @@ static bool example_adc_calibration_init(adc_unit_t unit, adc_channel_t channel,
 static const char *BAT_TAG = "Battery";
 static int64_t last_batt_sample_us = 0;
 static float smoothed_pct = -1.0f; /* EWMA over ~30s */
+static int64_t last_adc_read_us = 0; /* rate-limit actual ADC reads */
+static int cached_pct = -1;          /* last returned percentage */
 
 void Battery_Init(void)
 {
@@ -100,6 +102,15 @@ static inline int raw_to_percent(int raw)
 
 int Battery_GetPercentage(void)
 {
+    int64_t now_us = esp_timer_get_time();
+
+    /* Rate-limit ADC sampling to at most once every 5 seconds */
+    bool should_sample = (last_adc_read_us == 0) || ((now_us - last_adc_read_us) >= 5000000);
+    if (!should_sample && cached_pct >= 0)
+    {
+        return cached_pct;
+    }
+
     int raw = 0;
     adc_oneshot_read(adc_handle, BAT_ADC_CHANNEL, &raw);
 
@@ -120,12 +131,13 @@ int Battery_GetPercentage(void)
 
     /* Time-based exponential smoothing with 30s time constant */
     const float tau_us = 30.0f * 1000.0f * 1000.0f; /* 30 seconds */
-    int64_t now_us = esp_timer_get_time();
     if (last_batt_sample_us == 0 || smoothed_pct < 0.0f)
     {
         smoothed_pct = (float)pct_now;
         last_batt_sample_us = now_us;
-        return pct_now;
+        cached_pct = pct_now;
+        last_adc_read_us = now_us;
+        return cached_pct;
     }
 
     int64_t dt_us = now_us - last_batt_sample_us;
@@ -134,7 +146,7 @@ int Battery_GetPercentage(void)
     float alpha = (float)dt_us / (tau_us + (float)dt_us);
     smoothed_pct += alpha * ((float)pct_now - smoothed_pct);
     last_batt_sample_us = now_us;
-
-    int pct_out = (int)(smoothed_pct + 0.5f); /* round to nearest */
-    return pct_out;
+    cached_pct = (int)(smoothed_pct + 0.5f); /* round to nearest */
+    last_adc_read_us = now_us;
+    return cached_pct;
 }

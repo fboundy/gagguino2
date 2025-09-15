@@ -102,6 +102,7 @@ static lv_obj_t *pressure_units_label;
 static lv_obj_t *shot_time_units_label;
 static lv_obj_t *shot_volume_units_label;
 lv_obj_t *Backlight_slider;
+static bool s_syncing_backlight = false; /* guard to avoid event from programmatic update */
 static lv_obj_t *beep_on_shot_btn;
 static lv_obj_t *beep_on_shot_label;
 static lv_obj_t *shot_def_dd;
@@ -284,7 +285,7 @@ static void Settings_create(void)
   lv_obj_set_style_outline_color(Backlight_slider, lv_color_hex(0xD3D3D3),
                                  LV_PART_INDICATOR);
   lv_slider_set_range(Backlight_slider, 5, Backlight_MAX);
-  lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
+  lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_OFF);
   lv_obj_add_event_cb(Backlight_slider, Backlight_adjustment_event_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
   lv_obj_set_grid_cell(Backlight_slider, LV_GRID_ALIGN_START, 0, 1,
@@ -1063,10 +1064,21 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     }
   }
 
-  /* backlight */
+  /* backlight
+   * Keep the slider UI in sync, but avoid forcing the backlight every cycle.
+   * The main loop handles idle dim/off; Set_Backlight should only be called
+   * from the slider event handler when the user changes the value.
+   */
   if (Backlight_slider)
-    lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_ON);
-  LVGL_Backlight_adjustment(LCD_Backlight);
+  {
+    int v = lv_slider_get_value(Backlight_slider);
+    if (v != LCD_Backlight)
+    {
+      s_syncing_backlight = true;
+      lv_slider_set_value(Backlight_slider, LCD_Backlight, LV_ANIM_OFF);
+      s_syncing_backlight = false;
+    }
+  }
 
   /* buttons */
   lv_color_t off = lv_palette_main(LV_PALETTE_GREY);
@@ -1083,6 +1095,8 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
 
 void Backlight_adjustment_event_cb(lv_event_t *e)
 {
+  if (s_syncing_backlight)
+    return; // ignore programmatic updates
   uint8_t Backlight = lv_slider_get_value(lv_event_get_target(e));
   if (Backlight <= Backlight_MAX)
   {
