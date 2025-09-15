@@ -1659,6 +1659,9 @@ void setup() {
     // double the pulse resolution.  CHANGE triggers the ISR on any
     // transition and `PULSE_MIN` guards against spurious bounce.
     attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
+#ifndef USE_PUMP_DIMMER
+    attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
+#endif
 
     pulseCount = 0;
     startTime = millis();
