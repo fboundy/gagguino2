@@ -25,6 +25,9 @@
 #define PRESSURE_ARC_MAX 120
 #define PRESSURE_ARC_TICK 10
 
+#define IDLE_TIMEOUT 120000
+#define SLEEP_TIMEOUT 600000
+
 void Backlight_adjustment_event_cb(lv_event_t *e);
 
 void Lvgl_Example1(void);

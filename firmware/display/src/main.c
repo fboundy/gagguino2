@@ -51,18 +51,18 @@ static bool lcd_backlight_off = false;
 static bool touch_sleeping = false;
 static TickType_t backlight_off_tick = 0;
 
-#define LCD_IDLE_TIMEOUT        pdMS_TO_TICKS(30000)   /* 30s to turn off backlight */
-#define LCD_DEEP_SLEEP_TIMEOUT  pdMS_TO_TICKS(300000)  /* 5min to sleep touch */
+#define LCD_IDLE_TIMEOUT pdMS_TO_TICKS(IDLE_TIMEOUT)        /* 30s to turn off backlight */
+#define LCD_DEEP_SLEEP_TIMEOUT pdMS_TO_TICKS(SLEEP_TIMEOUT) /* 5min to sleep touch */
 
 /**
  * @brief Initialize peripheral drivers and start background tasks.
  */
 void Driver_Init(void)
 {
-    Flash_Searching();   // Detect storage devices
-    I2C_Init();          // Initialize I2C bus for sensors
-    EXIO_Init();         // Example: initialize external IO expander
-    Battery_Init();      // Setup battery monitoring
+    Flash_Searching(); // Detect storage devices
+    I2C_Init();        // Initialize I2C bus for sensors
+    EXIO_Init();       // Example: initialize external IO expander
+    Battery_Init();    // Setup battery monitoring
 }
 
 /**
@@ -78,14 +78,14 @@ void app_main(void)
     ESP_LOGI("BOOT", "Delaying %d ms to let serial start", boot_delay_ms);
     vTaskDelay(pdMS_TO_TICKS(boot_delay_ms));
 
-    Wireless_Init();  // Configure Wi-Fi/BLE modules
-    Driver_Init();    // Initialize hardware drivers
+    Wireless_Init(); // Configure Wi-Fi/BLE modules
+    Driver_Init();   // Initialize hardware drivers
 
-    LCD_Init();      // Prepare LCD display
-    Touch_Init();    // Initialize touch controller
-    SD_Init();       // Mount SD card
-    LVGL_Init();     // Initialize graphics library
-/********************* Demo *********************/
+    LCD_Init();   // Prepare LCD display
+    Touch_Init(); // Initialize touch controller
+    SD_Init();    // Mount SD card
+    LVGL_Init();  // Initialize graphics library
+                  /********************* Demo *********************/
     Lvgl_Example1();
 
     // Alternative demos:
@@ -98,7 +98,8 @@ void app_main(void)
     // Initialize timers
     g_last_touch_tick = xTaskGetTickCount();
 
-    while (1) {
+    while (1)
+    {
         // Run lv_timer_handler every 250 ms
         vTaskDelay(pdMS_TO_TICKS(250));
         lv_timer_handler();
@@ -107,39 +108,51 @@ void app_main(void)
         bool heater_on = MQTT_GetHeaterState();
 
         // Update heater-off timer
-        if (!heater_on) {
-            if (heat_off_tick == 0) {
+        if (!heater_on)
+        {
+            if (heat_off_tick == 0)
+            {
                 heat_off_tick = now;
             }
-        } else {
+        }
+        else
+        {
             heat_off_tick = 0; // reset if heater active
         }
 
         // If heater is ON, keep backlight ON regardless of touch inactivity
-        if (!heater_on) {
+        if (!heater_on)
+        {
             // Heater is OFF: allow idle timeout based on last touch
-            if (!lcd_backlight_off && (now - g_last_touch_tick) >= LCD_IDLE_TIMEOUT) {
+            if (!lcd_backlight_off && (now - g_last_touch_tick) >= LCD_IDLE_TIMEOUT)
+            {
                 Set_Backlight(0);
                 lcd_backlight_off = true;
                 backlight_off_tick = now;
             }
         }
 
-        if (lcd_backlight_off) {
+        if (lcd_backlight_off)
+        {
             // Conditions to wake the display
-            if (heater_on || (now - g_last_touch_tick) < LCD_IDLE_TIMEOUT) {
-                if (touch_sleeping) {
+            if (heater_on || (now - g_last_touch_tick) < LCD_IDLE_TIMEOUT)
+            {
+                if (touch_sleeping)
+                {
                     // Wake touch controller before lighting the screen
                     esp_lcd_touch_exit_sleep(tp);
                     touch_sleeping = false;
                 }
                 Set_Backlight(LCD_Backlight);
                 lcd_backlight_off = false;
-                if (!heater_on) {
+                if (!heater_on)
+                {
                     // Reset heater timer so display stays on briefly after touch
                     heat_off_tick = now;
                 }
-            } else if (!touch_sleeping && (now - backlight_off_tick) >= LCD_DEEP_SLEEP_TIMEOUT) {
+            }
+            else if (!touch_sleeping && (now - backlight_off_tick) >= LCD_DEEP_SLEEP_TIMEOUT)
+            {
                 // After 5 minutes of inactivity, put touch controller to sleep
                 esp_lcd_touch_enter_sleep(tp);
                 touch_sleeping = true;
