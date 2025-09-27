@@ -223,13 +223,14 @@ unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, last
 // microsecond timestamps for ISR debounce
 volatile int64_t lastPulseTime = 0;
 unsigned long shotStart = 0, startTime = 0;
-float shotTime = 0;  //
+float shotTime = 0;                   //
 unsigned long shotAccumulatedMs = 0;  //!< total pump‑active time of completed segments
-unsigned long shotTimeMs = 0;        //!< current shot time including active segment
-bool pumpPrevActive = false;         //!< tracks pump activity transitions
+unsigned long shotTimeMs = 0;         //!< current shot time including active segment
+bool pumpPrevActive = false;          //!< tracks pump activity transitions
 
 // Flow / flags
 volatile unsigned long pulseCount = 0;
+volatile unsigned long shotPulseStart = 0;
 volatile unsigned long zcCount = 0;
 volatile int64_t lastZcTime = 0;  // microsecond timestamp
 float vol = 0, preFlowVol = 0, shotVol = 0;
@@ -550,23 +551,21 @@ static void checkShotStartStop() {
         shotAccumulatedMs = 0;
         pumpPrevActive = true;
         shotFlag = true;
-        pulseCount = 0;
+        // pulseCount = 0;
+        shotPulseStart = pulseCount;
         preFlow = true;
         preFlowVol = 0;
     }
     unsigned long lastZcTimeMs = lastZcTime / 1000;
-    if ((steamFlag && !prevSteamFlag) ||
-        (currentTime - lastZcTimeMs >= SHOT_RESET && shotFlag && currentTime > lastZcTimeMs)) {
-        pulseCount = 0;
-        lastVol = 0;
-        shotVol = 0;
-        shotTime = 0;
-        shotTimeMs = 0;
-        shotAccumulatedMs = 0;
-        pumpPrevActive = false;
-        lastPulseTime = esp_timer_get_time();
+    if (steamFlag && !prevSteamFlag) {
         shotFlag = false;
         preFlow = false;
+    }
+    if (currentTime - lastZcTimeMs >= SHOT_RESET && shotFlag && currentTime > lastZcTimeMs) {
+        zcCount = 0;
+        shotFlag = false;
+        preFlow = false;
+        pumpPrevActive = false;
     }
 }
 
@@ -673,9 +672,11 @@ static void updateSteamFlag() {
  * @brief Track pre‑infusion phase and capture volume up to threshold pressure.
  */
 static void updatePreFlow() {
-    if (preFlow && lastPress > PRESS_THRESHOLD) {
-        preFlow = false;
+    if (preFlow) {
         preFlowVol = vol;
+        if (lastPress > PRESS_THRESHOLD) {
+            preFlow = false;
+        }
     }
 }
 
@@ -683,7 +684,7 @@ static void updatePreFlow() {
  * @brief Convert pulse counts to volumes and maintain shot volume.
  */
 static void updateVols() {
-    vol = pulseCount * FLOW_CAL;
+    vol = (pulseCount - shotPulseStart) * FLOW_CAL;
     lastVol = vol;
     shotVol = (preFlow || !shotFlag) ? 0.0f : (vol - preFlowVol);
 }
@@ -796,8 +797,8 @@ static void buildTopics() {
     snprintf(t_steamset_state, sizeof(t_steamset_state), "%s/%s/steam_setpoint/state", STATE_BASE,
              uid_suffix);
     // snprintf(t_pump_cmd, sizeof(t_pump_cmd), "%s/%s/pump_power/set", STATE_BASE, uid_suffix);
-    // snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE, uid_suffix);
-    // PID numbers
+    // snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE,
+    // uid_suffix); PID numbers
     snprintf(t_pidp_cmd, sizeof(t_pidp_cmd), "%s/%s/pid_p/set", STATE_BASE, uid_suffix);
     snprintf(t_pidp_state, sizeof(t_pidp_state), "%s/%s/pid_p/state", STATE_BASE, uid_suffix);
     snprintf(t_pidi_cmd, sizeof(t_pidi_cmd), "%s/%s/pid_i/set", STATE_BASE, uid_suffix);
