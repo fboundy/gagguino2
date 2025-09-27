@@ -1604,6 +1604,15 @@ extern "C" void IRAM_ATTR user_zc_hook() {
     }
 }
 
+#ifdef USE_PUMP_DIMMER
+extern void IRAM_ATTR isr_ext();
+// Chain the dimmer ISR so we still count pump zero-crossing events.
+static void IRAM_ATTR pumpZcIsr() {
+    isr_ext();
+    user_zc_hook();
+}
+#endif
+
 namespace gag {
 
 /**
@@ -1629,7 +1638,9 @@ void setup() {
     pinMode(ZC_PIN, INPUT);
     pinMode(AC_SENS, INPUT_PULLUP);
     pinMode(PUMP_PIN, OUTPUT);
-    // pumpDimmer.begin(NORMAL_MODE, OFF);
+#ifdef USE_PUMP_DIMMER
+    pumpDimmer.begin(NORMAL_MODE, OFF);
+#endif
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
     // applyPumpPower();
@@ -1659,7 +1670,9 @@ void setup() {
     // double the pulse resolution.  CHANGE triggers the ISR on any
     // transition and `PULSE_MIN` guards against spurious bounce.
     attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
-#ifndef USE_PUMP_DIMMER
+#ifdef USE_PUMP_DIMMER
+    attachInterrupt(digitalPinToInterrupt(ZC_PIN), pumpZcIsr, RISING);
+#else
     attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
 #endif
 
