@@ -113,10 +113,10 @@ constexpr float STEAM_DEFAULT = 152.0f;
 constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 // Default PID params (overridable via MQTT number entities)
 // Default PID parameters tuned for stability
-// Kp: 15–16 [out/°C]
-// Ki: 0.3–0.5 [out/(°C·s)] → start at 0.35
-// Kd: 50–70 [out·s/°C] → start at 60
-// guard: ±8–±12% integral clamp on 0–100% heater
+// Kp: 15-16 [out/degC]
+// Ki: 0.3-0.5 [out/(degC*s)] start at 0.35
+// Kd: 50-70 [out*s/degC] start at 60
+// guard: ~8-~12% integral clamp on 0-100% heater
 constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
                 WINDUP_GUARD_TEMP = 10.0f;
 // Derivative filter time constant (seconds), exposed to HA
@@ -237,6 +237,7 @@ static FlowRateTracker flowRateEspTracker;
 // Flow / flags
 volatile unsigned long pulseCount = 0;
 volatile unsigned long zcCount = 0;
+volatile unsigned long lastZcCount = 0;
 volatile int64_t lastZcTime = 0;  // microsecond timestamp
 int vol = 0, preFlowVol = 0, shotVol = 0;
 bool prevSteamFlag = false, ac = false;
@@ -244,9 +245,14 @@ int acCount = 0;
 bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
      steamHwFlag = false, steamResetPending = false, setupComplete = false, debugData = false;
 
+bool pumpPressureMode = false;
+float pumpPressureTargetBar = 0.0f;
+float pumpPressureIntegral = 0.0f;
+unsigned long lastPumpPressureMs = 0;
+
 // OTA
 static bool otaInitialized = false;
-static bool otaActive = false;      // minimize other work while OTA is in progress
+static bool otaActive = false;  // minimize other work while OTA is in progress
 static bool otaWindowEnabled = false;
 static unsigned long otaStart = 0;  // millis when OTA was enabled
 
@@ -275,8 +281,9 @@ char uid_suffix[16] = {0};
 char t_vol_state[96], t_shotvol_state[96], t_flowrate_state[96], t_settemp_state[96],
     t_curtemp_state[96], t_press_state[96], t_shottime_state[96], t_ota_state[96],
     t_ota_switch_state[96], t_pump_power_sensor_state[96], t_brewtemp_state[96],
-    t_steamtemp_state[96], t_espnow_state[96], t_espnow_chan_state[96],
-    t_espnow_mac_state[96], t_espnow_last_state[96], t_espnow_cmd[96];
+    t_steamtemp_state[96], t_pump_mode_state[96], t_pump_mode_cmd[96], t_pressset_state[96],
+    t_pressset_cmd[96], t_espnow_state[96], t_espnow_chan_state[96], t_espnow_mac_state[96],
+    t_espnow_last_state[96], t_espnow_cmd[96];
 // OTA command topic
 char t_ota_cmd[96];
 // Switch state/command topics
@@ -300,7 +307,7 @@ char t_piddtau_state[96], t_piddtau_cmd[96];
 // Config topics
 char c_vol[128], c_shotvol[128], c_flowrate[128], c_settemp[128], c_curtemp[128], c_press[128],
     c_shottime[128], c_ota[128], c_pump_power_sensor[128], c_brewtemp[128], c_steamtemp[128],
-    c_espnow[128], c_espnow_chan[128];
+    c_pump_mode[128], c_pressset_number[128], c_espnow[128], c_espnow_chan[128];
 char c_accnt[128], c_zccnt[128], c_pulsecnt[128];
 char c_pidp_number[128], c_pidi_number[128], c_pidd_number[128], c_pidg_number[128];
 char c_shot[128], c_preflow[128], c_steam[128];
@@ -393,7 +400,7 @@ static void resolveBrokerIfNeeded() {
 // ---------- OTA ----------
 // Forward declaration for MQTT publish helper used in OTA callbacks
 static void publishStr(const char* topic, const String& v, bool retain = true);
-static void publishBool(const char* topic, bool on, bool retain = true);
+static void publishBool(const char* topic, bool on, bool retain);
 /**
  * @brief Initialize ArduinoOTA once Wi‑Fi is connected.
  *
@@ -505,7 +512,7 @@ static void ensureOta() {
  * @param dTau Derivative low-pass filter time constant (seconds)
  * @return Control output (unclamped)
  */
-// Continuous-time gains: Kp [out/°C], Ki [out/(°C·s)], Kd [out·s/°C]
+// Continuous-time gains: Kp [out/degC], Ki [out/(degC*s)], Kd [out*s/degC]
 
 // ──────────────────────────────────────────────────────────────────────────────
 //  PID: dt-scaled I & D, iTerm clamp, derivative LPF, conditional integration
@@ -702,8 +709,8 @@ static float updateFlowRateTracker(FlowRateTracker& tracker, unsigned long pulse
     unsigned long elapsedMs = nowMs - tracker.lastSampleMs;
     unsigned long deltaPulses = pulsesNow - tracker.lastPulseCount;
     if (deltaPulses > 0 && elapsedMs >= windowMs) {
-        tracker.value = static_cast<float>(deltaPulses) * FLOW_CAL /
-                        (static_cast<float>(elapsedMs) / 1000.0f);
+        tracker.value =
+            static_cast<float>(deltaPulses) * FLOW_CAL / (static_cast<float>(elapsedMs) / 1000.0f);
         tracker.lastSampleMs = nowMs;
         tracker.lastPulseCount = pulsesNow;
     } else if (deltaPulses == 0 && elapsedMs >= idleTimeoutMs) {
@@ -713,7 +720,6 @@ static float updateFlowRateTracker(FlowRateTracker& tracker, unsigned long pulse
     }
     return tracker.value;
 }
-
 
 /**
  * @brief Convert pulse counts to volumes and maintain shot volume.
@@ -729,6 +735,43 @@ static void updateVols() {
                           FLOW_RATE_MQTT_WINDOW_MS * 2);
     updateFlowRateTracker(flowRateEspTracker, pulses, currentTime, FLOW_RATE_ESP_WINDOW_MS,
                           FLOW_RATE_ESP_WINDOW_MS * 2);
+}
+
+static void updatePumpPressureControl() {
+    if (!pumpPressureMode) return;
+
+    unsigned long nowMs = currentTime;
+    if (lastPumpPressureMs == 0) lastPumpPressureMs = nowMs;
+    float dt = (nowMs - lastPumpPressureMs) / 1000.0f;
+    if (dt <= 0.0f) dt = 0.001f;
+    if (dt > 0.5f) {
+        dt = 0.5f;
+        pumpPressureIntegral = 0.0f;
+    }
+    lastPumpPressureMs = nowMs;
+
+    float targetBar = pumpPressureTargetBar;
+    if (targetBar < 0.0f) targetBar = 0.0f;
+    if (targetBar > 10.0f) targetBar = 10.0f;
+
+    float error = targetBar - lastPress;
+    const float kp = 6.0f;
+    const float ki = 1.5f;
+    pumpPressureIntegral += error * dt;
+    if (pumpPressureIntegral > 10.0f) pumpPressureIntegral = 10.0f;
+    if (pumpPressureIntegral < -10.0f) pumpPressureIntegral = -10.0f;
+
+    const float minPower = 50.0f;
+    const float maxPower = 95.0f;
+    float feedForward = minPower + (maxPower - minPower) * (targetBar / 10.0f);
+    float mappedPower = feedForward + kp * error + ki * pumpPressureIntegral;
+    if (mappedPower < minPower) mappedPower = minPower;
+    if (mappedPower > maxPower) mappedPower = maxPower;
+
+    if (fabsf(mappedPower - pumpPower) > 0.5f) {
+        pumpPower = mappedPower;
+        applyPumpPower();
+    }
 }
 
 // ISRs
@@ -798,10 +841,20 @@ static void buildTopics() {
     snprintf(t_ota_cmd, sizeof(t_ota_cmd), "%s/%s/ota/enable", STATE_BASE, uid_suffix);
     snprintf(t_ota_switch_state, sizeof(t_ota_switch_state), "%s/%s/ota/enable/state", STATE_BASE,
              uid_suffix);
-    snprintf(t_pump_power_sensor_state, sizeof(t_pump_power_sensor_state), "%s/%s/pump_power_sensor/state",
+    snprintf(t_pump_power_sensor_state, sizeof(t_pump_power_sensor_state),
+             "%s/%s/pump_power_sensor/state", STATE_BASE, uid_suffix);
+    snprintf(t_brewtemp_state, sizeof(t_brewtemp_state), "%s/%s/brew_temp/state", STATE_BASE,
+             uid_suffix);
+    snprintf(t_steamtemp_state, sizeof(t_steamtemp_state), "%s/%s/steam_temp/state", STATE_BASE,
+             uid_suffix);
+    snprintf(t_pump_mode_state, sizeof(t_pump_mode_state), "%s/%s/pump_mode/state", STATE_BASE,
+             uid_suffix);
+    snprintf(t_pump_mode_cmd, sizeof(t_pump_mode_cmd), "%s/%s/pump_mode/set", STATE_BASE,
+             uid_suffix);
+    snprintf(t_pressset_state, sizeof(t_pressset_state), "%s/%s/pressure_setpoint/state",
              STATE_BASE, uid_suffix);
-    snprintf(t_brewtemp_state, sizeof(t_brewtemp_state), "%s/%s/brew_temp/state", STATE_BASE, uid_suffix);
-    snprintf(t_steamtemp_state, sizeof(t_steamtemp_state), "%s/%s/steam_temp/state", STATE_BASE, uid_suffix);
+    snprintf(t_pressset_cmd, sizeof(t_pressset_cmd), "%s/%s/pressure_setpoint/set", STATE_BASE,
+             uid_suffix);
     snprintf(t_espnow_state, sizeof(t_espnow_state), "%s/%s/espnow/status", STATE_BASE, uid_suffix);
     snprintf(t_espnow_chan_state, sizeof(t_espnow_chan_state), "%s/%s/espnow/channel", STATE_BASE,
              uid_suffix);
@@ -863,12 +916,16 @@ static void buildTopics() {
     snprintf(c_shottime, sizeof(c_shottime), "%s/sensor/%s_shot_time/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_ota, sizeof(c_ota), "%s/sensor/%s_ota_status/config", DISCOVERY_PREFIX, dev_id);
-    snprintf(c_pump_power_sensor, sizeof(c_pump_power_sensor), "%s/sensor/%s_pump_power_sensor/config",
-             DISCOVERY_PREFIX, dev_id);
+    snprintf(c_pump_power_sensor, sizeof(c_pump_power_sensor),
+             "%s/sensor/%s_pump_power_sensor/config", DISCOVERY_PREFIX, dev_id);
     snprintf(c_brewtemp, sizeof(c_brewtemp), "%s/sensor/%s_brew_temp/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_steamtemp, sizeof(c_steamtemp), "%s/sensor/%s_steam_temp/config", DISCOVERY_PREFIX,
              dev_id);
+    snprintf(c_pump_mode, sizeof(c_pump_mode), "%s/switch/%s_pump_mode/config", DISCOVERY_PREFIX,
+             dev_id);
+    snprintf(c_pressset_number, sizeof(c_pressset_number), "%s/number/%s_pressure_setpoint/config",
+             DISCOVERY_PREFIX, dev_id);
     snprintf(c_espnow, sizeof(c_espnow), "%s/sensor/%s_espnow_status/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_espnow_chan, sizeof(c_espnow_chan), "%s/sensor/%s_espnow_channel/config",
@@ -957,18 +1014,18 @@ static void publishDiscovery() {
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
-    publishRetained(c_flowrate,
-                    String("{\"name\":\"Flow Rate\",\"uniq_id\":\"") + dev_id +
-                        "_flow_rate\",\"stat_t\":\"" + t_flowrate_state +
-                        "\",\"dev_cla\":\"volume_flow_rate\",\"unit_of_meas\":\"mL/s\",\"stat_cla\":"
-                        "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
-                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                        "}");
+    publishRetained(
+        c_flowrate,
+        String("{\"name\":\"Flow Rate\",\"uniq_id\":\"") + dev_id + "_flow_rate\",\"stat_t\":\"" +
+            t_flowrate_state +
+            "\",\"dev_cla\":\"volume_flow_rate\",\"unit_of_meas\":\"mL/s\",\"stat_cla\":"
+            "\"measurement\",\"avty_t\":\"" +
+            String(MQTT_STATUS) +
+            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
     publishRetained(c_settemp,
                     String("{\"name\":\"Set Temperature\",\"uniq_id\":\"") + dev_id +
                         "_set_temp\",\"stat_t\":\"" + t_settemp_state +
-                        "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"°C\",\"stat_cla\":"
+                        "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"\u00B0C\",\"stat_cla\":"
                         "\"measurement\",\"avty_t\":\"" +
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
@@ -976,7 +1033,7 @@ static void publishDiscovery() {
     publishRetained(c_curtemp,
                     String("{\"name\":\"Current Temperature\",\"uniq_id\":\"") + dev_id +
                         "_current_temp\",\"stat_t\":\"" + t_curtemp_state +
-                        "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"°C\",\"stat_cla\":"
+                        "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"\u00B0C\",\"stat_cla\":"
                         "\"measurement\",\"avty_t\":\"" +
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
@@ -989,33 +1046,35 @@ static void publishDiscovery() {
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
-    publishRetained(
-        c_pump_power_sensor,
-        String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id +
-            "_pump_power_sensor\",\"stat_t\":\"" + t_pump_power_sensor_state +
-            "\",\"dev_cla\":\"power\",\"unit_of_meas\":\"%\",\"stat_cla\":\"measurement\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-    publishRetained(
-        c_brewtemp,
-        String("{\"name\":\"Brew Temp\",\"uniq_id\":\"") + dev_id +
-            "_brew_temp\",\"stat_t\":\"" + t_brewtemp_state +
-            "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"�C\",\"stat_cla\":\"measurement\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-    publishRetained(
-        c_steamtemp,
-        String("{\"name\":\"Steam Temp\",\"uniq_id\":\"") + dev_id +
-            "_steam_temp\",\"stat_t\":\"" + t_steamtemp_state +
-            "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"�C\",\"stat_cla\":\"measurement\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+    publishRetained(c_pump_power_sensor,
+                    String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id +
+                        "_pump_power_sensor\",\"stat_t\":\"" + t_pump_power_sensor_state +
+                        "\",\"dev_cla\":\"power\",\"unit_of_meas\":\"%\",\"stat_cla\":"
+                        "\"measurement\",\"avty_t\":\"" +
+                        String(MQTT_STATUS) +
+                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
+                        "}");
+    publishRetained(c_brewtemp,
+                    String("{\"name\":\"Brew Temp\",\"uniq_id\":\"") + dev_id +
+                        "_brew_temp\",\"stat_t\":\"" + t_brewtemp_state +
+                        "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"\u00B0C\",\"stat_cla\":"
+                        "\"measurement\",\"avty_t\":\"" +
+                        String(MQTT_STATUS) +
+                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
+                        "}");
+    publishRetained(c_steamtemp,
+                    String("{\"name\":\"Steam Temp\",\"uniq_id\":\"") + dev_id +
+                        "_steam_temp\",\"stat_t\":\"" + t_steamtemp_state +
+                        "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"\u00B0C\",\"stat_cla\":"
+                        "\"measurement\",\"avty_t\":\"" +
+                        String(MQTT_STATUS) +
+                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
+                        "}");
     publishRetained(c_shottime,
                     String("{\"name\":\"Shot Time\",\"uniq_id\":\"") + dev_id +
                         "_shot_time\",\"stat_t\":\"" + t_shottime_state +
-                        "\",\"dev_cla\":\"duration\",\"unit_of_meas\":\"s\",\"stat_cla\":"
-                        "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
+                        "\",\"dev_cla\":\"duration\",\"unit_of_meas\":\"s\",\"stat_cla\":\"" +
+                        "\"measurement\",\"avty_t\":\"" + String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
 
@@ -1088,9 +1147,8 @@ static void publishDiscovery() {
     // --- switch: OTA enable ---
     publishRetained(
         c_ota_switch,
-        String("{\"name\":\"OTA Enable\",\"uniq_id\":\"") + dev_id +
-            "_ota_enable\",\"cmd_t\":\"" + t_ota_cmd + "\",\"stat_t\":\"" +
-            t_ota_switch_state +
+        String("{\"name\":\"OTA Enable\",\"uniq_id\":\"") + dev_id + "_ota_enable\",\"cmd_t\":\"" +
+            t_ota_cmd + "\",\"stat_t\":\"" + t_ota_switch_state +
             "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"entity_category\":\"config\",\"avty_t\":\"" +
             String(MQTT_STATUS) +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
@@ -1102,13 +1160,20 @@ static void publishDiscovery() {
             t_heater_cmd + "\",\"stat_t\":\"" + t_heater_state +
             "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + String(MQTT_STATUS) +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+    publishRetained(
+        c_pump_mode,
+        String("{\"name\":\"Pump Pressure Mode\",\"uniq_id\":\"") + dev_id +
+            "_pump_mode\",\"cmd_t\":\"" + t_pump_mode_cmd + "\",\"stat_t\":\"" + t_pump_mode_state +
+            "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + String(MQTT_STATUS) +
+            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
     // --- numbers (controllable) ---
     publishRetained(
         c_brewset_number,
         String("{\"name\":\"Brew Setpoint\",\"uniq_id\":\"") + dev_id +
             "_brew_setpoint\",\"cmd_t\":\"" + t_brewset_cmd + "\",\"stat_t\":\"" + t_brewset_state +
-            "\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"min\":90,\"max\":99,\"step\":"
+            "\",\"unit_of_meas\":\"\u00B0C\",\"dev_cla\":\"temperature\",\"min\":90,\"max\":99,"
+            "\"step\":"
             "1,\"mode\":\"auto\",\"avty_t\":\"" +
             String(MQTT_STATUS) +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
@@ -1117,7 +1182,7 @@ static void publishDiscovery() {
                     String("{\"name\":\"Steam Setpoint\",\"uniq_id\":\"") + dev_id +
                         "_steam_setpoint\",\"cmd_t\":\"" + t_steamset_cmd + "\",\"stat_t\":\"" +
                         t_steamset_state +
-                        "\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"min\":145,"
+                        "\",\"unit_of_meas\":\"\u00B0C\",\"dev_cla\":\"temperature\",\"min\":145,"
                         "\"max\":155,\"step\":1,\"mode\":\"auto\",\"avty_t\":\"" +
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
@@ -1130,6 +1195,15 @@ static void publishDiscovery() {
             "t\":\"" +
             String(MQTT_STATUS) +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+    publishRetained(c_pressset_number,
+                    String("{\"name\":\"Pressure Setpoint\",\"uniq_id\":\"") + dev_id +
+                        "_pressure_setpoint\",\"cmd_t\":\"" + t_pressset_cmd + "\",\"stat_t\":\"" +
+                        t_pressset_state +
+                        "\",\"unit_of_meas\":\"bar\",\"min\":0,\"max\":10,\"step\":0.5,\"mode\":"
+                        "\"auto\",\"avty_t\":\"" +
+                        String(MQTT_STATUS) +
+                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
+                        "}");
 
     // --- number: PID D Tau (seconds) ---
     publishRetained(c_piddtau_number, String("{\"name\":\"PID D Tau\",\"uniq_id\":\"") + dev_id +
@@ -1217,6 +1291,8 @@ static void publishBool(const char* topic, bool on, bool retain) {
 static void publishNumberStatesSnapshot() {
     // NOTE: Config/number states are published on connect and on change only.
     publishNum(t_pump_state, pumpPower, 0, true);
+    publishNum(t_pressset_state, pumpPressureTargetBar, 1, true);
+    publishBool(t_pump_mode_state, pumpPressureMode, true);
 }
 
 // Helper: immediately disable the heater output and prevent PID updates
@@ -1232,20 +1308,22 @@ static void forceHeaterOff() {
  * @brief Publish periodic telemetry and mirrored setpoint values.
  */
 static void publishStates() {
-    float flowRateMqtt = updateFlowRateTracker(flowRateMqttTracker, pulseCount, currentTime,
-                                               FLOW_RATE_MQTT_WINDOW_MS,
-                                               FLOW_RATE_MQTT_WINDOW_MS * 2);
+    float flowRateMqtt =
+        updateFlowRateTracker(flowRateMqttTracker, pulseCount, currentTime,
+                              FLOW_RATE_MQTT_WINDOW_MS, FLOW_RATE_MQTT_WINDOW_MS * 2);
     // measurements
-    publishNum(t_vol_state, vol, 0);            // mL
-    publishNum(t_shotvol_state, shotVol, 0);    // mL
+    publishNum(t_vol_state, vol, 0);                              // mL
+    publishNum(t_shotvol_state, shotVol, 0);                      // mL
     publishNum(t_flowrate_state, flowRateMqtt, 2, false, 0.05f);  // mL/s
-    publishNum(t_settemp_state, setTemp, 1);    // active target
+    publishNum(t_settemp_state, setTemp, 1);                      // active target
     publishNum(t_curtemp_state, currentTemp, 1);
     publishNum(t_press_state, lastPress, 1);
     publishNum(t_shottime_state, shotTime, 1);  // seconds
     publishNum(t_pump_power_sensor_state, pumpPower, 0);
     publishNum(t_brewtemp_state, brewSetpoint, 1);
     publishNum(t_steamtemp_state, steamSetpoint, 1);
+    publishBool(t_pump_mode_state, pumpPressureMode, true);
+    publishNum(t_pressset_state, pumpPressureTargetBar, 1, true);
     // switch states (retained so HA keeps last state)
     publishBool(t_heater_state, heaterEnabled, true);
     publishBool(t_ota_switch_state, otaWindowEnabled, true);
@@ -1261,9 +1339,9 @@ static void publishStates() {
     publishStr(t_espnow_last_state, espnow_last_buf, true);
 
     // flags
-    publishBool(t_shot_state, shotFlag);
-    publishBool(t_preflow_state, preFlow);
-    publishBool(t_steam_state, steamFlag);
+    publishBool(t_shot_state, shotFlag, true);
+    publishBool(t_preflow_state, preFlow, true);
+    publishBool(t_steam_state, steamFlag, true);
 
     // number entity states (retained so HA persists)
     publishNum(t_brewset_state, brewSetpoint, 1, true);
@@ -1282,7 +1360,7 @@ static void sendEspNowPacket() {
     pkt.shotFlag = shotFlag ? 1 : 0;
     pkt.steamFlag = steamFlag ? 1 : 0;
     pkt.heaterSwitch = heaterEnabled ? 1 : 0;
-    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(currentTime - shotStart) : 0;
+    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(shotTime * 1000.0f) : 0;
     pkt.shotVolumeMl = static_cast<float>(shotVol);
     pkt.setTempC = setTemp;
     pkt.currentTempC = currentTemp;
@@ -1373,16 +1451,46 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
     bool changed = false;
     if (parse_clamped(t_brewset_cmd, BREW_MIN, BREW_MAX, brewSetpoint)) {
         changed = true;
-        LOG("HA: Brew setpoint -> %.1f °C", brewSetpoint);
+        LOG("HA: Brew setpoint -> %.1f degC", brewSetpoint);
     }
     if (parse_clamped(t_steamset_cmd, STEAM_MIN_C, STEAM_MAX_C, steamSetpoint)) {
         changed = true;
-        LOG("HA: Steam setpoint -> %.1f °C", steamSetpoint);
+        LOG("HA: Steam setpoint -> %.1f degC", steamSetpoint);
     }
-    if (parse_clamped(t_pump_cmd, 0.0f, 100.0f, pumpPower)) {
-        applyPumpPower();
+    float newPumpPower;
+    if (parse_clamped(t_pump_cmd, 0.0f, 100.0f, newPumpPower)) {
+        if (!pumpPressureMode) {
+            pumpPower = newPumpPower;
+            applyPumpPower();
+            publishNum(t_pump_state, pumpPower, 0, true);
+            LOG("HA: Pump power -> %.0f%%", pumpPower);
+        } else {
+            LOG("HA: Pump power ignored (pressure mode active)");
+            publishNum(t_pump_state, pumpPower, 0, true);
+        }
+    }
+    if (parse_clamped(t_pressset_cmd, 0.0f, 10.0f, pumpPressureTargetBar)) {
+        publishNum(t_pressset_state, pumpPressureTargetBar, 1, true);
+        LOG("HA: Pressure setpoint -> %.1f bar", pumpPressureTargetBar);
+        if (pumpPressureMode) {
+            pumpPressureIntegral = 0.0f;
+            updatePumpPressureControl();
+            publishNum(t_pump_state, pumpPower, 0, true);
+        }
+    }
+    bool pumpModeHv;
+    if (parse_onoff(t_pump_mode_cmd, pumpModeHv)) {
+        pumpPressureMode = pumpModeHv;
+        publishBool(t_pump_mode_state, pumpPressureMode, true);
+        LOG("HA: Pump pressure mode -> %s", pumpPressureMode ? "ON" : "OFF");
+        if (pumpPressureMode) {
+            lastPumpPressureMs = currentTime;
+            pumpPressureIntegral = 0.0f;
+            updatePumpPressureControl();
+        } else {
+            pumpPressureIntegral = 0.0f;
+        }
         publishNum(t_pump_state, pumpPower, 0, true);
-        LOG("HA: Pump power -> %.0f%%", pumpPower);
     }
     // PID params
     float tmp;
@@ -1643,6 +1751,8 @@ static void ensureMqtt() {
             mqttClient.subscribe(t_brewset_cmd);
             mqttClient.subscribe(t_steamset_cmd);
             mqttClient.subscribe(t_pump_cmd);
+            mqttClient.subscribe(t_pump_mode_cmd);
+            mqttClient.subscribe(t_pressset_cmd);
             // PID control subscriptions
             mqttClient.subscribe(t_pidp_cmd);
             mqttClient.subscribe(t_pidi_cmd);
@@ -1806,12 +1916,14 @@ void loop() {
         updatePreFlow();
         updateVols();
         updateSteamFlag();
+        updatePumpPressureControl();
     }
 
     // Update shot time continuously while shot is active (seconds)
-    if (shotFlag) {
+    if (shotFlag && (zcCount > lastZcCount)) {
         shotTime = (currentTime - shotStart) / 1000.0f;
     }
+    lastZcCount = zcCount;
 
     ensureWifi();
     ensureMqtt();
@@ -1833,9 +1945,9 @@ void loop() {
 
     if (debugPrint && (currentTime - lastLogTime) > LOG_CYCLE) {
         if (!otaActive) {
-            float logFlow = updateFlowRateTracker(flowRateLogTracker, pulseCount, currentTime,
-                                                  FLOW_RATE_LOG_WINDOW_MS,
-                                                  FLOW_RATE_LOG_WINDOW_MS * 2);
+            float logFlow =
+                updateFlowRateTracker(flowRateLogTracker, pulseCount, currentTime,
+                                      FLOW_RATE_LOG_WINDOW_MS, FLOW_RATE_LOG_WINDOW_MS * 2);
             LOG("Pressure: Raw=%d, Now=%0.2f Last=%0.2f", rawPress, pressNow, lastPress);
             LOG("Temp: Set=%0.1f, Current=%0.2f", setTemp, currentTemp);
             LOG("Heat: Power=%0.1f, Cycles=%d", heatPower, heatCycles);
