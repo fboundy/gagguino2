@@ -24,6 +24,7 @@
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 #include <PubSubClient.h>
+#include <RBDdimmer.h>
 #include <WiFi.h>
 #include <ctype.h>
 #include <esp_now.h>
@@ -37,17 +38,11 @@
 #include <cstdarg>
 #include <map>
 
-// Optional: triac dimmer (ESP32 AC pump control). Disabled by default to avoid
-// bringing in ESP-IDF intr headers that emit deprecation warnings. Define
-// USE_PUMP_DIMMER in build flags to enable.
-#ifdef USE_PUMP_DIMMER
-#include <RBDdimmer.h>
-#endif
-
 #include "espnow_packet.h"
 #include "mqtt_topics.h"  // GAG_TOPIC_ROOT
 #include "secrets.h"      // WIFI_*, MQTT_*
-#include "version.h"
+
+#define VERSION "7.0"
 #define STARTUP_WAIT 1000
 #define SERIAL_BAUD 115200
 
@@ -97,10 +92,9 @@ constexpr uint8_t ESPNOW_CMD_HEATER_OFF = 0xA0;
 constexpr uint8_t ESPNOW_CMD_STEAM_ON = 0xB1;
 constexpr uint8_t ESPNOW_CMD_STEAM_OFF = 0xB0;
 
-constexpr unsigned long IDLE_CYCLE = 5000;        // ms between publishes when idle (reduced chatter)
-constexpr unsigned long SHOT_CYCLE = 1000;        // ms between publishes during a shot
-constexpr unsigned long OTA_WAIT_TIMEOUT_MS = 120000;  // ms OTA wait window after enabling
-constexpr unsigned long OTA_BOOT_GRACE_MS = 10000;      // ms after boot considered "startup"
+constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when idle (reduced chatter)
+constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
+constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
 
 // Brew & Steam setpoint limits
 constexpr float BREW_MIN = 90.0f, BREW_MAX = 99.0f;
@@ -121,10 +115,8 @@ constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
 // Derivative filter time constant (seconds), exposed to HA
 constexpr float D_TAU_TEMP = 0.8f;
 
-// Pump dimmer instance (enabled only if USE_PUMP_DIMMER is set)
-#ifdef USE_PUMP_DIMMER
+// Pump dimmer instance
 dimmerLamp pumpDimmer(PUMP_PIN, ZC_PIN);
-#endif
 
 // Pressure calibration constants
 constexpr float PRESSURE_TOL = 1.0f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
@@ -136,8 +128,7 @@ constexpr float FLOW_CAL = 0.246f;
 constexpr unsigned long PULSE_MIN = 3;  // ms debounce (bounce + double-edges)
 
 constexpr unsigned ZC_MIN = 4;
-// Duration thresholds for zero‑cross (pump) activity
-constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 60000;
+constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 30000;
 constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
 
@@ -219,23 +210,19 @@ float pressBuff[PRESS_BUFF_SIZE] = {0};
 uint8_t pressBuffIdx = 0;
 
 // Time/shot
-unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, lastMqttTime = 0,
-              lastEspNowTime = 0, lastLogTime = 0;
+unsigned long nLoop = 0, currentTime = 0, lastVolTime = 0, lastPidTime = 0, lastPwmTime = 0,
+              lastMqttTime = 0, lastEspNowTime = 0, lastLogTime = 0;
 // microsecond timestamps for ISR debounce
 volatile int64_t lastPulseTime = 0;
 unsigned long shotStart = 0, startTime = 0;
-float shotTime = 0;                   //
-unsigned long shotAccumulatedMs = 0;  //!< total pump‑active time of completed segments
-unsigned long shotTimeMs = 0;         //!< current shot time including active segment
-bool pumpPrevActive = false;          //!< tracks pump activity transitions
+float shotTime = 0;  //
 
 // Flow / flags
 volatile unsigned long pulseCount = 0;
-volatile unsigned long shotPulseStart = 0;
 volatile unsigned long zcCount = 0;
 volatile int64_t lastZcTime = 0;  // microsecond timestamp
-float vol = 0, preFlowVol = 0, shotVol = 0;
-float lastVol = 0;
+int vol = 0, preFlowVol = 0, shotVol = 0, flowRate = 0;
+unsigned int lastVol = 0;
 bool prevSteamFlag = false, ac = false;
 int acCount = 0;
 bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
@@ -243,11 +230,8 @@ bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false
 
 // OTA
 static bool otaInitialized = false;
-static bool otaActive = false;       // OTA window requested/armed
-static bool otaInProgress = false;   // OTA transfer currently running
-static bool otaStartupMode = true;   // true until startup grace period lapses or OTA completes
-static unsigned long otaStart = 0;   // millis when OTA was enabled
-static unsigned long otaBootStart = 0;
+static bool otaActive = false;      // minimize other work while OTA is in progress
+static unsigned long otaStart = 0;  // millis when OTA was enabled
 
 // MQTT diagnostics
 static IPAddress g_mqttIp;
@@ -271,9 +255,10 @@ char dev_id[32] = {0};
 char uid_suffix[16] = {0};
 
 // Sensor state topics
-char t_shotvol_state[96], t_settemp_state[96], t_curtemp_state[96], t_press_state[96],
-    t_shottime_state[96], t_ota_state[96], t_espnow_state[96], t_espnow_chan_state[96],
-    t_espnow_mac_state[96], t_espnow_last_state[96], t_espnow_cmd[96];
+char t_vol_state[96], t_shotvol_state[96], t_flowrate_state[96], t_settemp_state[96],
+    t_curtemp_state[96], t_press_state[96], t_shottime_state[96], t_ota_state[96],
+    t_espnow_state[96], t_espnow_chan_state[96], t_espnow_mac_state[96], t_espnow_last_state[96],
+    t_espnow_cmd[96];
 // OTA command topic
 char t_ota_cmd[96];
 // Switch state/command topics
@@ -295,8 +280,8 @@ char t_pidg_state[96], t_pidg_cmd[96];
 char t_piddtau_state[96], t_piddtau_cmd[96];
 
 // Config topics
-char c_shotvol[128], c_settemp[128], c_curtemp[128], c_press[128], c_shottime[128], c_ota[128],
-    c_ota_switch[128], c_espnow[128], c_espnow_chan[128];
+char c_vol[128], c_shotvol[128], c_flowrate[128], c_settemp[128], c_curtemp[128], c_press[128],
+    c_shottime[128], c_ota[128], c_espnow[128], c_espnow_chan[128];
 char c_accnt[128], c_zccnt[128], c_pulsecnt[128];
 char c_pidp_number[128], c_pidi_number[128], c_pidd_number[128], c_pidg_number[128];
 char c_shot[128], c_preflow[128], c_steam[128];
@@ -389,7 +374,6 @@ static void resolveBrokerIfNeeded() {
 // ---------- OTA ----------
 // Forward declaration for MQTT publish helper used in OTA callbacks
 static void publishStr(const char* topic, const String& v, bool retain = true);
-static void publishBool(const char* topic, bool on, bool retain = true);
 /**
  * @brief Initialize ArduinoOTA once Wi‑Fi is connected.
  *
@@ -399,42 +383,12 @@ static void publishBool(const char* topic, bool on, bool retain = true);
  *   OTA authentication is enforced.
  * - During OTA, the heater output is disabled and main work throttled.
  */
-static void startOtaWindow(const char* reason) {
-    unsigned long now = millis();
-    otaStart = now;
-    if (!otaActive) {
-        otaActive = true;
-        otaInProgress = false;
-        heatPower = 0.0f;
-        heatCycles = PWM_CYCLE;
-        digitalWrite(HEAT_PIN, LOW);
-        heaterState = false;
-        publishBool(t_ota_state, true, true);
-    }
-    if (reason) LOG("OTA: %s", reason);
-}
-
-static void stopOtaWindow(const char* reason) {
-    bool wasActive = otaActive || otaInProgress;
-    otaActive = false;
-    otaInProgress = false;
-    otaStart = 0;
-    publishBool(t_ota_state, false, true);
-    if (reason && wasActive) {
-        LOG("OTA: %s", reason);
-    }
-    if (otaStartupMode) otaStartupMode = false;
-}
-
 static void ensureOta() {
-    unsigned long now = millis();
-    if (otaActive && !otaInProgress && otaStart && (now - otaStart >= OTA_WAIT_TIMEOUT_MS)) {
-        stopOtaWindow("window expired");
-    }
-
-    if (otaStartupMode && otaBootStart && (now - otaBootStart >= OTA_BOOT_GRACE_MS) && !otaActive &&
-        !otaInProgress) {
-        otaStartupMode = false;
+    if (otaActive && otaStart && (millis() - otaStart >= OTA_ENABLE_MS)) {
+        otaActive = false;
+        otaStart = 0;
+        publishStr(t_ota_state, "idle", true);
+        LOG("OTA: window expired");
     }
 
     if (otaInitialized || WiFi.status() != WL_CONNECTED) return;
@@ -454,16 +408,18 @@ static void ensureOta() {
 
     ArduinoOTA.onStart([]() {
         LOG("OTA: Start (%s)", ArduinoOTA.getCommand() == U_FLASH ? "flash" : "fs");
-        if (!otaActive) {
-            startOtaWindow("start requested externally");
-        } else {
-            // Refresh timer to avoid timing out during long preparation stages
-            otaStart = millis();
-        }
-        otaInProgress = true;
+        otaActive = true;  // signal loop to reduce load and suppress MQTT publishing
+        otaStart = millis();
+        publishStr(t_ota_state, "active", true);
+        // Turn off heater to reduce power/noise during OTA
+        digitalWrite(HEAT_PIN, LOW);
+        heaterState = false;
     });
     ArduinoOTA.onEnd([]() {
-        stopOtaWindow("completed");
+        LOG("OTA: End");
+        otaActive = false;
+        otaStart = 0;
+        publishStr(t_ota_state, "idle", true);
         // (Optional) re-attach interrupts if you detached them on start
         // attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
         // attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
@@ -497,7 +453,9 @@ static void ensureOta() {
                 break;
         }
         LOG_ERROR("OTA: Error %d (%s)", (int)error, msg);
-        stopOtaWindow("error");
+        otaActive = false;
+        otaStart = 0;
+        publishStr(t_ota_state, "error", true);
     });
 
     ArduinoOTA.begin();
@@ -577,25 +535,21 @@ static void checkShotStartStop() {
         ((currentTime - startTime) > ZC_WAIT)) {
         shotStart = currentTime;
         shotTime = 0;
-        shotTimeMs = 0;
-        shotAccumulatedMs = 0;
-        pumpPrevActive = true;
         shotFlag = true;
-        // pulseCount = 0;
-        shotPulseStart = pulseCount;
+        pulseCount = 0;
         preFlow = true;
         preFlowVol = 0;
     }
     unsigned long lastZcTimeMs = lastZcTime / 1000;
-    if (steamFlag && !prevSteamFlag) {
+    if ((steamFlag && !prevSteamFlag) ||
+        (currentTime - lastZcTimeMs >= SHOT_RESET && shotFlag && currentTime > lastZcTimeMs)) {
+        pulseCount = 0;
+        lastVol = 0;
+        shotVol = 0;
+        shotTime = 0;
+        lastPulseTime = esp_timer_get_time();
         shotFlag = false;
         preFlow = false;
-    }
-    if (currentTime - lastZcTimeMs >= SHOT_RESET && shotFlag && currentTime > lastZcTimeMs) {
-        zcCount = 0;
-        shotFlag = false;
-        preFlow = false;
-        pumpPrevActive = false;
     }
 }
 
@@ -652,20 +606,10 @@ static void updateTempPWM() {
 /**
  * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
  */
-#ifdef USE_PUMP_DIMMER
 static void applyPumpPower() {
-    float clamped = pumpPower;
-    if (clamped < 0.0f) clamped = 0.0f;
-    if (clamped > 100.0f) clamped = 100.0f;
-    int level = (int)roundf(clamped);
-    if (level >= 100) level = 99;
-    bool enabled = level > 0;
-    pumpDimmer.setState(enabled ? ON : OFF);
-    pumpDimmer.setPower(enabled ? level : 0);
+    pumpDimmer.setPower((int)pumpPower);
+    pumpDimmer.setState(pumpPower > 0.0f ? ON : OFF);
 }
-#else
-static void applyPumpPower() {}
-#endif
 
 /**
  * @brief Sample pressure ADC and maintain a moving average buffer.
@@ -712,11 +656,9 @@ static void updateSteamFlag() {
  * @brief Track pre‑infusion phase and capture volume up to threshold pressure.
  */
 static void updatePreFlow() {
-    if (preFlow) {
+    if (preFlow && lastPress > PRESS_THRESHOLD) {
+        preFlow = false;
         preFlowVol = vol;
-        if (lastPress > PRESS_THRESHOLD) {
-            preFlow = false;
-        }
     }
 }
 
@@ -724,33 +666,14 @@ static void updatePreFlow() {
  * @brief Convert pulse counts to volumes and maintain shot volume.
  */
 static void updateVols() {
-    vol = (pulseCount - shotPulseStart) * FLOW_CAL;
-    lastVol = vol;
-    shotVol = (preFlow || !shotFlag) ? 0.0f : (vol - preFlowVol);
-}
-
-/**
- * @brief Update shot timer, pausing when pump zero‑crosses cease.
- */
-static void updateShotTime() {
-    if (!shotFlag) return;
-
-    unsigned long lastZcTimeMs = lastZcTime / 1000;
-    bool pumpActive = (currentTime - lastZcTimeMs) <= ZC_OFF;
-
-    if (pumpActive) {
-        if (!pumpPrevActive) {
-            shotStart = currentTime;
-            pumpPrevActive = true;
-        }
-        shotTimeMs = currentTime - shotStart;
-    } else {
-        if (pumpPrevActive) {
-            pumpPrevActive = false;
-        }
+    vol = (int)(pulseCount * FLOW_CAL);
+    if (lastVolTime > 0) {
+        // flow rate in micro-litres / s
+        flowRate = (vol - lastVol) / (currentTime - lastVolTime) * 1000000;
     }
-
-    shotTime = shotTimeMs / 1000.0f;
+    lastVol = vol;
+    lastVolTime = currentTime;
+    shotVol = (preFlow || !shotFlag) ? 0 : (vol - preFlowVol);
 }
 
 // ISRs
@@ -776,6 +699,18 @@ static void IRAM_ATTR zcInt() {
     lastZcTime = now;
     zcCount++;
 }
+
+// RBDdimmer uses the same ZC pin and installs its own ISR.
+// To avoid conflicting attachInterrupt() calls, we provide a hook that the
+// library can call from its ISR to let us track zero-cross events.
+extern "C" void IRAM_ATTR user_zc_hook() {
+    int64_t now = esp_timer_get_time();
+    if (now - lastZcTime >= 6000) {
+        lastZcTime = now;
+        zcCount++;
+    }
+}
+
 // ---------- HA Discovery helpers ----------
 /**
  * @brief Build stable device identifiers from the MAC address.
@@ -792,7 +727,10 @@ static void makeIdsFromMac() {
  */
 static void buildTopics() {
     // sensor states
+    snprintf(t_vol_state, sizeof(t_vol_state), "%s/%s/volume/state", STATE_BASE, uid_suffix);
     snprintf(t_shotvol_state, sizeof(t_shotvol_state), "%s/%s/shot_volume/state", STATE_BASE,
+             uid_suffix);
+    snprintf(t_flowrate_state, sizeof(t_flowrate_state), "%s/%s/flow_rate/state", STATE_BASE,
              uid_suffix);
     snprintf(t_settemp_state, sizeof(t_settemp_state), "%s/%s/set_temp/state", STATE_BASE,
              uid_suffix);
@@ -834,13 +772,8 @@ static void buildTopics() {
              uid_suffix);
     snprintf(t_steamset_state, sizeof(t_steamset_state), "%s/%s/steam_setpoint/state", STATE_BASE,
              uid_suffix);
-#ifdef USE_PUMP_DIMMER
     snprintf(t_pump_cmd, sizeof(t_pump_cmd), "%s/%s/pump_power/set", STATE_BASE, uid_suffix);
     snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE, uid_suffix);
-#else
-    t_pump_cmd[0] = '\0';
-    t_pump_state[0] = '\0';
-#endif
     // PID numbers
     snprintf(t_pidp_cmd, sizeof(t_pidp_cmd), "%s/%s/pid_p/set", STATE_BASE, uid_suffix);
     snprintf(t_pidp_state, sizeof(t_pidp_state), "%s/%s/pid_p/state", STATE_BASE, uid_suffix);
@@ -856,7 +789,10 @@ static void buildTopics() {
              uid_suffix);
 
     // configs
+    snprintf(c_vol, sizeof(c_vol), "%s/sensor/%s_volume/config", DISCOVERY_PREFIX, dev_id);
     snprintf(c_shotvol, sizeof(c_shotvol), "%s/sensor/%s_shot_volume/config", DISCOVERY_PREFIX,
+             dev_id);
+    snprintf(c_flowrate, sizeof(c_flowrate), "%s/sensor/%s_flow_rate/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_settemp, sizeof(c_settemp), "%s/sensor/%s_set_temp/config", DISCOVERY_PREFIX,
              dev_id);
@@ -866,8 +802,6 @@ static void buildTopics() {
     snprintf(c_shottime, sizeof(c_shottime), "%s/sensor/%s_shot_time/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_ota, sizeof(c_ota), "%s/sensor/%s_ota_status/config", DISCOVERY_PREFIX, dev_id);
-    snprintf(c_ota_switch, sizeof(c_ota_switch), "%s/switch/%s_ota/config", DISCOVERY_PREFIX,
-             dev_id);
     snprintf(c_espnow, sizeof(c_espnow), "%s/sensor/%s_espnow_status/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_espnow_chan, sizeof(c_espnow_chan), "%s/sensor/%s_espnow_channel/config",
@@ -884,12 +818,8 @@ static void buildTopics() {
              DISCOVERY_PREFIX, dev_id);
     snprintf(c_steamset_number, sizeof(c_steamset_number), "%s/number/%s_steam_setpoint/config",
              DISCOVERY_PREFIX, dev_id);
-#ifdef USE_PUMP_DIMMER
     snprintf(c_pump_number, sizeof(c_pump_number), "%s/number/%s_pump_power/config",
              DISCOVERY_PREFIX, dev_id);
-#else
-    c_pump_number[0] = '\0';
-#endif
     // PID numbers
     snprintf(c_pidp_number, sizeof(c_pidp_number), "%s/number/%s_pid_p/config", DISCOVERY_PREFIX,
              dev_id);
@@ -937,9 +867,24 @@ static void publishDiscovery() {
     String dev = deviceJson();
 
     // --- sensors ---
+    publishRetained(
+        c_vol, String("{\"name\":\"Volume\",\"uniq_id\":\"") + dev_id +
+                   "_shot_volume\",\"stat_t\":\"" + t_vol_state +
+                   "\",\"dev_cla\":\"volume\",\"unit_of_meas\":\"mL\",\"stat_cla\":"
+                   "\"measurement\",\"avty_t\":\"" +
+                   String(MQTT_STATUS) +
+                   "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
     publishRetained(c_shotvol,
                     String("{\"name\":\"Shot Volume\",\"uniq_id\":\"") + dev_id +
                         "_shot_volume\",\"stat_t\":\"" + t_shotvol_state +
+                        "\",\"dev_cla\":\"volume\",\"unit_of_meas\":\"mL\",\"stat_cla\":"
+                        "\"measurement\",\"avty_t\":\"" +
+                        String(MQTT_STATUS) +
+                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
+                        "}");
+    publishRetained(c_flowrate,
+                    String("{\"name\":\"Flow Rate\",\"uniq_id\":\"") + dev_id +
+                        "_shot_volume\",\"stat_t\":\"" + t_flowrate_state +
                         "\",\"dev_cla\":\"volume\",\"unit_of_meas\":\"mL\",\"stat_cla\":"
                         "\"measurement\",\"avty_t\":\"" +
                         String(MQTT_STATUS) +
@@ -1052,14 +997,6 @@ static void publishDiscovery() {
             "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + String(MQTT_STATUS) +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
-    // --- switch: OTA window ---
-    publishRetained(
-        c_ota_switch,
-        String("{\"name\":\"OTA\",\"uniq_id\":\"") + dev_id + "_ota\",\"cmd_t\":\"" + t_ota_cmd +
-            "\",\"stat_t\":\"" + t_ota_state +
-            "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-
     // --- numbers (controllable) ---
     publishRetained(
         c_brewset_number,
@@ -1079,7 +1016,6 @@ static void publishDiscovery() {
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
-#ifdef USE_PUMP_DIMMER
     publishRetained(
         c_pump_number,
         String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id + "_pump_power\",\"cmd_t\":\"" +
@@ -1088,7 +1024,6 @@ static void publishDiscovery() {
             "t\":\"" +
             String(MQTT_STATUS) +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-#endif
 
     // --- number: PID D Tau (seconds) ---
     publishRetained(c_piddtau_number, String("{\"name\":\"PID D Tau\",\"uniq_id\":\"") + dev_id +
@@ -1165,7 +1100,7 @@ static void publishNum(const char* topic, float v, uint8_t decimals = 1, bool re
     dtostrf(v, 0, decimals, tmp);
     publishStr(topic, String(tmp), retain);
 }
-static void publishBool(const char* topic, bool on, bool retain) {
+static void publishBool(const char* topic, bool on, bool retain = true) {
     auto it = s_lastBool.find(topic);
     if (it != s_lastBool.end() && it->second == on) return;
     s_lastBool[String(topic)] = on;
@@ -1175,24 +1110,16 @@ static void publishBool(const char* topic, bool on, bool retain) {
 // Publish retained number/config states once (on connect) or on change.
 static void publishNumberStatesSnapshot() {
     // NOTE: Config/number states are published on connect and on change only.
-#ifdef USE_PUMP_DIMMER
     publishNum(t_pump_state, pumpPower, 0, true);
-#endif
 }
 
-// Helper: immediately disable the heater output and prevent PID updates.
-// Also disables steam unless hardware AC sense keeps it active.
+// Helper: immediately disable the heater output and prevent PID updates
 static void forceHeaterOff() {
     heaterEnabled = false;
     heatPower = 0.0f;
     heatCycles = PWM_CYCLE;
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
-    if (!steamHwFlag) {
-        steamDispFlag = false;
-        steamFlag = false;
-        publishBool(t_steam_state, steamFlag, true);
-    }
 }
 
 /**
@@ -1200,8 +1127,10 @@ static void forceHeaterOff() {
  */
 static void publishStates() {
     // measurements
-    publishNum(t_shotvol_state, shotVol, 1);  // mL
-    publishNum(t_settemp_state, setTemp, 1);  // active target
+    publishNum(t_vol_state, vol, 0);            // mL
+    publishNum(t_shotvol_state, shotVol, 0);    // mL
+    publishNum(t_flowrate_state, flowRate, 0);  // mL
+    publishNum(t_settemp_state, setTemp, 1);    // active target
     publishNum(t_curtemp_state, currentTemp, 1);
     publishNum(t_press_state, lastPress, 1);
     publishNum(t_shottime_state, shotTime, 1);  // seconds
@@ -1217,7 +1146,6 @@ static void publishStates() {
     char espnow_last_buf[24];
     snprintf(espnow_last_buf, sizeof(espnow_last_buf), "%lu", g_lastEspnowEpoch);
     publishStr(t_espnow_last_state, espnow_last_buf, true);
-    publishBool(t_ota_state, otaActive, true);
 
     // flags
     publishBool(t_shot_state, shotFlag);
@@ -1227,9 +1155,7 @@ static void publishStates() {
     // number entity states (retained so HA persists)
     publishNum(t_brewset_state, brewSetpoint, 1, true);
     publishNum(t_steamset_state, steamSetpoint, 1, true);
-#ifdef USE_PUMP_DIMMER
     publishNum(t_pump_state, pumpPower, 0, true);
-#endif
     // PID number states
     publishNum(t_pidp_state, pGainTemp, 2, true);
     publishNum(t_pidi_state, iGainTemp, 2, true);
@@ -1243,7 +1169,7 @@ static void sendEspNowPacket() {
     pkt.shotFlag = shotFlag ? 1 : 0;
     pkt.steamFlag = steamFlag ? 1 : 0;
     pkt.heaterSwitch = heaterEnabled ? 1 : 0;
-    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(shotTimeMs) : 0;
+    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(currentTime - shotStart) : 0;
     pkt.shotVolumeMl = static_cast<float>(shotVol);
     pkt.setTempC = setTemp;
     pkt.currentTempC = currentTemp;
@@ -1340,13 +1266,11 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         changed = true;
         LOG("HA: Steam setpoint -> %.1f °C", steamSetpoint);
     }
-#ifdef USE_PUMP_DIMMER
     if (parse_clamped(t_pump_cmd, 0.0f, 100.0f, pumpPower)) {
         applyPumpPower();
         publishNum(t_pump_state, pumpPower, 0, true);
         LOG("HA: Pump power -> %.0f%%", pumpPower);
     }
-#endif
     // PID params
     float tmp;
     if (parse_clamped(t_pidp_cmd, 0.0f, 200.0f, tmp)) {
@@ -1390,9 +1314,6 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         steamDispFlag = hv;
         steamResetPending = false;
         steamFlag = steamDispFlag || steamHwFlag;
-        // Update active setpoint to match current mode and reflect it via MQTT
-        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
-        publishNum(t_settemp_state, setTemp, 1, true);
         publishBool(t_steam_state, steamFlag, true);
         LOG("HA: Steam -> %s", steamFlag ? "ON" : "OFF");
     }
@@ -1406,27 +1327,17 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
             LOG("HA: MQTT enabled");
         }
     }
-    if (parse_onoff(t_ota_cmd, hv)) {
-        LOG("HA: OTA -> %s", hv ? "ON" : "OFF");
-        if (hv) {
-            startOtaWindow("window armed");
-            if (!otaStartupMode) {
-                LOG("OTA: rebooting to apply HA request");
-                delay(250);
-                mqttClient.loop();
-                delay(250);
-                ESP.restart();
-            }
-        } else {
-            stopOtaWindow("disabled via HA");
-        }
+    if (strcmp(topic, t_ota_cmd) == 0) {
+        otaActive = true;
+        otaStart = millis();
+        publishStr(t_ota_state, "enabled", true);
+        LOG("HA: OTA enabled for %lus", OTA_ENABLE_MS / 1000);
     }
     if (changed) {
-        // Update the active set temperature and mirror all setpoints
-        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
+        if (!steamFlag) setTemp = brewSetpoint;  // if brewing, apply immediately
+        // reflect new values
         publishNum(t_brewset_state, brewSetpoint, 1, true);
         publishNum(t_steamset_state, steamSetpoint, 1, true);
-        publishNum(t_settemp_state, setTemp, 1, true);
     }
 }
 
@@ -1607,9 +1518,7 @@ static void ensureMqtt() {
             publishDiscovery();
             mqttClient.subscribe(t_brewset_cmd);
             mqttClient.subscribe(t_steamset_cmd);
-#ifdef USE_PUMP_DIMMER
             mqttClient.subscribe(t_pump_cmd);
-#endif
             // PID control subscriptions
             mqttClient.subscribe(t_pidp_cmd);
             mqttClient.subscribe(t_pidi_cmd);
@@ -1660,26 +1569,6 @@ static void ensureMqtt() {
 }
 }  // namespace
 
-// RBDdimmer uses the same ZC pin and installs its own ISR. To avoid
-// conflicting attachInterrupt() calls, provide a global hook that the library
-// can invoke from its ISR so we still record zero-cross events.
-extern "C" void IRAM_ATTR user_zc_hook() {
-    int64_t now = esp_timer_get_time();
-    if (now - lastZcTime >= 6000) {
-        lastZcTime = now;
-        zcCount++;
-    }
-}
-
-#ifdef USE_PUMP_DIMMER
-extern void IRAM_ATTR isr_ext();
-// Chain the dimmer ISR so we still count pump zero-crossing events.
-static void IRAM_ATTR pumpZcIsr() {
-    isr_ext();
-    user_zc_hook();
-}
-#endif
-
 namespace gag {
 
 /**
@@ -1705,9 +1594,7 @@ void setup() {
     pinMode(ZC_PIN, INPUT);
     pinMode(AC_SENS, INPUT_PULLUP);
     pinMode(PUMP_PIN, OUTPUT);
-#ifdef USE_PUMP_DIMMER
     pumpDimmer.begin(NORMAL_MODE, OFF);
-#endif
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
     applyPumpPower();
@@ -1737,16 +1624,9 @@ void setup() {
     // double the pulse resolution.  CHANGE triggers the ISR on any
     // transition and `PULSE_MIN` guards against spurious bounce.
     attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
-#ifdef USE_PUMP_DIMMER
-    attachInterrupt(digitalPinToInterrupt(ZC_PIN), pumpZcIsr, RISING);
-#else
-    attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
-#endif
 
     pulseCount = 0;
     startTime = millis();
-    otaBootStart = startTime;
-    otaStartupMode = true;
     lastPidTime = startTime;
     lastPwmTime = startTime;
     lastPulseTime = esp_timer_get_time();
@@ -1779,7 +1659,7 @@ void loop() {
 
     // Handle OTA as early and as often as possible
     ensureOta();
-    if (otaActive && WiFi.status() == WL_CONNECTED) ArduinoOTA.handle();
+    if (WiFi.status() == WL_CONNECTED) ArduinoOTA.handle();
 
     // If OTA is active, keep loop lean
     if (otaActive) {
@@ -1802,7 +1682,11 @@ void loop() {
         updatePreFlow();
         updateVols();
         updateSteamFlag();
-        updateShotTime();
+    }
+
+    // Update shot time continuously while shot is active (seconds)
+    if (shotFlag) {
+        shotTime = (currentTime - shotStart) / 1000.0f;
     }
 
     ensureWifi();
@@ -1823,18 +1707,20 @@ void loop() {
         }
     }
 
-    if (!otaActive && debugPrint &&
-        (currentTime - lastLogTime) > LOG_CYCLE) { /* optional debug printing */
-        LOG("Pressure: Raw=%d, Now=%0.2f Last=%0.2f", rawPress, pressNow, lastPress);
-        LOG("Temp: Set=%0.1f, Current=%0.2f", setTemp, currentTemp);
-        LOG("Heat: Power=%0.1f, Cycles=%d", heatPower, heatCycles);
-        LOG("Vol: Pulses=%lu, Vol=%0.2f", pulseCount, vol);
-        LOG("Pump: ZC Count =%lu", zcCount);
-        LOG("Flags: Steam=%d, Shot=%d", steamFlag, shotFlag);
-        LOG("AC Count=%d", acCount);
-        LOG("");
-        lastLogTime = currentTime;
-    }
+    if (debugPrint && (currentTime - lastLogTime) > LOG_CYCLE)
+        if (!otaActive) {
+            ;
+        } else { /* optional debug printing */
+            LOG("Pressure: Raw=%d, Now=%0.2f Last=%0.2f", rawPress, pressNow, lastPress);
+            LOG("Temp: Set=%0.1f, Current=%0.2f", setTemp, currentTemp);
+            LOG("Heat: Power=%0.1f, Cycles=%d", heatPower, heatCycles);
+            LOG("Vol: Pulses=%lu, Vol=%d, Rate=%d", pulseCount, vol, flowRate / 1000.0f);
+            LOG("Pump: ZC Count =%lu", zcCount);
+            LOG("Flags: Steam=%d, Shot=%d", steamFlag, shotFlag);
+            LOG("AC Count=%d", acCount);
+            LOG("");
+            lastLogTime = currentTime;
+        }
 }
 
 }  // namespace gag
