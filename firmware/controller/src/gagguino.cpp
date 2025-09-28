@@ -96,6 +96,13 @@ constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when id
 constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
 constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
 
+constexpr size_t MQTT_BUFFER_BYTES = 2048;
+constexpr size_t MQTT_PUBLISH_OVERHEAD = 16;
+
+constexpr unsigned long FLOW_RATE_LOG_WINDOW_MS = LOG_CYCLE;
+constexpr unsigned long FLOW_RATE_MQTT_WINDOW_MS = 1000;
+constexpr unsigned long FLOW_RATE_ESP_WINDOW_MS = ESP_CYCLE;
+
 // Brew & Steam setpoint limits
 constexpr float BREW_MIN = 90.0f, BREW_MAX = 99.0f;
 constexpr float STEAM_MIN_C = 145.0f, STEAM_MAX_C = 155.0f;
@@ -132,7 +139,7 @@ constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 30000;
 constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
 
-const bool streamData = true, debugPrint = false;
+const bool streamData = true, debugPrint = true;
 }  // namespace
 
 // ---------- Devices / globals ----------
@@ -200,7 +207,7 @@ float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;  // HA switch default ON at boot
-float pumpPower = 0.0f;     // HA-controllable pump power 0-100%
+float pumpPower = 95.0f;    // HA-controllable pump power 0-100% (default 95%)
 
 // Pressure
 int rawPress = 0;
@@ -210,19 +217,28 @@ float pressBuff[PRESS_BUFF_SIZE] = {0};
 uint8_t pressBuffIdx = 0;
 
 // Time/shot
-unsigned long nLoop = 0, currentTime = 0, lastVolTime = 0, lastPidTime = 0, lastPwmTime = 0,
-              lastMqttTime = 0, lastEspNowTime = 0, lastLogTime = 0;
+unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, lastMqttTime = 0,
+              lastEspNowTime = 0, lastLogTime = 0;
 // microsecond timestamps for ISR debounce
 volatile int64_t lastPulseTime = 0;
 unsigned long shotStart = 0, startTime = 0;
 float shotTime = 0;  //
 
+struct FlowRateTracker {
+    unsigned long lastSampleMs = 0;
+    unsigned long lastPulseCount = 0;
+    float value = 0.0f;
+};
+
+static FlowRateTracker flowRateLogTracker;
+static FlowRateTracker flowRateMqttTracker;
+static FlowRateTracker flowRateEspTracker;
+
 // Flow / flags
 volatile unsigned long pulseCount = 0;
 volatile unsigned long zcCount = 0;
 volatile int64_t lastZcTime = 0;  // microsecond timestamp
-int vol = 0, preFlowVol = 0, shotVol = 0, flowRate = 0;
-unsigned int lastVol = 0;
+int vol = 0, preFlowVol = 0, shotVol = 0;
 bool prevSteamFlag = false, ac = false;
 int acCount = 0;
 bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
@@ -231,6 +247,7 @@ bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false
 // OTA
 static bool otaInitialized = false;
 static bool otaActive = false;      // minimize other work while OTA is in progress
+static bool otaWindowEnabled = false;
 static unsigned long otaStart = 0;  // millis when OTA was enabled
 
 // MQTT diagnostics
@@ -257,8 +274,9 @@ char uid_suffix[16] = {0};
 // Sensor state topics
 char t_vol_state[96], t_shotvol_state[96], t_flowrate_state[96], t_settemp_state[96],
     t_curtemp_state[96], t_press_state[96], t_shottime_state[96], t_ota_state[96],
-    t_espnow_state[96], t_espnow_chan_state[96], t_espnow_mac_state[96], t_espnow_last_state[96],
-    t_espnow_cmd[96];
+    t_ota_switch_state[96], t_pump_power_sensor_state[96], t_brewtemp_state[96],
+    t_steamtemp_state[96], t_espnow_state[96], t_espnow_chan_state[96],
+    t_espnow_mac_state[96], t_espnow_last_state[96], t_espnow_cmd[96];
 // OTA command topic
 char t_ota_cmd[96];
 // Switch state/command topics
@@ -281,14 +299,15 @@ char t_piddtau_state[96], t_piddtau_cmd[96];
 
 // Config topics
 char c_vol[128], c_shotvol[128], c_flowrate[128], c_settemp[128], c_curtemp[128], c_press[128],
-    c_shottime[128], c_ota[128], c_espnow[128], c_espnow_chan[128];
+    c_shottime[128], c_ota[128], c_pump_power_sensor[128], c_brewtemp[128], c_steamtemp[128],
+    c_espnow[128], c_espnow_chan[128];
 char c_accnt[128], c_zccnt[128], c_pulsecnt[128];
 char c_pidp_number[128], c_pidi_number[128], c_pidd_number[128], c_pidg_number[128];
 char c_shot[128], c_preflow[128], c_steam[128];
 char c_brewset_number[128], c_steamset_number[128], c_pump_number[128];
 char c_piddtau_number[128];  // PID D Tau (seconds)
 // Switch config
-char c_heater[128];
+char c_heater[128], c_ota_switch[128];
 // ---------- helpers ----------
 /**
  * @brief Convert Wi‑Fi status to a readable string.
@@ -350,7 +369,7 @@ static void initMqttTuning() {
     // Longer keepalive so brief OTA stalls don't drop MQTT
     mqttClient.setKeepAlive(60);
     mqttClient.setSocketTimeout(5);
-    mqttClient.setBufferSize(1024);
+    mqttClient.setBufferSize(MQTT_BUFFER_BYTES);
 }
 /**
  * @brief Resolve `MQTT_HOST` to an IP once and cache it.
@@ -374,6 +393,7 @@ static void resolveBrokerIfNeeded() {
 // ---------- OTA ----------
 // Forward declaration for MQTT publish helper used in OTA callbacks
 static void publishStr(const char* topic, const String& v, bool retain = true);
+static void publishBool(const char* topic, bool on, bool retain = true);
 /**
  * @brief Initialize ArduinoOTA once Wi‑Fi is connected.
  *
@@ -384,9 +404,11 @@ static void publishStr(const char* topic, const String& v, bool retain = true);
  * - During OTA, the heater output is disabled and main work throttled.
  */
 static void ensureOta() {
-    if (otaActive && otaStart && (millis() - otaStart >= OTA_ENABLE_MS)) {
+    if (otaWindowEnabled && otaStart && (millis() - otaStart >= OTA_ENABLE_MS)) {
         otaActive = false;
+        otaWindowEnabled = false;
         otaStart = 0;
+        publishBool(t_ota_switch_state, false, true);
         publishStr(t_ota_state, "idle", true);
         LOG("OTA: window expired");
     }
@@ -409,7 +431,9 @@ static void ensureOta() {
     ArduinoOTA.onStart([]() {
         LOG("OTA: Start (%s)", ArduinoOTA.getCommand() == U_FLASH ? "flash" : "fs");
         otaActive = true;  // signal loop to reduce load and suppress MQTT publishing
+        otaWindowEnabled = true;
         otaStart = millis();
+        publishBool(t_ota_switch_state, true, true);
         publishStr(t_ota_state, "active", true);
         // Turn off heater to reduce power/noise during OTA
         digitalWrite(HEAT_PIN, LOW);
@@ -418,7 +442,9 @@ static void ensureOta() {
     ArduinoOTA.onEnd([]() {
         LOG("OTA: End");
         otaActive = false;
+        otaWindowEnabled = false;
         otaStart = 0;
+        publishBool(t_ota_switch_state, false, true);
         publishStr(t_ota_state, "idle", true);
         // (Optional) re-attach interrupts if you detached them on start
         // attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
@@ -454,7 +480,9 @@ static void ensureOta() {
         }
         LOG_ERROR("OTA: Error %d (%s)", (int)error, msg);
         otaActive = false;
+        otaWindowEnabled = false;
         otaStart = 0;
+        publishBool(t_ota_switch_state, false, true);
         publishStr(t_ota_state, "error", true);
     });
 
@@ -544,7 +572,6 @@ static void checkShotStartStop() {
     if ((steamFlag && !prevSteamFlag) ||
         (currentTime - lastZcTimeMs >= SHOT_RESET && shotFlag && currentTime > lastZcTimeMs)) {
         pulseCount = 0;
-        lastVol = 0;
         shotVol = 0;
         shotTime = 0;
         lastPulseTime = esp_timer_get_time();
@@ -653,7 +680,7 @@ static void updateSteamFlag() {
 }
 
 /**
- * @brief Track pre‑infusion phase and capture volume up to threshold pressure.
+ * @brief Track pre-infusion phase and capture volume up to threshold pressure.
  */
 static void updatePreFlow() {
     if (preFlow && lastPress > PRESS_THRESHOLD) {
@@ -662,18 +689,46 @@ static void updatePreFlow() {
     }
 }
 
+static float updateFlowRateTracker(FlowRateTracker& tracker, unsigned long pulsesNow,
+                                   unsigned long nowMs, unsigned long windowMs,
+                                   unsigned long idleTimeoutMs) {
+    if (tracker.lastSampleMs == 0 || pulsesNow < tracker.lastPulseCount) {
+        tracker.lastSampleMs = nowMs;
+        tracker.lastPulseCount = pulsesNow;
+        tracker.value = 0.0f;
+        return tracker.value;
+    }
+
+    unsigned long elapsedMs = nowMs - tracker.lastSampleMs;
+    unsigned long deltaPulses = pulsesNow - tracker.lastPulseCount;
+    if (deltaPulses > 0 && elapsedMs >= windowMs) {
+        tracker.value = static_cast<float>(deltaPulses) * FLOW_CAL /
+                        (static_cast<float>(elapsedMs) / 1000.0f);
+        tracker.lastSampleMs = nowMs;
+        tracker.lastPulseCount = pulsesNow;
+    } else if (deltaPulses == 0 && elapsedMs >= idleTimeoutMs) {
+        tracker.value = 0.0f;
+        tracker.lastSampleMs = nowMs;
+        tracker.lastPulseCount = pulsesNow;
+    }
+    return tracker.value;
+}
+
+
 /**
  * @brief Convert pulse counts to volumes and maintain shot volume.
  */
 static void updateVols() {
-    vol = (int)(pulseCount * FLOW_CAL);
-    if (lastVolTime > 0) {
-        // flow rate in micro-litres / s
-        flowRate = (vol - lastVol) / (currentTime - lastVolTime) * 1000000;
-    }
-    lastVol = vol;
-    lastVolTime = currentTime;
+    unsigned long pulses = pulseCount;
+    vol = static_cast<int>(pulses * FLOW_CAL);
     shotVol = (preFlow || !shotFlag) ? 0 : (vol - preFlowVol);
+
+    updateFlowRateTracker(flowRateLogTracker, pulses, currentTime, FLOW_RATE_LOG_WINDOW_MS,
+                          FLOW_RATE_LOG_WINDOW_MS * 2);
+    updateFlowRateTracker(flowRateMqttTracker, pulses, currentTime, FLOW_RATE_MQTT_WINDOW_MS,
+                          FLOW_RATE_MQTT_WINDOW_MS * 2);
+    updateFlowRateTracker(flowRateEspTracker, pulses, currentTime, FLOW_RATE_ESP_WINDOW_MS,
+                          FLOW_RATE_ESP_WINDOW_MS * 2);
 }
 
 // ISRs
@@ -741,6 +796,12 @@ static void buildTopics() {
              uid_suffix);
     snprintf(t_ota_state, sizeof(t_ota_state), "%s/%s/ota/status", STATE_BASE, uid_suffix);
     snprintf(t_ota_cmd, sizeof(t_ota_cmd), "%s/%s/ota/enable", STATE_BASE, uid_suffix);
+    snprintf(t_ota_switch_state, sizeof(t_ota_switch_state), "%s/%s/ota/enable/state", STATE_BASE,
+             uid_suffix);
+    snprintf(t_pump_power_sensor_state, sizeof(t_pump_power_sensor_state), "%s/%s/pump_power_sensor/state",
+             STATE_BASE, uid_suffix);
+    snprintf(t_brewtemp_state, sizeof(t_brewtemp_state), "%s/%s/brew_temp/state", STATE_BASE, uid_suffix);
+    snprintf(t_steamtemp_state, sizeof(t_steamtemp_state), "%s/%s/steam_temp/state", STATE_BASE, uid_suffix);
     snprintf(t_espnow_state, sizeof(t_espnow_state), "%s/%s/espnow/status", STATE_BASE, uid_suffix);
     snprintf(t_espnow_chan_state, sizeof(t_espnow_chan_state), "%s/%s/espnow/channel", STATE_BASE,
              uid_suffix);
@@ -802,6 +863,12 @@ static void buildTopics() {
     snprintf(c_shottime, sizeof(c_shottime), "%s/sensor/%s_shot_time/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_ota, sizeof(c_ota), "%s/sensor/%s_ota_status/config", DISCOVERY_PREFIX, dev_id);
+    snprintf(c_pump_power_sensor, sizeof(c_pump_power_sensor), "%s/sensor/%s_pump_power_sensor/config",
+             DISCOVERY_PREFIX, dev_id);
+    snprintf(c_brewtemp, sizeof(c_brewtemp), "%s/sensor/%s_brew_temp/config", DISCOVERY_PREFIX,
+             dev_id);
+    snprintf(c_steamtemp, sizeof(c_steamtemp), "%s/sensor/%s_steam_temp/config", DISCOVERY_PREFIX,
+             dev_id);
     snprintf(c_espnow, sizeof(c_espnow), "%s/sensor/%s_espnow_status/config", DISCOVERY_PREFIX,
              dev_id);
     snprintf(c_espnow_chan, sizeof(c_espnow_chan), "%s/sensor/%s_espnow_channel/config",
@@ -838,6 +905,8 @@ static void buildTopics() {
              dev_id);
     // switch
     snprintf(c_heater, sizeof(c_heater), "%s/switch/%s_heater/config", DISCOVERY_PREFIX, dev_id);
+    snprintf(c_ota_switch, sizeof(c_ota_switch), "%s/switch/%s_ota_enable/config", DISCOVERY_PREFIX,
+             dev_id);
 }
 
 /**
@@ -856,6 +925,12 @@ static String deviceJson() {
  * @brief Publish a retained discovery/config message.
  */
 static void publishRetained(const char* topic, const String& payload) {
+    size_t frameSize = strlen(topic) + payload.length() + MQTT_PUBLISH_OVERHEAD;
+    if (frameSize > MQTT_BUFFER_BYTES) {
+        LOG_ERROR("MQTT: discovery payload too large (%s) size=%u limit=%u", topic,
+                  static_cast<unsigned>(frameSize), static_cast<unsigned>(MQTT_BUFFER_BYTES));
+        return;
+    }
     if (!mqttClient.publish(topic, payload.c_str(), true))
         LOG_ERROR("MQTT: discovery publish failed (%s)", topic);
 }
@@ -869,7 +944,7 @@ static void publishDiscovery() {
     // --- sensors ---
     publishRetained(
         c_vol, String("{\"name\":\"Volume\",\"uniq_id\":\"") + dev_id +
-                   "_shot_volume\",\"stat_t\":\"" + t_vol_state +
+                   "_total_volume\",\"stat_t\":\"" + t_vol_state +
                    "\",\"dev_cla\":\"volume\",\"unit_of_meas\":\"mL\",\"stat_cla\":"
                    "\"measurement\",\"avty_t\":\"" +
                    String(MQTT_STATUS) +
@@ -884,8 +959,8 @@ static void publishDiscovery() {
                         "}");
     publishRetained(c_flowrate,
                     String("{\"name\":\"Flow Rate\",\"uniq_id\":\"") + dev_id +
-                        "_shot_volume\",\"stat_t\":\"" + t_flowrate_state +
-                        "\",\"dev_cla\":\"volume\",\"unit_of_meas\":\"mL\",\"stat_cla\":"
+                        "_flow_rate\",\"stat_t\":\"" + t_flowrate_state +
+                        "\",\"dev_cla\":\"volume_flow_rate\",\"unit_of_meas\":\"mL/s\",\"stat_cla\":"
                         "\"measurement\",\"avty_t\":\"" +
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
@@ -914,6 +989,27 @@ static void publishDiscovery() {
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
+    publishRetained(
+        c_pump_power_sensor,
+        String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id +
+            "_pump_power_sensor\",\"stat_t\":\"" + t_pump_power_sensor_state +
+            "\",\"dev_cla\":\"power\",\"unit_of_meas\":\"%\",\"stat_cla\":\"measurement\",\"avty_t\":\"" +
+            String(MQTT_STATUS) +
+            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+    publishRetained(
+        c_brewtemp,
+        String("{\"name\":\"Brew Temp\",\"uniq_id\":\"") + dev_id +
+            "_brew_temp\",\"stat_t\":\"" + t_brewtemp_state +
+            "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"�C\",\"stat_cla\":\"measurement\",\"avty_t\":\"" +
+            String(MQTT_STATUS) +
+            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+    publishRetained(
+        c_steamtemp,
+        String("{\"name\":\"Steam Temp\",\"uniq_id\":\"") + dev_id +
+            "_steam_temp\",\"stat_t\":\"" + t_steamtemp_state +
+            "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"�C\",\"stat_cla\":\"measurement\",\"avty_t\":\"" +
+            String(MQTT_STATUS) +
+            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
     publishRetained(c_shottime,
                     String("{\"name\":\"Shot Time\",\"uniq_id\":\"") + dev_id +
                         "_shot_time\",\"stat_t\":\"" + t_shottime_state +
@@ -986,6 +1082,16 @@ static void publishDiscovery() {
         String("{\"name\":\"Steam\",\"uniq_id\":\"") + dev_id + "_steam\",\"stat_t\":\"" +
             t_steam_state +
             "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"dev_cla\":\"running\",\"avty_t\":\"" +
+            String(MQTT_STATUS) +
+            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+
+    // --- switch: OTA enable ---
+    publishRetained(
+        c_ota_switch,
+        String("{\"name\":\"OTA Enable\",\"uniq_id\":\"") + dev_id +
+            "_ota_enable\",\"cmd_t\":\"" + t_ota_cmd + "\",\"stat_t\":\"" +
+            t_ota_switch_state +
+            "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"entity_category\":\"config\",\"avty_t\":\"" +
             String(MQTT_STATUS) +
             "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
 
@@ -1100,7 +1206,7 @@ static void publishNum(const char* topic, float v, uint8_t decimals = 1, bool re
     dtostrf(v, 0, decimals, tmp);
     publishStr(topic, String(tmp), retain);
 }
-static void publishBool(const char* topic, bool on, bool retain = true) {
+static void publishBool(const char* topic, bool on, bool retain) {
     auto it = s_lastBool.find(topic);
     if (it != s_lastBool.end() && it->second == on) return;
     s_lastBool[String(topic)] = on;
@@ -1126,16 +1232,23 @@ static void forceHeaterOff() {
  * @brief Publish periodic telemetry and mirrored setpoint values.
  */
 static void publishStates() {
+    float flowRateMqtt = updateFlowRateTracker(flowRateMqttTracker, pulseCount, currentTime,
+                                               FLOW_RATE_MQTT_WINDOW_MS,
+                                               FLOW_RATE_MQTT_WINDOW_MS * 2);
     // measurements
     publishNum(t_vol_state, vol, 0);            // mL
     publishNum(t_shotvol_state, shotVol, 0);    // mL
-    publishNum(t_flowrate_state, flowRate, 0);  // mL
+    publishNum(t_flowrate_state, flowRateMqtt, 2, false, 0.05f);  // mL/s
     publishNum(t_settemp_state, setTemp, 1);    // active target
     publishNum(t_curtemp_state, currentTemp, 1);
     publishNum(t_press_state, lastPress, 1);
     publishNum(t_shottime_state, shotTime, 1);  // seconds
-    // heater switch state (retained so HA keeps last state)
+    publishNum(t_pump_power_sensor_state, pumpPower, 0);
+    publishNum(t_brewtemp_state, brewSetpoint, 1);
+    publishNum(t_steamtemp_state, steamSetpoint, 1);
+    // switch states (retained so HA keeps last state)
     publishBool(t_heater_state, heaterEnabled, true);
+    publishBool(t_ota_switch_state, otaWindowEnabled, true);
     // diagnostics
     publishNum(t_accnt_state, acCount, 0);
     publishNum(t_zccnt_state, zcCount, 0);
@@ -1327,11 +1440,22 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
             LOG("HA: MQTT enabled");
         }
     }
-    if (strcmp(topic, t_ota_cmd) == 0) {
-        otaActive = true;
-        otaStart = millis();
-        publishStr(t_ota_state, "enabled", true);
-        LOG("HA: OTA enabled for %lus", OTA_ENABLE_MS / 1000);
+    if (parse_onoff(t_ota_cmd, hv)) {
+        if (hv) {
+            otaWindowEnabled = true;
+            otaActive = true;
+            otaStart = millis();
+            publishBool(t_ota_switch_state, true, true);
+            publishStr(t_ota_state, "enabled", true);
+            LOG("HA: OTA enabled for %lus", OTA_ENABLE_MS / 1000);
+        } else {
+            otaWindowEnabled = false;
+            otaActive = false;
+            otaStart = 0;
+            publishBool(t_ota_switch_state, false, true);
+            publishStr(t_ota_state, "idle", true);
+            LOG("HA: OTA disabled");
+        }
     }
     if (changed) {
         if (!steamFlag) setTemp = brewSetpoint;  // if brewing, apply immediately
@@ -1530,7 +1654,7 @@ static void ensureMqtt() {
             mqttClient.subscribe(t_heater_cmd);
             mqttClient.subscribe(t_steam_cmd);
             mqttClient.subscribe(t_espnow_cmd);
-            // ✅ B) Immediately publish a full snapshot so HA has data right away
+            // Immediately publish a full snapshot so HA has data right away
             // Do this only once, right after a successful (re)connect.
             resetPublishCache();
             publishStates();
@@ -1700,27 +1824,29 @@ void loop() {
 
     unsigned long publishInterval = shotFlag ? SHOT_CYCLE : IDLE_CYCLE;
     if (!otaActive && streamData && (currentTime - lastMqttTime) >= publishInterval) {
-        // ✅ A) Only advance the timer when we actually publish
+        // Only advance the timer when we actually publish
         if (mqttClient.connected()) {
             publishStates();
             lastMqttTime = currentTime;
         }
     }
 
-    if (debugPrint && (currentTime - lastLogTime) > LOG_CYCLE)
+    if (debugPrint && (currentTime - lastLogTime) > LOG_CYCLE) {
         if (!otaActive) {
-            ;
-        } else { /* optional debug printing */
+            float logFlow = updateFlowRateTracker(flowRateLogTracker, pulseCount, currentTime,
+                                                  FLOW_RATE_LOG_WINDOW_MS,
+                                                  FLOW_RATE_LOG_WINDOW_MS * 2);
             LOG("Pressure: Raw=%d, Now=%0.2f Last=%0.2f", rawPress, pressNow, lastPress);
             LOG("Temp: Set=%0.1f, Current=%0.2f", setTemp, currentTemp);
             LOG("Heat: Power=%0.1f, Cycles=%d", heatPower, heatCycles);
-            LOG("Vol: Pulses=%lu, Vol=%d, Rate=%d", pulseCount, vol, flowRate / 1000.0f);
-            LOG("Pump: ZC Count =%lu", zcCount);
+            LOG("Vol: Pulses=%lu, Vol=%d, Rate=%.2f", pulseCount, vol, logFlow);
+            LOG("Pump: ZC Count =%lu, Power=%.0f%%", zcCount, pumpPower);
             LOG("Flags: Steam=%d, Shot=%d", steamFlag, shotFlag);
             LOG("AC Count=%d", acCount);
             LOG("");
-            lastLogTime = currentTime;
         }
+        lastLogTime = currentTime;
+    }
 }
 
 }  // namespace gag
