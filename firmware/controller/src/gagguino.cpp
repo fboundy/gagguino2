@@ -622,10 +622,20 @@ static void updateTempPWM() {
 /**
  * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
  */
+#ifdef USE_PUMP_DIMMER
 static void applyPumpPower() {
-    // pumpDimmer.setPower((int)pumpPower);
-    // pumpDimmer.setState(pumpPower > 0.0f ? ON : OFF);
+    float clamped = pumpPower;
+    if (clamped < 0.0f) clamped = 0.0f;
+    if (clamped > 100.0f) clamped = 100.0f;
+    int level = (int)roundf(clamped);
+    if (level >= 100) level = 99;
+    bool enabled = level > 0;
+    pumpDimmer.setState(enabled ? ON : OFF);
+    pumpDimmer.setPower(enabled ? level : 0);
 }
+#else
+static void applyPumpPower() {}
+#endif
 
 /**
  * @brief Sample pressure ADC and maintain a moving average buffer.
@@ -703,13 +713,11 @@ static void updateShotTime() {
             shotStart = currentTime;
             pumpPrevActive = true;
         }
-        shotTimeMs = shotAccumulatedMs + (currentTime - shotStart);
+        shotTimeMs = currentTime - shotStart;
     } else {
         if (pumpPrevActive) {
-            shotAccumulatedMs += currentTime - shotStart;
             pumpPrevActive = false;
         }
-        shotTimeMs = shotAccumulatedMs;
     }
 
     shotTime = shotTimeMs / 1000.0f;
@@ -796,9 +804,14 @@ static void buildTopics() {
              uid_suffix);
     snprintf(t_steamset_state, sizeof(t_steamset_state), "%s/%s/steam_setpoint/state", STATE_BASE,
              uid_suffix);
-    // snprintf(t_pump_cmd, sizeof(t_pump_cmd), "%s/%s/pump_power/set", STATE_BASE, uid_suffix);
-    // snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE,
-    // uid_suffix); PID numbers
+#ifdef USE_PUMP_DIMMER
+    snprintf(t_pump_cmd, sizeof(t_pump_cmd), "%s/%s/pump_power/set", STATE_BASE, uid_suffix);
+    snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE, uid_suffix);
+#else
+    t_pump_cmd[0] = '\0';
+    t_pump_state[0] = '\0';
+#endif
+    // PID numbers
     snprintf(t_pidp_cmd, sizeof(t_pidp_cmd), "%s/%s/pid_p/set", STATE_BASE, uid_suffix);
     snprintf(t_pidp_state, sizeof(t_pidp_state), "%s/%s/pid_p/state", STATE_BASE, uid_suffix);
     snprintf(t_pidi_cmd, sizeof(t_pidi_cmd), "%s/%s/pid_i/set", STATE_BASE, uid_suffix);
@@ -841,8 +854,12 @@ static void buildTopics() {
              DISCOVERY_PREFIX, dev_id);
     snprintf(c_steamset_number, sizeof(c_steamset_number), "%s/number/%s_steam_setpoint/config",
              DISCOVERY_PREFIX, dev_id);
-    // snprintf(c_pump_number, sizeof(c_pump_number), "%s/number/%s_pump_power/config",
-    //          DISCOVERY_PREFIX, dev_id);
+#ifdef USE_PUMP_DIMMER
+    snprintf(c_pump_number, sizeof(c_pump_number), "%s/number/%s_pump_power/config",
+             DISCOVERY_PREFIX, dev_id);
+#else
+    c_pump_number[0] = '\0';
+#endif
     // PID numbers
     snprintf(c_pidp_number, sizeof(c_pidp_number), "%s/number/%s_pid_p/config", DISCOVERY_PREFIX,
              dev_id);
@@ -1032,14 +1049,16 @@ static void publishDiscovery() {
                         String(MQTT_STATUS) +
                         "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
                         "}");
-    // publishRetained(
-    // c_pump_number,
-    // String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id + "_pump_power\",\"cmd_t\":\"" +
-    // t_pump_cmd + "\",\"stat_t\":\"" + t_pump_state +
-    // "\",\"unit_of_meas\":\"%\",\"min\":0,\"max\":100,\"step\":1,\"mode\":\"auto\",\"avty_"
-    // "t\":\"" +
-    // String(MQTT_STATUS) +
-    // "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+#ifdef USE_PUMP_DIMMER
+    publishRetained(
+        c_pump_number,
+        String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id + "_pump_power\",\"cmd_t\":\"" +
+            t_pump_cmd + "\",\"stat_t\":\"" + t_pump_state +
+            "\",\"unit_of_meas\":\"%\",\"min\":0,\"max\":100,\"step\":1,\"mode\":\"auto\",\"avty_"
+            "t\":\"" +
+            String(MQTT_STATUS) +
+            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
+#endif
 
     // --- number: PID D Tau (seconds) ---
     publishRetained(c_piddtau_number, String("{\"name\":\"PID D Tau\",\"uniq_id\":\"") + dev_id +
@@ -1126,7 +1145,9 @@ static void publishBool(const char* topic, bool on, bool retain) {
 // Publish retained number/config states once (on connect) or on change.
 static void publishNumberStatesSnapshot() {
     // NOTE: Config/number states are published on connect and on change only.
-    // publishNum(t_pump_state, pumpPower, 0, true);
+#ifdef USE_PUMP_DIMMER
+    publishNum(t_pump_state, pumpPower, 0, true);
+#endif
 }
 
 // Helper: immediately disable the heater output and prevent PID updates.
@@ -1176,7 +1197,9 @@ static void publishStates() {
     // number entity states (retained so HA persists)
     publishNum(t_brewset_state, brewSetpoint, 1, true);
     publishNum(t_steamset_state, steamSetpoint, 1, true);
-    // publishNum(t_pump_state, pumpPower, 0, true);
+#ifdef USE_PUMP_DIMMER
+    publishNum(t_pump_state, pumpPower, 0, true);
+#endif
     // PID number states
     publishNum(t_pidp_state, pGainTemp, 2, true);
     publishNum(t_pidi_state, iGainTemp, 2, true);
@@ -1287,11 +1310,13 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         changed = true;
         LOG("HA: Steam setpoint -> %.1f °C", steamSetpoint);
     }
-    // if (parse_clamped(t_pump_cmd, 0.0f, 100.0f, pumpPower)) {
-    // applyPumpPower();
-    // publishNum(t_pump_state, pumpPower, 0, true);
-    // LOG("HA: Pump power -> %.0f%%", pumpPower);
-    // }
+#ifdef USE_PUMP_DIMMER
+    if (parse_clamped(t_pump_cmd, 0.0f, 100.0f, pumpPower)) {
+        applyPumpPower();
+        publishNum(t_pump_state, pumpPower, 0, true);
+        LOG("HA: Pump power -> %.0f%%", pumpPower);
+    }
+#endif
     // PID params
     float tmp;
     if (parse_clamped(t_pidp_cmd, 0.0f, 200.0f, tmp)) {
@@ -1543,7 +1568,9 @@ static void ensureMqtt() {
             publishDiscovery();
             mqttClient.subscribe(t_brewset_cmd);
             mqttClient.subscribe(t_steamset_cmd);
-            // mqttClient.subscribe(t_pump_cmd);
+#ifdef USE_PUMP_DIMMER
+            mqttClient.subscribe(t_pump_cmd);
+#endif
             // PID control subscriptions
             mqttClient.subscribe(t_pidp_cmd);
             mqttClient.subscribe(t_pidi_cmd);
@@ -1644,7 +1671,7 @@ void setup() {
 #endif
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
-    // applyPumpPower();
+    applyPumpPower();
 
     // Initialize MAX31865 (set wiring: 2/3/4-wire as appropriate)
     max31865.begin(MAX31865_2WIRE);
