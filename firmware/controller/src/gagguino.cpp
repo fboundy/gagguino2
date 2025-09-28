@@ -97,9 +97,10 @@ constexpr uint8_t ESPNOW_CMD_HEATER_OFF = 0xA0;
 constexpr uint8_t ESPNOW_CMD_STEAM_ON = 0xB1;
 constexpr uint8_t ESPNOW_CMD_STEAM_OFF = 0xB0;
 
-constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when idle (reduced chatter)
-constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
-constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
+constexpr unsigned long IDLE_CYCLE = 5000;        // ms between publishes when idle (reduced chatter)
+constexpr unsigned long SHOT_CYCLE = 1000;        // ms between publishes during a shot
+constexpr unsigned long OTA_WAIT_TIMEOUT_MS = 120000;  // ms OTA wait window after enabling
+constexpr unsigned long OTA_BOOT_GRACE_MS = 10000;      // ms after boot considered "startup"
 
 // Brew & Steam setpoint limits
 constexpr float BREW_MIN = 90.0f, BREW_MAX = 99.0f;
@@ -242,8 +243,11 @@ bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false
 
 // OTA
 static bool otaInitialized = false;
-static bool otaActive = false;      // minimize other work while OTA is in progress
-static unsigned long otaStart = 0;  // millis when OTA was enabled
+static bool otaActive = false;       // OTA window requested/armed
+static bool otaInProgress = false;   // OTA transfer currently running
+static bool otaStartupMode = true;   // true until startup grace period lapses or OTA completes
+static unsigned long otaStart = 0;   // millis when OTA was enabled
+static unsigned long otaBootStart = 0;
 
 // MQTT diagnostics
 static IPAddress g_mqttIp;
@@ -395,12 +399,42 @@ static void publishBool(const char* topic, bool on, bool retain = true);
  *   OTA authentication is enforced.
  * - During OTA, the heater output is disabled and main work throttled.
  */
+static void startOtaWindow(const char* reason) {
+    unsigned long now = millis();
+    otaStart = now;
+    if (!otaActive) {
+        otaActive = true;
+        otaInProgress = false;
+        heatPower = 0.0f;
+        heatCycles = PWM_CYCLE;
+        digitalWrite(HEAT_PIN, LOW);
+        heaterState = false;
+        publishBool(t_ota_state, true, true);
+    }
+    if (reason) LOG("OTA: %s", reason);
+}
+
+static void stopOtaWindow(const char* reason) {
+    bool wasActive = otaActive || otaInProgress;
+    otaActive = false;
+    otaInProgress = false;
+    otaStart = 0;
+    publishBool(t_ota_state, false, true);
+    if (reason && wasActive) {
+        LOG("OTA: %s", reason);
+    }
+    if (otaStartupMode) otaStartupMode = false;
+}
+
 static void ensureOta() {
-    if (otaActive && otaStart && (millis() - otaStart >= OTA_ENABLE_MS)) {
-        otaActive = false;
-        otaStart = 0;
-        publishBool(t_ota_state, false, true);
-        LOG("OTA: window expired");
+    unsigned long now = millis();
+    if (otaActive && !otaInProgress && otaStart && (now - otaStart >= OTA_WAIT_TIMEOUT_MS)) {
+        stopOtaWindow("window expired");
+    }
+
+    if (otaStartupMode && otaBootStart && (now - otaBootStart >= OTA_BOOT_GRACE_MS) && !otaActive &&
+        !otaInProgress) {
+        otaStartupMode = false;
     }
 
     if (otaInitialized || WiFi.status() != WL_CONNECTED) return;
@@ -420,18 +454,16 @@ static void ensureOta() {
 
     ArduinoOTA.onStart([]() {
         LOG("OTA: Start (%s)", ArduinoOTA.getCommand() == U_FLASH ? "flash" : "fs");
-        otaActive = true;  // signal loop to reduce load and suppress MQTT publishing
-        otaStart = millis();
-        publishBool(t_ota_state, true, true);
-        // Turn off heater to reduce power/noise during OTA
-        digitalWrite(HEAT_PIN, LOW);
-        heaterState = false;
+        if (!otaActive) {
+            startOtaWindow("start requested externally");
+        } else {
+            // Refresh timer to avoid timing out during long preparation stages
+            otaStart = millis();
+        }
+        otaInProgress = true;
     });
     ArduinoOTA.onEnd([]() {
-        LOG("OTA: End");
-        otaActive = false;
-        otaStart = 0;
-        publishBool(t_ota_state, false, true);
+        stopOtaWindow("completed");
         // (Optional) re-attach interrupts if you detached them on start
         // attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
         // attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
@@ -465,9 +497,7 @@ static void ensureOta() {
                 break;
         }
         LOG_ERROR("OTA: Error %d (%s)", (int)error, msg);
-        otaActive = false;
-        otaStart = 0;
-        publishBool(t_ota_state, false, true);
+        stopOtaWindow("error");
     });
 
     ArduinoOTA.begin();
@@ -1352,10 +1382,19 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
         }
     }
     if (parse_onoff(t_ota_cmd, hv)) {
-        otaActive = hv;
-        otaStart = otaActive ? millis() : 0;
-        publishBool(t_ota_state, otaActive, true);
-        LOG("HA: OTA -> %s", otaActive ? "ON" : "OFF");
+        LOG("HA: OTA -> %s", hv ? "ON" : "OFF");
+        if (hv) {
+            startOtaWindow("window armed");
+            if (!otaStartupMode) {
+                LOG("OTA: rebooting to apply HA request");
+                delay(250);
+                mqttClient.loop();
+                delay(250);
+                ESP.restart();
+            }
+        } else {
+            stopOtaWindow("disabled via HA");
+        }
     }
     if (changed) {
         // Update the active set temperature and mirror all setpoints
@@ -1679,6 +1718,8 @@ void setup() {
 
     pulseCount = 0;
     startTime = millis();
+    otaBootStart = startTime;
+    otaStartupMode = true;
     lastPidTime = startTime;
     lastPwmTime = startTime;
     lastPulseTime = esp_timer_get_time();
@@ -1711,7 +1752,7 @@ void loop() {
 
     // Handle OTA as early and as often as possible
     ensureOta();
-    if (WiFi.status() == WL_CONNECTED) ArduinoOTA.handle();
+    if (otaActive && WiFi.status() == WL_CONNECTED) ArduinoOTA.handle();
 
     // If OTA is active, keep loop lean
     if (otaActive) {
