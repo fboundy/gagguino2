@@ -2,6 +2,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_now.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 #include "freertos/timers.h"
 #include "freertos/task.h"
@@ -18,6 +19,7 @@
 #include "EspNowPacket.h"
 
 #define ESPNOW_TIMEOUT_MS 15000
+#define ESPNOW_PACKET_TIMEOUT_MS 2000
 #define ESPNOW_PING_PERIOD_MS 500
 #define ESPNOW_HANDSHAKE_REQ 0xAA
 #define ESPNOW_HANDSHAKE_ACK 0x55
@@ -465,6 +467,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
                            int data_len)
 {
     s_espnow_last_rx = time(NULL);
+    s_espnow_last_rx_us = esp_timer_get_time();
     if (data_len == 1 && data[0] == ESPNOW_HANDSHAKE_ACK)
     {
         if (info)
@@ -605,6 +608,7 @@ static void try_start_espnow(void)
     }
     ESP_LOGI("ESP-NOW", "Initialized on channel %d", s_espnow_channel);
     s_espnow_packet = false;
+    s_espnow_last_rx_us = esp_timer_get_time();
     if (!s_espnow_timer)
     {
         s_espnow_timer = xTimerCreate("espnow", pdMS_TO_TICKS(ESPNOW_TIMEOUT_MS),
@@ -630,6 +634,7 @@ static void try_start_espnow(void)
 
     // Kick off handshake
     s_espnow_handshake = false;
+    s_espnow_start_req = false;
     uint8_t hs = ESPNOW_HANDSHAKE_REQ;
     esp_err_t err = esp_now_send(s_espnow_peer, &hs, 1);
     if (err != ESP_OK)
@@ -640,6 +645,41 @@ static void try_start_espnow(void)
     {
         ESP_LOGI("ESP-NOW", "Handshake request sent");
     }
+}
+
+static void espnow_failover(const char *reason)
+{
+    ESP_LOGW("ESP-NOW", "%s", reason);
+    if (s_espnow_active)
+    {
+        esp_now_deinit();
+    }
+    if (s_espnow_timer)
+    {
+        xTimerStop(s_espnow_timer, 0);
+    }
+    if (s_espnow_ping_timer)
+    {
+        xTimerStop(s_espnow_ping_timer, 0);
+    }
+    if (s_espnow_log_timer)
+    {
+        xTimerStop(s_espnow_log_timer, 0);
+    }
+    s_espnow_packet_count = 0;
+    s_use_espnow = false;
+    s_espnow_last_rx = 0;
+    s_espnow_last_rx_us = 0;
+    s_espnow_packet = false;
+    s_espnow_active = false;
+    s_espnow_handshake = false;
+    s_espnow_start_req = false;
+    if (s_mqtt)
+    {
+        esp_mqtt_client_start(s_mqtt);
+        MQTT_Publish(TOPIC_ESPNOW_CMD, "ON", 1, false);
+    }
+    esp_wifi_connect();
 }
 
 static void espnow_ping_cb(TimerHandle_t xTimer)
@@ -692,29 +732,18 @@ static void Wireless_Poll(void)
         s_espnow_timeout_req = false;
         if (!s_espnow_packet && s_espnow_active)
         {
-            esp_now_deinit();
-            if (s_espnow_ping_timer)
-            {
-                xTimerStop(s_espnow_ping_timer, 0);
-            }
-            if (s_espnow_log_timer)
-            {
-                xTimerStop(s_espnow_log_timer, 0);
-            }
-            s_espnow_packet_count = 0;
-            s_use_espnow = false;
-            s_espnow_last_rx = 0; // clear stale timestamp so MQTT comparison is valid
-            esp_wifi_connect();
-            if (s_mqtt)
-            {
-                esp_mqtt_client_start(s_mqtt);
-                MQTT_Publish(TOPIC_ESPNOW_CMD, "ON", 1, false);
-            }
-            s_espnow_active = false;
-            s_espnow_handshake = false;
+            espnow_failover("ESP-NOW handshake timed out");
         }
     }
-
+    if (s_espnow_active && s_espnow_handshake)
+    {
+        uint64_t now_us = esp_timer_get_time();
+        if (s_espnow_last_rx_us != 0 &&
+            now_us - s_espnow_last_rx_us > (uint64_t)ESPNOW_PACKET_TIMEOUT_MS * 1000ULL)
+        {
+            espnow_failover("ESP-NOW packet timeout");
+        }
+    }
     // Handle pending ESP-NOW ping/handshake sends
     if (s_espnow_ping_req)
     {

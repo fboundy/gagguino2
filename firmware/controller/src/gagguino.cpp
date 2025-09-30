@@ -96,7 +96,7 @@ constexpr unsigned long MQTT_CYCLE = 1000;       // ms between publishes when id
 // constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
 constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
 
-constexpr size_t MQTT_BUFFER_BYTES = 2048;
+constexpr size_t MQTT_BUFFER_BYTES = 4096;
 constexpr size_t MQTT_PUBLISH_OVERHEAD = 16;
 
 constexpr unsigned long FLOW_RATE_LOG_WINDOW_MS = LOG_CYCLE;
@@ -304,6 +304,8 @@ char t_pidg_state[96], t_pidg_cmd[96];
 // PID derivative filter tau topics
 char t_piddtau_state[96], t_piddtau_cmd[96];
 
+bool g_topicsReady = false;
+
 // Config topics
 char c_vol[128], c_shotvol[128], c_flowrate[128], c_settemp[128], c_curtemp[128], c_press[128],
     c_shottime[128], c_ota[128], c_pump_power_sensor[128], c_brewtemp[128], c_steamtemp[128],
@@ -376,7 +378,9 @@ static void initMqttTuning() {
     // Longer keepalive so brief OTA stalls don't drop MQTT
     mqttClient.setKeepAlive(60);
     mqttClient.setSocketTimeout(5);
-    mqttClient.setBufferSize(MQTT_BUFFER_BYTES);
+    if (!mqttClient.setBufferSize(MQTT_BUFFER_BYTES)) {
+        LOG_ERROR("MQTT: buffer resize failed (requested %u)", (unsigned)MQTT_BUFFER_BYTES);
+    }
 }
 /**
  * @brief Resolve `MQTT_HOST` to an IP once and cache it.
@@ -1289,6 +1293,7 @@ static void publishBool(const char* topic, bool on, bool retain) {
 
 // Publish retained number/config states once (on connect) or on change.
 static void publishNumberStatesSnapshot() {
+    if (!g_topicsReady) return;
     // NOTE: Config/number states are published on connect and on change only.
     publishNum(t_pump_state, pumpPower, 0, true);
     publishNum(t_pressset_state, pumpPressureTargetBar, 1, true);
@@ -1308,6 +1313,7 @@ static void forceHeaterOff() {
  * @brief Publish periodic telemetry and mirrored setpoint values.
  */
 static void publishStates() {
+    if (!g_topicsReady) return;
     float flowRateMqtt =
         updateFlowRateTracker(flowRateMqttTracker, pulseCount, currentTime,
                               FLOW_RATE_MQTT_WINDOW_MS, FLOW_RATE_MQTT_WINDOW_MS * 2);
@@ -1747,6 +1753,7 @@ static void ensureMqtt() {
             mqttClient.publish(MQTT_STATUS, "online", true);
             makeIdsFromMac();
             buildTopics();
+            g_topicsReady = true;
             publishDiscovery();
             mqttClient.subscribe(t_brewset_cmd);
             mqttClient.subscribe(t_steamset_cmd);
@@ -1868,6 +1875,10 @@ void setup() {
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    makeIdsFromMac();
+    buildTopics();
+    g_topicsReady = true;
+
 #if defined(ARDUINO_ARCH_ESP32)
     // Improve OTA/MQTT reliability by disabling WiFi modem sleep
     WiFi.setSleep(false);
