@@ -7,3 +7,7 @@ firmware/display/.vscode/
 # PlatformIO build folders
 firmware/controller/.pio/
 firmware/display/.pio/
+<<<<<<< Updated upstream
+=======
+firmware/controller/lib/RBDdimmer/
+>>>>>>> Stashed changes
