@@ -92,8 +92,8 @@ constexpr uint8_t ESPNOW_CMD_HEATER_OFF = 0xA0;
 constexpr uint8_t ESPNOW_CMD_STEAM_ON = 0xB1;
 constexpr uint8_t ESPNOW_CMD_STEAM_OFF = 0xB0;
 
-constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when idle (reduced chatter)
-constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
+constexpr unsigned long MQTT_CYCLE = 1000;       // ms between publishes when idle (reduced chatter)
+// constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
 constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
 
 constexpr size_t MQTT_BUFFER_BYTES = 2048;
@@ -1934,8 +1934,8 @@ void loop() {
         lastEspNowTime = currentTime;
     }
 
-    unsigned long publishInterval = shotFlag ? SHOT_CYCLE : IDLE_CYCLE;
-    if (!otaActive && streamData && (currentTime - lastMqttTime) >= publishInterval) {
+
+    if (!otaActive && streamData && (currentTime - lastMqttTime) >= MQTT_CYCLE) {
         // Only advance the timer when we actually publish
         if (mqttClient.connected()) {
             publishStates();
