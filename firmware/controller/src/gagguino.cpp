@@ -92,10 +92,6 @@ constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP
 // Simple handshake bytes for ESP-NOW link-up
 constexpr uint8_t ESPNOW_HANDSHAKE_REQ = 0xAA;
 constexpr uint8_t ESPNOW_HANDSHAKE_ACK = 0x55;
-constexpr uint8_t ESPNOW_CMD_HEATER_ON = 0xA1;
-constexpr uint8_t ESPNOW_CMD_HEATER_OFF = 0xA0;
-constexpr uint8_t ESPNOW_CMD_STEAM_ON = 0xB1;
-constexpr uint8_t ESPNOW_CMD_STEAM_OFF = 0xB0;
 
 constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when idle (reduced chatter)
 constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
@@ -208,7 +204,7 @@ float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;  // HA switch default ON at boot
-float pumpPower = 0.0f;     // HA-controllable pump power 0-100%
+float pumpPower = 95.0f;    // Default pump power (%), overridden by display
 
 // Pressure
 int rawPress = 0;
@@ -242,7 +238,8 @@ bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false
 // OTA
 static bool otaInitialized = false;
 static bool otaActive = false;      // minimize other work while OTA is in progress
-static unsigned long otaStart = 0;  // millis when OTA was enabled
+static bool otaWindowEnabled = false;  // OTA allowed via ESP-NOW command
+static unsigned long otaStart = 0;     // millis when OTA window was enabled
 
 // MQTT diagnostics
 static IPAddress g_mqttIp;
@@ -256,6 +253,11 @@ static bool g_espnowHandshake = false;
 static bool g_mqttDisabled = false;
 static unsigned long g_mqttDisabledSince = 0;
 static unsigned long g_lastEspnowEpoch = 0;  // Unix time of last ESP-NOW packet
+static uint8_t g_displayMac[ESP_NOW_ETH_ALEN] = {0};
+static bool g_haveDisplayPeer = false;
+static uint32_t g_lastControlRevision = 0;
+static unsigned long g_lastDisplayAckMs = 0;
+static EspNowPumpMode pumpMode = ESPNOW_PUMP_MODE_NORMAL;
 
 // ---------- HA Discovery identity / topics ----------
 const char* DISCOVERY_PREFIX = "homeassistant";
@@ -395,8 +397,8 @@ static void publishBool(const char* topic, bool on, bool retain = true);
  * - During OTA, the heater output is disabled and main work throttled.
  */
 static void ensureOta() {
-    if (otaActive && otaStart && (millis() - otaStart >= OTA_ENABLE_MS)) {
-        otaActive = false;
+    if (otaWindowEnabled && otaStart && (millis() - otaStart >= OTA_ENABLE_MS) && !otaActive) {
+        otaWindowEnabled = false;
         otaStart = 0;
         publishBool(t_ota_state, false, true);
         LOG("OTA: window expired");
@@ -430,6 +432,7 @@ static void ensureOta() {
         LOG("OTA: End");
         otaActive = false;
         otaStart = 0;
+        otaWindowEnabled = false;
         publishBool(t_ota_state, false, true);
         // (Optional) re-attach interrupts if you detached them on start
         // attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
@@ -1128,6 +1131,12 @@ static void publishNumberStatesSnapshot() {
     // publishNum(t_pump_state, pumpPower, 0, true);
 }
 
+static inline float clampf(float v, float lo, float hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
 // Helper: immediately disable the heater output and prevent PID updates.
 // Also disables steam unless hardware AC sense keeps it active.
 static void forceHeaterOff() {
@@ -1184,6 +1193,28 @@ static void publishStates() {
     publishNum(t_piddtau_state, dTauTemp, 2, true);
 }
 
+static void revertToSafeDefaults() {
+    if (!heaterEnabled) {
+        heaterEnabled = true;
+        publishBool(t_heater_state, heaterEnabled, true);
+        LOG("ESP-NOW: Heater default -> ON");
+    }
+    pumpPower = 95.0f;
+    applyPumpPower();
+    pumpMode = ESPNOW_PUMP_MODE_NORMAL;
+    steamDispFlag = false;
+    steamResetPending = false;
+    steamFlag = steamDispFlag || steamHwFlag;
+    setTemp = steamFlag ? steamSetpoint : brewSetpoint;
+    publishBool(t_steam_state, steamFlag, true);
+    publishNum(t_settemp_state, setTemp, 1, true);
+    if (otaWindowEnabled) {
+        otaWindowEnabled = false;
+        otaStart = 0;
+        publishBool(t_ota_state, false, true);
+    }
+}
+
 static void sendEspNowPacket() {
     EspNowPacket pkt{};
     pkt.shotFlag = shotFlag ? 1 : 0;
@@ -1196,174 +1227,157 @@ static void sendEspNowPacket() {
     pkt.pressureBar = pressNow;
     pkt.steamSetpointC = steamSetpoint;
     pkt.brewSetpointC = brewSetpoint;
-    esp_now_send(nullptr, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
+    const uint8_t* dest = g_haveDisplayPeer ? g_displayMac : nullptr;
+    esp_err_t err = esp_now_send(dest, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
+    if (err != ESP_OK) {
+        LOG_ERROR("ESP-NOW: telemetry send failed (%d)", (int)err);
+    }
     g_lastEspnowEpoch = static_cast<unsigned long>(time(nullptr));
 }
 
-static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
-    if (len == 1 && data[0] == ESPNOW_HANDSHAKE_REQ) {
-        LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3],
-            mac[4], mac[5]);
-        uint8_t ack = ESPNOW_HANDSHAKE_ACK;
-        // Ensure we can reply directly to the sender. If the display has not
-        // yet been registered as a peer, add it now so the ACK can be sent
-        // unicast to its MAC address. Broadcasting via `nullptr` was not
-        // reliably delivered, leading to repeated handshake attempts.
-        if (!esp_now_is_peer_exist(mac)) {
-            esp_now_peer_info_t peer{};
-            memcpy(peer.peer_addr, mac, ESP_NOW_ETH_ALEN);
-            peer.channel = g_espnowChannel;
-            peer.ifidx = WIFI_IF_STA;
-            peer.encrypt = false;
-            esp_err_t res = esp_now_add_peer(&peer);
-            if (res != ESP_OK) {
-                LOG_ERROR("ESP-NOW: add peer failed (%d)", (int)res);
-            }
-        }
-        esp_now_send(mac, &ack, 1);
-        g_espnowHandshake = true;
-        LOG("ESP-NOW: handshake acknowledged");
-    } else if (len == 1 && (data[0] == ESPNOW_CMD_HEATER_ON || data[0] == ESPNOW_CMD_HEATER_OFF)) {
-        bool hv = (data[0] == ESPNOW_CMD_HEATER_ON);
+static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* mac) {
+    if (pkt.type != ESPNOW_CONTROL_PACKET) return;
+    if (pkt.revision && pkt.revision <= g_lastControlRevision) return;
+    g_lastControlRevision = pkt.revision;
+
+    bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
+    if (hv != heaterEnabled) {
         heaterEnabled = hv;
-        if (!heaterEnabled) {
-            forceHeaterOff();
-        }
+        if (!heaterEnabled) forceHeaterOff();
         publishBool(t_heater_state, heaterEnabled, true);
         LOG("ESP-NOW: Heater -> %s", heaterEnabled ? "ON" : "OFF");
-    } else if (len == 1 && (data[0] == ESPNOW_CMD_STEAM_ON || data[0] == ESPNOW_CMD_STEAM_OFF)) {
-        bool sv = (data[0] == ESPNOW_CMD_STEAM_ON);
+    }
+
+    bool sv = (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0;
+    if (sv != steamDispFlag) {
         steamDispFlag = sv;
         steamResetPending = false;
         steamFlag = steamDispFlag || steamHwFlag;
-        // Ensure the active target temperature reflects the display's steam mode immediately
         setTemp = steamFlag ? steamSetpoint : brewSetpoint;
-        // Reflect the new active set temperature promptly for HA/telemetry
-        publishNum(t_settemp_state, setTemp, 1, true);
         publishBool(t_steam_state, steamFlag, true);
+        publishNum(t_settemp_state, setTemp, 1, true);
         LOG("ESP-NOW: Steam -> %s", steamFlag ? "ON" : "OFF");
     }
-}
 
-// ---------- MQTT callback (handle both setpoints) ----------
-/**
- * @brief Handle inbound MQTT commands (setpoints, PID gains, heater switch).
- */
-static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
-    auto parse_clamped = [&](const char* t, float lo, float hi, float& outVal) -> bool {
-        if (strcmp(topic, t) != 0) return false;
-        char buf[32] = {0};
-        unsigned n = (len < sizeof(buf) - 1) ? len : sizeof(buf) - 1;
-        memcpy(buf, payload, n);
-        float v = atof(buf);
-        if (v < lo) v = lo;
-        if (v > hi) v = hi;
-        outVal = v;
-        return true;
-    };
-    auto parse_onoff = [&](const char* t, bool& outVal) -> bool {
-        if (strcmp(topic, t) != 0) return false;
-        char buf[8] = {0};
-        unsigned n = (len < sizeof(buf) - 1) ? len : sizeof(buf) - 1;
-        memcpy(buf, payload, n);
-        for (unsigned i = 0; i < n; ++i) buf[i] = (char)toupper((unsigned char)buf[i]);
-        if (strcmp(buf, "ON") == 0) {
-            outVal = true;
-            return true;
-        }
-        if (strcmp(buf, "OFF") == 0) {
-            outVal = false;
-            return true;
-        }
-        return false;
-    };
-    bool changed = false;
-    if (parse_clamped(t_brewset_cmd, BREW_MIN, BREW_MAX, brewSetpoint)) {
-        changed = true;
-        LOG("HA: Brew setpoint -> %.1f °C", brewSetpoint);
-    }
-    if (parse_clamped(t_steamset_cmd, STEAM_MIN_C, STEAM_MAX_C, steamSetpoint)) {
-        changed = true;
-        LOG("HA: Steam setpoint -> %.1f °C", steamSetpoint);
-    }
-    // if (parse_clamped(t_pump_cmd, 0.0f, 100.0f, pumpPower)) {
-    // applyPumpPower();
-    // publishNum(t_pump_state, pumpPower, 0, true);
-    // LOG("HA: Pump power -> %.0f%%", pumpPower);
-    // }
-    // PID params
-    float tmp;
-    if (parse_clamped(t_pidp_cmd, 0.0f, 200.0f, tmp)) {
-        pGainTemp = tmp;
-        publishNum(t_pidp_state, pGainTemp, 2, true);
-        LOG("HA: PID P -> %.2f", pGainTemp);
-    }
-    if (parse_clamped(t_pidi_cmd, 0.0f, 10.0f, tmp)) {
-        iGainTemp = tmp;
-        publishNum(t_pidi_state, iGainTemp, 2, true);
-        LOG("HA: PID I -> %.2f", iGainTemp);
-    }
-    if (parse_clamped(t_pidd_cmd, 0.0f, 500.0f, tmp)) {
-        dGainTemp = tmp;
-        publishNum(t_pidd_state, dGainTemp, 2, true);
-        LOG("HA: PID D -> %.2f", dGainTemp);
-    }
-    if (parse_clamped(t_pidg_cmd, 0.0f, 100.0f, tmp)) {
-        windupGuardTemp = tmp;
-        publishNum(t_pidg_state, windupGuardTemp, 2, true);
-        LOG("HA: PID Guard -> %.2f", windupGuardTemp);
+    bool otaFlag = (pkt.flags & ESPNOW_CONTROL_FLAG_OTA) != 0;
+    if (otaFlag != otaWindowEnabled) {
+        otaWindowEnabled = otaFlag;
+        otaStart = otaFlag ? millis() : 0;
+        publishBool(t_ota_state, otaWindowEnabled, true);
+        LOG("ESP-NOW: OTA -> %s", otaWindowEnabled ? "ENABLED" : "DISABLED");
     }
 
-    // dTau (0.1 .. 5.0 seconds)
-    if (parse_clamped(t_piddtau_cmd, 0.1f, 5.0f, tmp)) {
-        dTauTemp = tmp;
-        publishNum(t_piddtau_state, dTauTemp, 2, true);
-        LOG("HA: PID D Tau -> %.2f s", dTauTemp);
+    float newBrew = clampf(pkt.brewSetpointC, BREW_MIN, BREW_MAX);
+    float newSteam = clampf(pkt.steamSetpointC, STEAM_MIN_C, STEAM_MAX_C);
+    bool setChanged = false;
+    if (fabsf(newBrew - brewSetpoint) > 0.01f) {
+        brewSetpoint = newBrew;
+        setChanged = true;
     }
-    // heater switch
-    bool hv;
-    if (parse_onoff(t_heater_cmd, hv)) {
-        heaterEnabled = hv;
-        if (!heaterEnabled) {
-            forceHeaterOff();
-        }
-        publishBool(t_heater_state, heaterEnabled, true);
-        LOG("HA: Heater -> %s", heaterEnabled ? "ON" : "OFF");
+    if (fabsf(newSteam - steamSetpoint) > 0.01f) {
+        steamSetpoint = newSteam;
+        setChanged = true;
     }
-    if (parse_onoff(t_steam_cmd, hv)) {
-        steamDispFlag = hv;
-        steamResetPending = false;
-        steamFlag = steamDispFlag || steamHwFlag;
-        // Update active setpoint to match current mode and reflect it via MQTT
-        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
-        publishNum(t_settemp_state, setTemp, 1, true);
-        publishBool(t_steam_state, steamFlag, true);
-        LOG("HA: Steam -> %s", steamFlag ? "ON" : "OFF");
-    }
-    if (parse_onoff(t_espnow_cmd, hv)) {
-        g_mqttDisabled = !hv;
-        if (g_mqttDisabled) {
-            g_mqttDisabledSince = millis();
-            mqttClient.disconnect();
-            LOG("HA: MQTT disabled");
-        } else {
-            LOG("HA: MQTT enabled");
-        }
-    }
-    if (parse_onoff(t_ota_cmd, hv)) {
-        otaActive = hv;
-        otaStart = otaActive ? millis() : 0;
-        publishBool(t_ota_state, otaActive, true);
-        LOG("HA: OTA -> %s", otaActive ? "ON" : "OFF");
-    }
-    if (changed) {
-        // Update the active set temperature and mirror all setpoints
+    if (setChanged) {
         setTemp = steamFlag ? steamSetpoint : brewSetpoint;
         publishNum(t_brewset_state, brewSetpoint, 1, true);
         publishNum(t_steamset_state, steamSetpoint, 1, true);
         publishNum(t_settemp_state, setTemp, 1, true);
+        LOG("ESP-NOW: Setpoints Brew=%.1f Steam=%.1f", brewSetpoint, steamSetpoint);
+    }
+
+    float newP = clampf(pkt.pidP, 0.0f, 200.0f);
+    float newI = clampf(pkt.pidI, 0.0f, 10.0f);
+    float newD = clampf(pkt.pidD, 0.0f, 500.0f);
+    if (fabsf(newP - pGainTemp) > 0.01f) {
+        pGainTemp = newP;
+        publishNum(t_pidp_state, pGainTemp, 2, true);
+    }
+    if (fabsf(newI - iGainTemp) > 0.01f) {
+        iGainTemp = newI;
+        publishNum(t_pidi_state, iGainTemp, 2, true);
+    }
+    if (fabsf(newD - dGainTemp) > 0.1f) {
+        dGainTemp = newD;
+        publishNum(t_pidd_state, dGainTemp, 2, true);
+    }
+
+    float newPump = clampf(pkt.pumpPowerPercent, 0.0f, 100.0f);
+    if (fabsf(newPump - pumpPower) > 0.1f) {
+        pumpPower = newPump;
+        applyPumpPower();
+    }
+
+    pumpMode = static_cast<EspNowPumpMode>(pkt.pumpMode);
+
+    if (mac) {
+        memcpy(g_displayMac, mac, ESP_NOW_ETH_ALEN);
+        g_haveDisplayPeer = true;
     }
 }
+
+static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
+    if (!data || len <= 0) return;
+
+    if (len >= 2 && data[0] == ESPNOW_HANDSHAKE_REQ) {
+        uint8_t requestedChannel = data[1];
+        LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X (chan %u)",
+            mac ? mac[0] : 0, mac ? mac[1] : 0, mac ? mac[2] : 0, mac ? mac[3] : 0,
+            mac ? mac[4] : 0, mac ? mac[5] : 0, requestedChannel);
+        if (mac) {
+            esp_now_peer_info_t peer{};
+            memcpy(peer.peer_addr, mac, ESP_NOW_ETH_ALEN);
+            peer.channel = requestedChannel;
+            peer.ifidx = WIFI_IF_STA;
+            peer.encrypt = false;
+            if (esp_now_is_peer_exist(peer.peer_addr)) {
+                esp_now_mod_peer(&peer);
+            } else {
+                esp_now_add_peer(&peer);
+            }
+            memcpy(g_displayMac, mac, ESP_NOW_ETH_ALEN);
+            g_haveDisplayPeer = true;
+        }
+        g_espnowChannel = requestedChannel;
+        g_espnowHandshake = true;
+        g_espnowStatus = "linked";
+        g_lastDisplayAckMs = millis();
+        if (mqttClient.connected()) {
+            publishStr(t_espnow_state, g_espnowStatus, true);
+            publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
+            if (mac) {
+                char buf[18];
+                snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2],
+                         mac[3], mac[4], mac[5]);
+                publishStr(t_espnow_mac_state, buf, true);
+            }
+        }
+        uint8_t ack[2] = {ESPNOW_HANDSHAKE_ACK, g_espnowChannel};
+        if (mac) esp_now_send(mac, ack, sizeof(ack));
+        return;
+    }
+
+    if (len == sizeof(EspNowControlPacket) && data[0] == ESPNOW_CONTROL_PACKET) {
+        applyControlPacket(*reinterpret_cast<const EspNowControlPacket*>(data), mac);
+        g_lastDisplayAckMs = millis();
+        g_espnowHandshake = true;
+        g_espnowStatus = "linked";
+        return;
+    }
+
+    if (len == 1 && data[0] == ESPNOW_SENSOR_ACK) {
+        g_lastDisplayAckMs = millis();
+        return;
+    }
+}
+
+// ---------- MQTT callback (no-op: commands handled by display) ----------
+static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
+    (void)payload;
+    (void)len;
+    LOG("MQTT: command on %s ignored (handled by display)", topic);
+}
+
 
 // ---------- WiFi / MQTT ----------
 static void initEspNow() {
@@ -1407,6 +1421,9 @@ static void initEspNow() {
         espNowInit = true;
         esp_now_register_recv_cb(espNowRecv);
         g_espnowHandshake = false;
+        g_haveDisplayPeer = false;
+        g_lastDisplayAckMs = 0;
+        g_lastControlRevision = 0;
     }
 
     peerInfo.channel = channel;
@@ -1697,7 +1714,8 @@ void loop() {
 
     // Handle OTA as early and as often as possible
     ensureOta();
-    if (WiFi.status() == WL_CONNECTED) ArduinoOTA.handle();
+    bool otaAllowed = otaWindowEnabled || otaActive;
+    if (otaAllowed && WiFi.status() == WL_CONNECTED) ArduinoOTA.handle();
 
     // If OTA is active, keep loop lean
     if (otaActive) {
@@ -1709,6 +1727,19 @@ void loop() {
         //     isrDetached = true;
         // }
         return;
+    }
+
+    // If the display stops acknowledging, fall back to safe defaults
+    if (g_espnowHandshake && g_lastDisplayAckMs &&
+        (currentTime - g_lastDisplayAckMs) > DISPLAY_TIMEOUT_MS) {
+        LOG("ESP-NOW: display timeout after %lu ms — reverting to defaults",
+            currentTime - g_lastDisplayAckMs);
+        g_espnowHandshake = false;
+        g_haveDisplayPeer = false;
+        g_lastControlRevision = 0;
+        g_espnowStatus = "timeout";
+        if (mqttClient.connected()) publishStr(t_espnow_state, g_espnowStatus, true);
+        revertToSafeDefaults();
     }
 
     // Normal work (only when NOT doing OTA)
@@ -1726,8 +1757,7 @@ void loop() {
     ensureWifi();
     ensureMqtt();
 
-    if (g_espnowStatus == "enabled" && g_espnowHandshake &&
-        (currentTime - lastEspNowTime) >= ESP_CYCLE) {
+    if (g_espnowHandshake && (currentTime - lastEspNowTime) >= ESP_CYCLE) {
         sendEspNowPacket();
         lastEspNowTime = currentTime;
     }
