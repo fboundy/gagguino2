@@ -35,12 +35,7 @@
 
 #include <cstdarg>
 
-// Optional: triac dimmer (ESP32 AC pump control). Disabled by default to avoid
-// bringing in ESP-IDF intr headers that emit deprecation warnings. Define
-// USE_PUMP_DIMMER in build flags to enable.
-#ifdef USE_PUMP_DIMMER
 #include <RBDdimmer.h>
-#endif
 
 #include "espnow_packet.h"
 #include "secrets.h"      // WIFI_*
@@ -114,10 +109,7 @@ constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
 // Derivative filter time constant (seconds), exposed to HA
 constexpr float D_TAU_TEMP = 0.8f;
 
-// Pump dimmer instance (enabled only if USE_PUMP_DIMMER is set)
-#ifdef USE_PUMP_DIMMER
 dimmerLamp pumpDimmer(PUMP_PIN, ZC_PIN);
-#endif
 
 // Pressure calibration constants
 constexpr float PRESSURE_TOL = 1.0f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
@@ -133,6 +125,7 @@ constexpr unsigned ZC_MIN = 4;
 constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 60000;
 constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
+constexpr float PUMP_POWER_DEFAULT = 95.0f;
 
 const bool debugPrint = false;
 }  // namespace
@@ -198,7 +191,7 @@ float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;  // HA switch default ON at boot
-float pumpPower = 95.0f;    // Default pump power (%), overridden by display
+float pumpPower = PUMP_POWER_DEFAULT;  // Default pump power (%), overridden by display
 
 // Pressure
 int rawPress = 0;
@@ -509,16 +502,20 @@ static void updateTempPWM() {
     nLoop++;
 }
 
+static inline float clampf(float v, float lo, float hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
 /**
  * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
  */
 static void applyPumpPower() {
-#ifdef USE_PUMP_DIMMER
-    pumpDimmer.setPower(static_cast<int>(pumpPower));
-    pumpDimmer.setState(pumpPower > 0.0f ? ON : OFF);
-#else
-    (void)pumpPower;
-#endif
+    float clamped = clampf(pumpPower, 0.0f, 100.0f);
+    int percent = static_cast<int>(lroundf(clamped));
+    pumpDimmer.setPower(percent);
+    pumpDimmer.setState(percent > 0 ? ON : OFF);
 }
 
 /**
@@ -618,24 +615,6 @@ static void IRAM_ATTR flowInt() {
         lastPulseTime = now;
     }
 }
-/**
- * @brief Zero-cross detect ISR: records pump activity timing.
- */
-static void IRAM_ATTR zcInt() {
-    int64_t now = esp_timer_get_time();
-    // Guard against spurious re-triggers/noise (<~6 ms @ 50 Hz)
-    if (now - lastZcTime < 6000) {
-        return;
-    }
-    lastZcTime = now;
-    zcCount++;
-}
-static inline float clampf(float v, float lo, float hi) {
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
-}
-
 // Helper: immediately disable the heater output and prevent PID updates.
 // Also disables steam unless hardware AC sense keeps it active.
 static void forceHeaterOff() {
@@ -655,7 +634,7 @@ static void revertToSafeDefaults() {
         heaterEnabled = true;
         LOG("ESP-NOW: Heater default -> ON");
     }
-    pumpPower = 95.0f;
+    pumpPower = PUMP_POWER_DEFAULT;
     applyPumpPower();
     pumpMode = ESPNOW_PUMP_MODE_NORMAL;
     steamDispFlag = false;
@@ -1037,9 +1016,7 @@ void setup() {
     pinMode(ZC_PIN, INPUT);
     pinMode(AC_SENS, INPUT_PULLUP);
     pinMode(PUMP_PIN, OUTPUT);
-#ifdef USE_PUMP_DIMMER
     pumpDimmer.begin(NORMAL_MODE, OFF);
-#endif
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
     applyPumpPower();
@@ -1067,9 +1044,6 @@ void setup() {
     // double the pulse resolution.  CHANGE triggers the ISR on any
     // transition and `PULSE_MIN` guards against spurious bounce.
     attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
-#ifndef USE_PUMP_DIMMER
-    attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
-#endif
 
     pulseCount = 0;
     startTime = millis();
