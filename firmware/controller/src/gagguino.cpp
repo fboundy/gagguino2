@@ -89,10 +89,6 @@ constexpr int PRESS_PIN = 35;
 constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP_CYCLE = 500,
                         LOG_CYCLE = 2000;
 
-// Simple handshake bytes for ESP-NOW link-up
-constexpr uint8_t ESPNOW_HANDSHAKE_REQ = 0xAA;
-constexpr uint8_t ESPNOW_HANDSHAKE_ACK = 0x55;
-
 constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
 
 // Brew & Steam setpoint limits
