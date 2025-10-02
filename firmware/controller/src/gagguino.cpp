@@ -89,13 +89,12 @@ constexpr int PRESS_PIN = 35;
 constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP_CYCLE = 500,
                         LOG_CYCLE = 2000;
 
-// Simple handshake bytes for ESP-NOW link-up
-constexpr uint8_t ESPNOW_HANDSHAKE_REQ = 0xAA;
-constexpr uint8_t ESPNOW_HANDSHAKE_ACK = 0x55;
+// Simple handshake bytes for ESP-NOW link-up (values defined in shared/espnow_protocol.h)
 
 constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when idle (reduced chatter)
 constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
 constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
+constexpr unsigned long DISPLAY_TIMEOUT_MS = 5000;  // ms without ACK before fallback
 
 // Brew & Steam setpoint limits
 constexpr float BREW_MIN = 90.0f, BREW_MAX = 99.0f;
