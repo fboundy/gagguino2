@@ -114,8 +114,8 @@ static lv_obj_t *conn_label;
 static lv_obj_t *conn_status_label;
 static lv_obj_t *battery_bar;
 static lv_obj_t *battery_label;
-static int last_conn_type = -1;
-static int last_conn_status = -1;
+static uint8_t last_conn_bits = 0xFF;
+static int last_link_status = -1;
 static int last_battery = -1;
 static lv_timer_t *buzzer_timer;
 static bool shot_target_reached;
@@ -825,65 +825,60 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   if (tick_layer)
     lv_obj_invalidate(tick_layer);
 
-  enum
-  {
-    CONN_NONE,
-    CONN_MQTT,
-    CONN_ESPNOW
-  };
-  int conn = CONN_NONE;
+  bool mqtt_ok = Wireless_IsMQTTConnected();
   bool espnow_active = Wireless_IsEspNowActive();
-  if (espnow_active)
-    conn = CONN_ESPNOW;
-  else if (Wireless_IsMQTTConnected())
-    conn = CONN_MQTT;
+  bool espnow_link = Wireless_UsingEspNow();
+  uint8_t bits = (mqtt_ok ? 0x1 : 0x0) | (espnow_active ? 0x2 : 0x0) |
+                 (espnow_link ? 0x4 : 0x0);
 
-  enum
+  if (conn_label && bits != last_conn_bits)
   {
-    STATUS_NONE,
-    STATUS_CONNECTING,
-    STATUS_CONNECTED
-  };
-  int status = STATUS_NONE;
-  if (espnow_active)
-    status = Wireless_UsingEspNow() ? STATUS_CONNECTED : STATUS_CONNECTING;
-
-  if (conn_label && conn != last_conn_type)
-  {
-    switch (conn)
-    {
-    case CONN_MQTT:
-      lv_label_set_text(conn_label, "MQTT");
-      lv_obj_set_style_text_color(conn_label, lv_palette_main(LV_PALETTE_ORANGE), 0);
-      break;
-    case CONN_ESPNOW:
-      lv_label_set_text(conn_label, "ESP-NOW");
-      lv_obj_set_style_text_color(conn_label, lv_palette_main(LV_PALETTE_CYAN), 0);
-      break;
-    default:
-      lv_label_set_text(conn_label, "");
-      break;
-    }
-    last_conn_type = conn;
+    const char *mqtt_txt = mqtt_ok ? "OK" : "--";
+    const char *esp_txt = espnow_link ? "OK" : (espnow_active ? "PAIR" : "--");
+    char status_buf[48];
+    lv_snprintf(status_buf, sizeof(status_buf), "MQTT:%s  ESP:%s", mqtt_txt, esp_txt);
+    lv_label_set_text(conn_label, status_buf);
+    lv_color_t colour = lv_palette_main(LV_PALETTE_YELLOW);
+    if (mqtt_ok && espnow_link)
+      colour = lv_palette_main(LV_PALETTE_GREEN);
+    else if (!mqtt_ok && !espnow_active)
+      colour = lv_palette_main(LV_PALETTE_RED);
+    lv_obj_set_style_text_color(conn_label, colour, 0);
+    last_conn_bits = bits;
   }
 
-  if (conn_status_label && status != last_conn_status)
+  int link_status;
+  if (!mqtt_ok)
+    link_status = 0;
+  else if (!espnow_active)
+    link_status = 1;
+  else if (!espnow_link)
+    link_status = 2;
+  else
+    link_status = 3;
+
+  if (conn_status_label && link_status != last_link_status)
   {
-    switch (status)
+    switch (link_status)
     {
-    case STATUS_CONNECTING:
-      lv_label_set_text(conn_status_label, "Connecting");
+    case 0:
+      lv_label_set_text(conn_status_label, "MQTT offline");
+      lv_obj_set_style_text_color(conn_status_label, lv_palette_main(LV_PALETTE_RED), 0);
+      break;
+    case 1:
+      lv_label_set_text(conn_status_label, "ESP-NOW idle");
+      lv_obj_set_style_text_color(conn_status_label, lv_palette_main(LV_PALETTE_ORANGE), 0);
+      break;
+    case 2:
+      lv_label_set_text(conn_status_label, "ESP-NOW pairing");
       lv_obj_set_style_text_color(conn_status_label, lv_palette_main(LV_PALETTE_YELLOW), 0);
       break;
-    case STATUS_CONNECTED:
-      lv_label_set_text(conn_status_label, "Connected");
+    default:
+      lv_label_set_text(conn_status_label, "All links OK");
       lv_obj_set_style_text_color(conn_status_label, lv_palette_main(LV_PALETTE_GREEN), 0);
       break;
-    default:
-      lv_label_set_text(conn_status_label, "");
-      break;
     }
-    last_conn_status = status;
+    last_link_status = link_status;
   }
 
   int batt = Battery_GetPercentage();
