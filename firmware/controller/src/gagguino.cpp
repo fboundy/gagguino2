@@ -638,7 +638,11 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
             memcpy(g_displayMac, mac, ESP_NOW_ETH_ALEN);
             g_haveDisplayPeer = true;
         }
-        g_espnowChannel = requestedChannel;
+
+        if (!applyEspNowChannel(requestedChannel, true, false)) {
+            LOG_ERROR("ESP-NOW: failed to switch to channel %u", requestedChannel);
+            return;
+        }
         g_espnowHandshake = true;
         g_espnowStatus = "linked";
         unsigned long nowMs = millis();
