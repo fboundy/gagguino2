@@ -1,15 +1,14 @@
 Gagguino ESP – ESP32 Firmware for Gaggia Classic
 ================================================
 
-An ESP32-based controller for the Gaggia Classic espresso machine featuring PID temperature control (MAX31865 + PT100), flow/pressure/shot timing, and a robust ESP-NOW link to the companion display (which exposes MQTT/Home Assistant integration) alongside OTA updates.
+An ESP32-based controller for the Gaggia Classic espresso machine featuring PID temperature control (MAX31865 + PT100), flow/pressure/shot timing, and a robust ESP-NOW link to the companion display (which exposes MQTT/Home Assistant integration). Wi-Fi is used briefly at boot to synchronize the RTC via NTP before handing off entirely to the ESP-NOW display link.
 
 Features
 --------
 - PID temperature control using MAX31865 (PT100) with anti-windup and derivative on measurement.
 - Heater control via time-proportioning PWM windowing.
 - Flow pulses → volume, pressure sampling with moving average, and shot timing.
-- Wi‑Fi + ESP-NOW telemetry/control link to the display (display handles MQTT/Home Assistant discovery).
-- ArduinoOTA with safety handling (heater disabled during OTA).
+- ESP-NOW telemetry/control link to the display (display handles MQTT/Home Assistant discovery) with Wi‑Fi used only for NTP time sync.
 
 Hardware / Pinout (ESP32 dev board defaults)
 -------------------------------------------
@@ -39,15 +38,6 @@ Getting Started
 - Upload (USB): `pio run -t upload`
 - Monitor: `pio device monitor -b 115200`
 
-4) OTA uploads (Wi‑Fi)
-- `platformio.ini` includes an `esp32dev_ota` env with `upload_protocol = espota`.
-- Set your device IP in `upload_port` (e.g. `192.168.4.99`).
-- Upload over Wi‑Fi: `pio run -e esp32dev_ota -t upload`
-- Optional OTA password:
-  - In `platformio.ini` add build flag: `-D OTA_PASSWORD="your-password"` (or `OTA_PASSWORD_HASH`)
-  - Match the `--auth` flag under `upload_flags` for `espota`.
-- Enable OTA via the display before uploading (opens a ~5 min window and pauses normal telemetry).
-
 Tuning & Behavior
 -----------------
 - Brew setpoint limits: 90–99 °C. Steam setpoint limits: 145–155 °C (default 152 °C).
@@ -59,7 +49,6 @@ Troubleshooting
 ---------------
 - Serial monitor at `115200` shows boot logs, Wi‑Fi status, and optional periodic diagnostics.
 - MAX31865 diagnostics: firmware logs faults and raw/temperature reads to help validate wiring.
-- OTA: Device hostname is derived from MAC (e.g. `gaggia-ABCDEF`). During OTA the heater is forced off and other work is throttled.
 
 Safety
 ------
@@ -68,11 +57,11 @@ Safety
 
 Project Layout
 --------------
-- `src/gagguino.cpp` – main firmware logic, ESP-NOW, OTA, PID, sensors.
+- `src/gagguino.cpp` – main firmware logic, ESP-NOW, PID, sensors.
 - `src/gagguino.h` – public entry points for `setup()`/`loop()` in the `gag` namespace.
 - `src/main.cpp` – minimal sketch bridging Arduino to `gag::setup/loop`.
 - `src/secrets.h` – Wi‑Fi (and shared MQTT credentials for the display).
-- `platformio.ini` – environments, dependencies, and OTA settings.
+- `platformio.ini` – environments and build settings.
 
 License
 -------

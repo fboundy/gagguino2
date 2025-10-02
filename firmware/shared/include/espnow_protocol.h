@@ -23,7 +23,7 @@
 // Identifier for OTA enable/disable commands piggybacked on the control packet.
 #define ESPNOW_CONTROL_FLAG_HEATER   0x01
 #define ESPNOW_CONTROL_FLAG_STEAM    0x02
-#define ESPNOW_CONTROL_FLAG_OTA      0x04
+#define ESPNOW_CONTROL_FLAG_OTA      0x04  //!< Reserved (legacy OTA enable)
 
 // Pump operating modes understood by the controller. The display always sends
 // one of these values in EspNowControlPacket::pumpMode.
