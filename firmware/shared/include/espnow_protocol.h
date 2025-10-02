@@ -36,7 +36,7 @@ typedef enum {
 // Packet describing brew/steam state for ESP-NOW transport. This struct must
 // remain byte-for-byte compatible with the legacy implementation so that both
 // ends can cast the payload directly.
-struct __attribute__((packed)) EspNowPacket {
+typedef struct __attribute__((packed)) EspNowPacket {
     uint8_t shotFlag;        //!< 1 if a shot is in progress
     uint8_t steamFlag;       //!< 1 if the machine is in steam mode
     uint8_t heaterSwitch;    //!< Heater switch state (1=on)
@@ -47,11 +47,11 @@ struct __attribute__((packed)) EspNowPacket {
     float pressureBar;       //!< Brew pressure in bar
     float steamSetpointC;    //!< Steam temperature setpoint in °C
     float brewSetpointC;     //!< Brew temperature setpoint in °C
-};
+} EspNowPacket;
 
 // Control payload mirrored between Home Assistant, the display and the
 // controller. The first byte must always be ESPNOW_CONTROL_PACKET.
-struct __attribute__((packed)) EspNowControlPacket {
+typedef struct __attribute__((packed)) EspNowControlPacket {
     uint8_t type;       //!< Constant ESPNOW_CONTROL_PACKET
     uint8_t flags;      //!< Bitmask of ESPNOW_CONTROL_FLAG_*
     uint8_t pumpMode;   //!< EspNowPumpMode value
@@ -63,5 +63,5 @@ struct __attribute__((packed)) EspNowControlPacket {
     float pidI;
     float pidD;
     float pumpPowerPercent;
-};
+} EspNowControlPacket;
 
