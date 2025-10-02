@@ -21,7 +21,7 @@ namespace gag {
  *
  * Responsibilities:
  * - Configure pins and peripherals (MAX31865, ADC, etc.).
- * - Start Wi‑Fi and set MQTT parameters (but connection is retried in the main loop).
+ * - Start Wi‑Fi and establish the ESP-NOW link to the display.
  * - Initialize Over‑The‑Air (OTA) update handling once Wi‑Fi is ready.
  * - Calibrate/zero pressure intercept on boot if near atmospheric.
  */
@@ -33,8 +33,8 @@ void setup();
  * Runs frequently to:
  * - Update PID and PWM based heater control.
  * - Track flow, pressure, shot timing and steam state.
- * - Maintain Wi‑Fi, MQTT and OTA sessions.
- * - Publish telemetry and Home Assistant discovery/state updates.
+ * - Maintain Wi‑Fi, ESP-NOW and OTA sessions.
+ * - Exchange telemetry with the display over ESP-NOW.
  */
 void loop();
 
