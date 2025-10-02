@@ -97,7 +97,7 @@ constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
 constexpr unsigned long DISPLAY_TIMEOUT_MS = 5000;  // ms without ACK before fallback
 
 // Brew & Steam setpoint limits
-constexpr float BREW_MIN = 90.0f, BREW_MAX = 99.0f;
+constexpr float BREW_MIN = 87.0f, BREW_MAX = 97.0f;
 constexpr float STEAM_MIN_C = 145.0f, STEAM_MAX_C = 155.0f;
 
 // Default steam setpoint (within limits)
@@ -193,7 +193,7 @@ static void syncClock() {
 
 // Temps / PID
 float currentTemp = 0.0f, lastTemp = 0.0f, pvFiltTemp = 0.0f;
-float brewSetpoint = 95.0f;           // HA-controllable (90–99)
+float brewSetpoint = 92.0f;           // HA-controllable (90–99)
 float steamSetpoint = STEAM_DEFAULT;  // HA-controllable (145–155)
 float setTemp = brewSetpoint;         // active target (brew or steam)
 float iStateTemp = 0.0f, heatPower = 0.0f;
@@ -218,10 +218,10 @@ unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, last
 // microsecond timestamps for ISR debounce
 volatile int64_t lastPulseTime = 0;
 unsigned long shotStart = 0, startTime = 0;
-float shotTime = 0;  //
+float shotTime = 0;                   //
 unsigned long shotAccumulatedMs = 0;  //!< total pump‑active time of completed segments
-unsigned long shotTimeMs = 0;        //!< current shot time including active segment
-bool pumpPrevActive = false;         //!< tracks pump activity transitions
+unsigned long shotTimeMs = 0;         //!< current shot time including active segment
+bool pumpPrevActive = false;          //!< tracks pump activity transitions
 
 // Flow / flags
 volatile unsigned long pulseCount = 0;
@@ -236,7 +236,7 @@ bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false
 
 // OTA
 static bool otaInitialized = false;
-static bool otaActive = false;      // minimize other work while OTA is in progress
+static bool otaActive = false;         // minimize other work while OTA is in progress
 static bool otaWindowEnabled = false;  // OTA allowed via ESP-NOW command
 static unsigned long otaStart = 0;     // millis when OTA window was enabled
 
@@ -798,8 +798,8 @@ static void buildTopics() {
     snprintf(t_steamset_state, sizeof(t_steamset_state), "%s/%s/steam_setpoint/state", STATE_BASE,
              uid_suffix);
     // snprintf(t_pump_cmd, sizeof(t_pump_cmd), "%s/%s/pump_power/set", STATE_BASE, uid_suffix);
-    // snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE, uid_suffix);
-    // PID numbers
+    // snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE,
+    // uid_suffix); PID numbers
     snprintf(t_pidp_cmd, sizeof(t_pidp_cmd), "%s/%s/pid_p/set", STATE_BASE, uid_suffix);
     snprintf(t_pidp_state, sizeof(t_pidp_state), "%s/%s/pid_p/state", STATE_BASE, uid_suffix);
     snprintf(t_pidi_cmd, sizeof(t_pidi_cmd), "%s/%s/pid_i/set", STATE_BASE, uid_suffix);
@@ -1320,9 +1320,9 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
 
     if (len >= 2 && data[0] == ESPNOW_HANDSHAKE_REQ) {
         uint8_t requestedChannel = data[1];
-        LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X (chan %u)",
-            mac ? mac[0] : 0, mac ? mac[1] : 0, mac ? mac[2] : 0, mac ? mac[3] : 0,
-            mac ? mac[4] : 0, mac ? mac[5] : 0, requestedChannel);
+        LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X (chan %u)", mac ? mac[0] : 0,
+            mac ? mac[1] : 0, mac ? mac[2] : 0, mac ? mac[3] : 0, mac ? mac[4] : 0,
+            mac ? mac[5] : 0, requestedChannel);
         if (mac) {
             esp_now_peer_info_t peer{};
             memcpy(peer.peer_addr, mac, ESP_NOW_ETH_ALEN);
@@ -1376,7 +1376,6 @@ static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
     (void)len;
     LOG("MQTT: command on %s ignored (handled by display)", topic);
 }
-
 
 // ---------- WiFi / MQTT ----------
 static void initEspNow() {
