@@ -2,11 +2,11 @@
  * @file gagguino.cpp
  * @brief Gagguino firmware: ESP32 control for Gaggia Classic.
  *
- * High‑level responsibilities:
+ * High-level responsibilities:
  * - Temperature control using a MAX31865 RTD amplifier (PT100) and PID.
  * - Heater PWM drive.
  * - Flow, pressure and shot timing measurement with debounced ISR counters.
- * - Wi‑Fi + ESP-NOW link to the display for control/telemetry.
+ * - Wi-Fi + ESP-NOW link to the display for control/telemetry.
  * - Robust OTA (ArduinoOTA) that throttles other work while an update runs.
  *
  * Hardware pins (ESP32 default board mapping):
@@ -49,7 +49,7 @@
 #define SERIAL_BAUD 115200
 
 /**
- * @brief Lightweight printf‑style logger to the serial console.
+ * @brief Lightweight printf-style logger to the serial console.
  */
 static inline void LOG(const char* fmt, ...) {
     static char buf[192];
@@ -90,6 +90,10 @@ constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP
 
 constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
 constexpr unsigned long DISPLAY_TIMEOUT_MS = 5000;  // ms without ACK before fallback
+constexpr unsigned long ESPNOW_CHANNEL_HOLD_MS = 1100;  // dwell time per channel when scanning
+constexpr uint8_t ESPNOW_FIRST_CHANNEL = 1;
+constexpr uint8_t ESPNOW_LAST_CHANNEL = 13;
+constexpr uint8_t ESPNOW_BROADCAST_ADDR[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // Brew & Steam setpoint limits
 constexpr float BREW_MIN = 87.0f, BREW_MAX = 97.0f;
@@ -101,10 +105,10 @@ constexpr float STEAM_DEFAULT = 152.0f;
 constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 // Default PID params (overridable via ESP-NOW control packets)
 // Default PID parameters tuned for stability
-// Kp: 15–16 [out/°C]
-// Ki: 0.3–0.5 [out/(°C·s)] → start at 0.35
-// Kd: 50–70 [out·s/°C] → start at 60
-// guard: ±8–±12% integral clamp on 0–100% heater
+// Kp: 15-16 [out/degC]
+// Ki: 0.3-0.5 [out/(degC*s)] -> start at 0.35
+// Kd: 50-70 [out*s/degC] -> start at 60
+// guard: +/-8-+/-12% integral clamp on 0-100% heater
 constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
                 WINDUP_GUARD_TEMP = 10.0f;
 // Derivative filter time constant (seconds), exposed to HA
@@ -125,7 +129,7 @@ constexpr float FLOW_CAL = 0.246f;
 constexpr unsigned long PULSE_MIN = 3;  // ms debounce (bounce + double-edges)
 
 constexpr unsigned ZC_MIN = 4;
-// Duration thresholds for zero‑cross (pump) activity
+// Duration thresholds for zero-cross (pump) activity
 constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 60000;
 constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
@@ -184,8 +188,8 @@ static void syncClock() {
 
 // Temps / PID
 float currentTemp = 0.0f, lastTemp = 0.0f, pvFiltTemp = 0.0f;
-float brewSetpoint = 92.0f;           // HA-controllable (90–99)
-float steamSetpoint = STEAM_DEFAULT;  // HA-controllable (145–155)
+float brewSetpoint = 92.0f;           // HA-controllable (90?99)
+float steamSetpoint = STEAM_DEFAULT;  // HA-controllable (145?155)
 float setTemp = brewSetpoint;         // active target (brew or steam)
 float iStateTemp = 0.0f, heatPower = 0.0f;
 // Live-tunable PID parameters (default to constexprs above)
@@ -210,7 +214,7 @@ unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, last
 volatile int64_t lastPulseTime = 0;
 unsigned long shotStart = 0, startTime = 0;
 float shotTime = 0;                   //
-unsigned long shotAccumulatedMs = 0;  //!< total pump‑active time of completed segments
+unsigned long shotAccumulatedMs = 0;  //!< total pump?active time of completed segments
 unsigned long shotTimeMs = 0;         //!< current shot time including active segment
 bool pumpPrevActive = false;          //!< tracks pump activity transitions
 
@@ -241,10 +245,16 @@ static bool g_haveDisplayPeer = false;
 static uint32_t g_lastControlRevision = 0;
 static unsigned long g_lastDisplayAckMs = 0;
 static EspNowPumpMode pumpMode = ESPNOW_PUMP_MODE_NORMAL;
+static bool g_espnowCoreInit = false;
+static bool g_espnowBroadcastPeerAdded = false;
+static esp_now_peer_info_t g_broadcastPeerInfo{};
+static bool g_espnowScanning = false;
+static uint8_t g_nextScanChannel = ESPNOW_FIRST_CHANNEL;
+static unsigned long g_lastChannelHopMs = 0;
 
 // ---------- helpers ----------
 /**
- * @brief Convert Wi‑Fi status to a readable string.
+ * @brief Convert Wi-Fi status to a readable string.
  */
 static inline const char* wifiStatusName(wl_status_t s) {
     switch (s) {
@@ -268,7 +278,7 @@ static inline const char* wifiStatusName(wl_status_t s) {
 }
 // ---------- OTA ----------
 /**
- * @brief Initialize ArduinoOTA once Wi‑Fi is connected.
+ * @brief Initialize ArduinoOTA once Wi-Fi is connected.
  *
  * Notes:
  * - Hostname is derived from MAC address for stability.
@@ -367,15 +377,15 @@ static void ensureOta() {
  * @param dTau Derivative low-pass filter time constant (seconds)
  * @return Control output (unclamped)
  */
-// Continuous-time gains: Kp [out/°C], Ki [out/(°C·s)], Kd [out·s/°C]
+// Continuous-time gains: Kp [out/degC], Ki [out/(degC*s)], Kd [out*s/degC]
 
-// ──────────────────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------------------------
 //  PID: dt-scaled I & D, iTerm clamp, derivative LPF, conditional integration
-// ──────────────────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------------------------
 static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
                      float dt,             // seconds (0.5 at 2 Hz)
                      float& pvFilt,        // filtered PV (state)
-                     float& iSum,          // ∫err dt  (state)
+                     float& iSum,          // ?err dt  (state)
                      float guard,          // clamp on iTerm (output units)
                      float dTau = 1.0f,    // derivative LPF time const (s)
                      float outMin = 0.0f,  // actuator limits (for cond. integration)
@@ -405,9 +415,9 @@ static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
     // 5) Output (pre-clamp)
     float u = pTerm + iTerm + dTerm;
 
-    // 6) Conditional integration: don’t integrate when pushing into saturation
+    // 6) Conditional integration: don't integrate when pushing into saturation
     if ((u >= outMax && err > 0.0f) || (u <= outMin && err < 0.0f)) {
-        iSum -= err * dt;  // undo this step’s integral
+        iSum -= err * dt;  // undo this step?s integral
         iTerm = Ki * iSum;
         if (iTerm > guard) iTerm = guard;
         if (iTerm < -guard) iTerm = -guard;
@@ -418,7 +428,7 @@ static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
 
 // --------------- espresso logic ---------------
 /**
- * @brief Detect shot start/stop based on zero‑cross events and steam transitions.
+ * @brief Detect shot start/stop based on zero-cross events and steam transitions.
  */
 static void checkShotStartStop() {
     if ((zcCount >= ZC_MIN) && !shotFlag && setupComplete &&
@@ -478,7 +488,7 @@ static void updateTempPID() {
 }
 
 /**
- * @brief Apply time‑proportioning control to the heater output.
+ * @brief Apply time-proportioning control to the heater output.
  */
 static void updateTempPWM() {
     if (!heaterEnabled) {
@@ -503,8 +513,12 @@ static void updateTempPWM() {
  * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
  */
 static void applyPumpPower() {
-    // pumpDimmer.setPower((int)pumpPower);
-    // pumpDimmer.setState(pumpPower > 0.0f ? ON : OFF);
+#ifdef USE_PUMP_DIMMER
+    pumpDimmer.setPower(static_cast<int>(pumpPower));
+    pumpDimmer.setState(pumpPower > 0.0f ? ON : OFF);
+#else
+    (void)pumpPower;
+#endif
 }
 
 /**
@@ -523,7 +537,7 @@ static void updatePressure() {
 }
 
 /**
- * @brief Infer steam mode based on AC sense and recent zero‑cross activity.
+ * @brief Infer steam mode based on AC sense and recent zero-cross activity.
  */
 static void updateSteamFlag() {
     ac = !digitalRead(AC_SENS);
@@ -549,7 +563,7 @@ static void updateSteamFlag() {
 }
 
 /**
- * @brief Track pre‑infusion phase and capture volume up to threshold pressure.
+ * @brief Track pre-infusion phase and capture volume up to threshold pressure.
  */
 static void updatePreFlow() {
     if (preFlow && lastPress > PRESS_THRESHOLD) {
@@ -568,7 +582,7 @@ static void updateVols() {
 }
 
 /**
- * @brief Update shot timer, pausing when pump zero‑crosses cease.
+ * @brief Update shot timer, pausing when pump zero-crosses cease.
  */
 static void updateShotTime() {
     if (!shotFlag) return;
@@ -605,7 +619,7 @@ static void IRAM_ATTR flowInt() {
     }
 }
 /**
- * @brief Zero‑cross detect ISR: records pump activity timing.
+ * @brief Zero-cross detect ISR: records pump activity timing.
  */
 static void IRAM_ATTR zcInt() {
     int64_t now = esp_timer_get_time();
@@ -769,7 +783,11 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
         g_espnowChannel = requestedChannel;
         g_espnowHandshake = true;
         g_espnowStatus = "linked";
-        g_lastDisplayAckMs = millis();
+        unsigned long nowMs = millis();
+        g_lastDisplayAckMs = nowMs;
+        g_lastChannelHopMs = nowMs;
+        g_espnowScanning = false;
+        g_nextScanChannel = requestedChannel;
         uint8_t ack[2] = {ESPNOW_HANDSHAKE_ACK, g_espnowChannel};
         if (mac) esp_now_send(mac, ack, sizeof(ack));
         return;
@@ -789,66 +807,96 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
     }
 }
 
-static void initEspNow() {
-    uint8_t channel;
-    wifi_second_chan_t second;
-    if (esp_wifi_get_channel(&channel, &second) != ESP_OK) {
-        LOG_ERROR("ESP-NOW: failed to get channel");
+static bool ensureEspNowCore(bool silent = false) {
+    if (g_espnowCoreInit) return true;
+
+    esp_err_t err = esp_now_init();
+    if (err != ESP_OK) {
+        if (!silent) LOG_ERROR("ESP-NOW: init failed (%d)", static_cast<int>(err));
         g_espnowStatus = "error";
-        return;
+        return false;
     }
 
-    if (channel < 1 || channel > 13) {
+    memset(&g_broadcastPeerInfo, 0, sizeof(g_broadcastPeerInfo));
+    memcpy(g_broadcastPeerInfo.peer_addr, ESPNOW_BROADCAST_ADDR, ESP_NOW_ETH_ALEN);
+    g_broadcastPeerInfo.ifidx = WIFI_IF_STA;
+    g_broadcastPeerInfo.encrypt = false;
+
+    esp_now_register_recv_cb(espNowRecv);
+    g_espnowHandshake = false;
+    g_haveDisplayPeer = false;
+    g_lastDisplayAckMs = 0;
+    g_lastControlRevision = 0;
+
+    g_espnowCoreInit = true;
+    g_espnowBroadcastPeerAdded = false;
+    return true;
+}
+
+static bool applyEspNowChannel(uint8_t channel, bool forceSetWifiChannel, bool silent) {
+    if (channel < ESPNOW_FIRST_CHANNEL || channel > ESPNOW_LAST_CHANNEL) return false;
+
+    if (!ensureEspNowCore(silent)) return false;
+
+    if (forceSetWifiChannel && WiFi.status() != WL_CONNECTED) {
+        esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+        if (err != ESP_OK) {
+            if (!silent) {
+                LOG_ERROR("ESP-NOW: failed to set channel %u (%d)", channel, static_cast<int>(err));
+            }
+            return false;
+        }
+    }
+
+    g_broadcastPeerInfo.channel = channel;
+    esp_err_t res;
+    if (!g_espnowBroadcastPeerAdded) {
+        res = esp_now_add_peer(&g_broadcastPeerInfo);
+        if (res == ESP_OK || res == ESP_ERR_ESPNOW_EXIST) {
+            g_espnowBroadcastPeerAdded = true;
+        } else {
+            if (!silent) LOG_ERROR("ESP-NOW: add peer failed (%d)", static_cast<int>(res));
+            return false;
+        }
+    } else {
+        res = esp_now_mod_peer(&g_broadcastPeerInfo);
+        if (res == ESP_ERR_ESPNOW_NOT_FOUND) {
+            g_espnowBroadcastPeerAdded = false;
+            return applyEspNowChannel(channel, forceSetWifiChannel, silent);
+        }
+        if (res != ESP_OK) {
+            if (!silent) LOG_ERROR("ESP-NOW: update peer failed (%d)", static_cast<int>(res));
+            return false;
+        }
+    }
+
+    g_espnowChannel = channel;
+    if (!silent) {
+        bool manual = forceSetWifiChannel && WiFi.status() != WL_CONNECTED;
+        LOG("ESP-NOW: using channel %u%s", channel, manual ? " (manual)" : "");
+    }
+    return true;
+}
+
+static void initEspNow() {
+    wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
+    uint8_t channel = 0;
+    if (esp_wifi_get_channel(&channel, &second) != ESP_OK || channel < ESPNOW_FIRST_CHANNEL ||
+        channel > ESPNOW_LAST_CHANNEL) {
         LOG_ERROR("ESP-NOW: invalid channel %u", channel);
         g_espnowStatus = "error";
         g_espnowChannel = 0;
         return;
     }
 
-    static bool espNowInit = false;
-    static bool espPeerAdded = false;
-    static esp_now_peer_info_t peerInfo{};
-    static const uint8_t broadcastAddr[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-
-    if (!espNowInit) {
-        if (esp_now_init() != ESP_OK) {
-            LOG_ERROR("ESP-NOW: init failed");
-            g_espnowStatus = "error";
-            return;
-        }
-        memcpy(peerInfo.peer_addr, broadcastAddr, 6);
-        peerInfo.encrypt = false;
-        espNowInit = true;
-        esp_now_register_recv_cb(espNowRecv);
-        g_espnowHandshake = false;
-        g_haveDisplayPeer = false;
-        g_lastDisplayAckMs = 0;
-        g_lastControlRevision = 0;
-    }
-
-    peerInfo.channel = channel;
-    esp_err_t res;
-    if (!espPeerAdded) {
-        res = esp_now_add_peer(&peerInfo);
-        if (res == ESP_OK) {
-            espPeerAdded = true;
-        }
-    } else {
-        res = esp_now_mod_peer(&peerInfo);
-        if (res == ESP_ERR_ESPNOW_NOT_FOUND) {
-            res = esp_now_add_peer(&peerInfo);
-            if (res == ESP_OK) espPeerAdded = true;
-        }
-    }
-
-    if (res != ESP_OK) {
-        LOG_ERROR("ESP-NOW: add/mod peer failed");
+    if (!applyEspNowChannel(channel, false, true)) {
         g_espnowStatus = "error";
         return;
     }
 
-    g_espnowChannel = channel;
-    g_espnowStatus = "enabled";
+    g_nextScanChannel = channel;
+    g_espnowScanning = false;
+    if (!g_espnowHandshake) g_espnowStatus = "enabled";
 
     uint8_t mac[6];
     if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
@@ -858,12 +906,42 @@ static void initEspNow() {
         g_espnowMac = buf;
     }
 
-    LOG("ESP-NOW: initialized on channel %u — awaiting handshake", channel);
+    LOG("ESP-NOW: initialized on channel %u - awaiting handshake", channel);
 }
 
-/**
- * @brief Maintain Wi‑Fi connection with periodic reconnect attempts.
- */
+static void maybeHopEspNowChannel() {
+    if (g_espnowHandshake) {
+        if (g_espnowScanning) {
+            g_espnowScanning = false;
+            g_nextScanChannel =
+                g_espnowChannel >= ESPNOW_FIRST_CHANNEL ? g_espnowChannel : ESPNOW_FIRST_CHANNEL;
+        }
+        return;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        return;
+    }
+
+    unsigned long now = millis();
+    if ((now - g_lastChannelHopMs) < ESPNOW_CHANNEL_HOLD_MS) return;
+
+    if (!ensureEspNowCore(true)) return;
+
+    uint8_t channel = g_nextScanChannel;
+    g_nextScanChannel = (g_nextScanChannel >= ESPNOW_LAST_CHANNEL)
+                             ? ESPNOW_FIRST_CHANNEL
+                             : static_cast<uint8_t>(g_nextScanChannel + 1);
+
+    if (applyEspNowChannel(channel, true, true)) {
+        g_lastChannelHopMs = now;
+        if (!g_espnowScanning || channel == ESPNOW_FIRST_CHANNEL) {
+            LOG("ESP-NOW: scanning on channel %u", channel);
+        }
+        g_espnowScanning = true;
+        g_espnowStatus = "scanning";
+    }
+}
 static void ensureWifi() {
     static wl_status_t last = (wl_status_t)255;
     static unsigned long lastTry = 0;
@@ -873,8 +951,12 @@ static void ensureWifi() {
     wl_status_t now = WiFi.status();
     if (now != WL_CONNECTED) {
         forceHeaterOff();
-        g_espnowStatus = "disabled";
         g_clockSynced = false;
+        if (!g_espnowHandshake) {
+            g_espnowStatus = g_espnowScanning ? "scanning" : "disabled";
+        } else {
+            g_espnowStatus = "link-down";
+        }
     }
     if (now != last) {
         if (now == WL_CONNECTED) {
@@ -884,7 +966,7 @@ static void ensureWifi() {
             initEspNow();
             if (!g_clockSynced) syncClock();
         } else {
-            LOG("WiFi: %s (code=%d) — reconnecting…", wifiStatusName(now), (int)now);
+            LOG("WiFi: %s (code=%d) ? reconnecting?", wifiStatusName(now), (int)now);
         }
         last = now;
     }
@@ -938,7 +1020,7 @@ namespace gag {
 void setup() {
     Serial.begin(SERIAL_BAUD);
     delay(300);
-    LOG("Booting… FW %s", VERSION);
+    LOG("Booting? FW %s", VERSION);
 #if defined(CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH)
     LOG("RTOS: Tmr Svc stack depth=%d (words)", (int)CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH);
 #endif
@@ -955,12 +1037,12 @@ void setup() {
     pinMode(ZC_PIN, INPUT);
     pinMode(AC_SENS, INPUT_PULLUP);
     pinMode(PUMP_PIN, OUTPUT);
-    // pumpDimmer.begin(NORMAL_MODE, OFF);
+#ifdef USE_PUMP_DIMMER
+    pumpDimmer.begin(NORMAL_MODE, OFF);
+#endif
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
-    // applyPumpPower();
-
-    // Initialize MAX31865 (set wiring: 2/3/4-wire as appropriate)
+    applyPumpPower();
     max31865.begin(MAX31865_2WIRE);
 
     // Initialize filtered PV & lastTemp to avoid first-step D kick
@@ -1036,7 +1118,7 @@ void loop() {
     // If the display stops acknowledging, fall back to safe defaults
     if (g_espnowHandshake && g_lastDisplayAckMs &&
         (currentTime - g_lastDisplayAckMs) > DISPLAY_TIMEOUT_MS) {
-        LOG("ESP-NOW: display timeout after %lu ms — reverting to defaults",
+        LOG("ESP-NOW: display timeout after %lu ms ? reverting to defaults",
             currentTime - g_lastDisplayAckMs);
         g_espnowHandshake = false;
         g_haveDisplayPeer = false;
@@ -1058,6 +1140,7 @@ void loop() {
     }
 
     ensureWifi();
+    maybeHopEspNowChannel();
 
     if (g_espnowHandshake && (currentTime - lastEspNowTime) >= ESP_CYCLE) {
         sendEspNowPacket();
