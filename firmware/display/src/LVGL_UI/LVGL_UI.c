@@ -452,8 +452,8 @@ void Lvgl_Example1_close(void)
   shot_volume_units_label = NULL;
   conn_label = NULL;
   conn_status_label = NULL;
-  last_conn_type = -1;
-  last_conn_status = -1;
+  last_conn_bits = 0xFF;
+  last_link_status = -1;
   Backlight_slider = NULL;
   beep_on_shot_btn = NULL;
   beep_on_shot_label = NULL;
