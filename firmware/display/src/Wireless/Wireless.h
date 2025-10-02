@@ -10,6 +10,7 @@
 
 #include "mqtt_client.h"
 #include <stdbool.h>
+#include <stdint.h>
 
 void Wireless_Init(void);
 void WIFI_Init(void *arg);
@@ -23,6 +24,7 @@ float MQTT_GetCurrentPressure(void);
 float MQTT_GetSetPressure(void);
 float MQTT_GetShotTime(void);
 float MQTT_GetShotVolume(void);
+uint32_t MQTT_GetZcCount(void);
 bool MQTT_GetHeaterState(void);
 void MQTT_SetHeaterState(bool state);
 bool MQTT_GetSteamState(void);

@@ -13,6 +13,7 @@
 #include <time.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include "esp_rom_sys.h"
 
 static int log_vprintf(const char *fmt, va_list args)
@@ -42,17 +43,17 @@ static int log_vprintf(const char *fmt, va_list args)
 #include "Wireless.h"
 #include "Battery.h"
 
-// Track user interaction and heater state to control LCD backlight.
+// Track interaction and machine activity for LCD backlight control.
 // g_last_touch_tick is updated by the touch driver whenever the screen is
-// touched.  heat_off_tick records the time when the heater was last seen off.
+// touched.  last_heater_on_tick records when the heater was most recently on,
+// and last_zc_change_tick tracks the last observed zero-cross count change.
 volatile TickType_t g_last_touch_tick = 0;
-static TickType_t heat_off_tick = 0;
+static TickType_t last_heater_on_tick = 0;
+static TickType_t last_zc_change_tick = 0;
+static uint32_t last_zc_count = 0;
 static bool lcd_backlight_off = false;
-static bool touch_sleeping = false;
-static TickType_t backlight_off_tick = 0;
 
-#define LCD_IDLE_TIMEOUT        pdMS_TO_TICKS(30000)   /* 30s to turn off backlight */
-#define LCD_DEEP_SLEEP_TIMEOUT  pdMS_TO_TICKS(300000)  /* 5min to sleep touch */
+#define LCD_INACTIVITY_TIMEOUT  pdMS_TO_TICKS(300000)  /* 5 min inactivity window */
 
 /**
  * @brief Initialize peripheral drivers and start background tasks.
@@ -98,6 +99,11 @@ void app_main(void)
     // Initialize timers
     g_last_touch_tick = xTaskGetTickCount();
 
+    TickType_t start_tick = g_last_touch_tick;
+    last_heater_on_tick = start_tick;
+    last_zc_change_tick = start_tick;
+    last_zc_count = MQTT_GetZcCount();
+
     while (1) {
         // Run lv_timer_handler every 250 ms
         vTaskDelay(pdMS_TO_TICKS(250));
@@ -105,44 +111,31 @@ void app_main(void)
 
         TickType_t now = xTaskGetTickCount();
         bool heater_on = MQTT_GetHeaterState();
-
-        // Update heater-off timer
-        if (!heater_on) {
-            if (heat_off_tick == 0) {
-                heat_off_tick = now;
-            }
-        } else {
-            heat_off_tick = 0; // reset if heater active
+        if (heater_on) {
+            last_heater_on_tick = now;
         }
 
-        // If heater is ON, keep backlight ON regardless of touch inactivity
-        if (!heater_on) {
-            // Heater is OFF: allow idle timeout based on last touch
-            if (!lcd_backlight_off && (now - g_last_touch_tick) >= LCD_IDLE_TIMEOUT) {
+        uint32_t current_zc = MQTT_GetZcCount();
+        bool zc_changed = (current_zc != last_zc_count);
+        if (zc_changed) {
+            last_zc_count = current_zc;
+            last_zc_change_tick = now;
+        }
+
+        bool touch_inactive = (now - g_last_touch_tick) >= LCD_INACTIVITY_TIMEOUT;
+        bool heater_inactive = !heater_on && (now - last_heater_on_tick) >= LCD_INACTIVITY_TIMEOUT;
+        bool zc_inactive = (now - last_zc_change_tick) >= LCD_INACTIVITY_TIMEOUT;
+
+        if (!lcd_backlight_off) {
+            if (touch_inactive && (heater_inactive || zc_inactive)) {
                 Set_Backlight(0);
                 lcd_backlight_off = true;
-                backlight_off_tick = now;
             }
-        }
-
-        if (lcd_backlight_off) {
-            // Conditions to wake the display
-            if (heater_on || (now - g_last_touch_tick) < LCD_IDLE_TIMEOUT) {
-                if (touch_sleeping) {
-                    // Wake touch controller before lighting the screen
-                    esp_lcd_touch_exit_sleep(tp);
-                    touch_sleeping = false;
-                }
+        } else {
+            bool touch_recent = !touch_inactive;
+            if (heater_on || zc_changed || touch_recent) {
                 Set_Backlight(LCD_Backlight);
                 lcd_backlight_off = false;
-                if (!heater_on) {
-                    // Reset heater timer so display stays on briefly after touch
-                    heat_off_tick = now;
-                }
-            } else if (!touch_sleeping && (now - backlight_off_tick) >= LCD_DEEP_SLEEP_TIMEOUT) {
-                // After 5 minutes of inactivity, put touch controller to sleep
-                esp_lcd_touch_enter_sleep(tp);
-                touch_sleeping = true;
             }
         }
     }

@@ -24,7 +24,7 @@
 
 #define ESPNOW_TIMEOUT_MS      5000
 #define ESPNOW_PING_PERIOD_MS  1000
-#define CONTROL_RESEND_MS      500
+#define CONTROL_KEEPALIVE_MS      5000  // resend unchanged control every 5 s
 
 static const char *TAG_WIFI = "WiFi";
 static const char *TAG_MQTT = "MQTT";
@@ -42,6 +42,7 @@ static char TOPIC_SETTEMP[128];
 static char TOPIC_PRESSURE[128];
 static char TOPIC_SHOTVOL[128];
 static char TOPIC_SHOT[128];
+static char TOPIC_ZC_COUNT_STATE[128];
 static char TOPIC_OTA_STATUS[128];
 static char TOPIC_OTA_ENABLE[128];
 static char TOPIC_BREW_STATE[128];
@@ -69,6 +70,7 @@ static inline void build_topics(void) {
     snprintf(TOPIC_PRESSURE, sizeof TOPIC_PRESSURE, "%s/%s/pressure/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_SHOTVOL, sizeof TOPIC_SHOTVOL, "%s/%s/shot_volume/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_SHOT, sizeof TOPIC_SHOT, "%s/%s/shot/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_ZC_COUNT_STATE, sizeof TOPIC_ZC_COUNT_STATE, "%s/%s/zc_count/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_OTA_STATUS, sizeof TOPIC_OTA_STATUS, "%s/%s/ota/status", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_OTA_ENABLE, sizeof TOPIC_OTA_ENABLE, "%s/%s/ota/enable", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_BREW_STATE, sizeof TOPIC_BREW_STATE, "%s/%s/brew_setpoint/state", GAG_TOPIC_ROOT, GAGGIA_ID);
@@ -127,6 +129,7 @@ static float s_pressure = NAN;
 static float s_shot_time = 0.0f;
 static float s_shot_volume = 0.0f;
 static float s_brew_setpoint = NAN;
+static uint32_t s_zc_count = 0;
 static float s_steam_setpoint = NAN;
 static float s_pid_p = NAN;
 static float s_pid_i = NAN;
@@ -148,8 +151,9 @@ static bool s_espnow_active = false;
 static bool s_espnow_handshake = false;
 static bool s_use_espnow = false;
 static time_t s_espnow_last_rx = 0;
-static uint32_t s_control_revision = 1;
+static uint32_t s_control_revision = 0;
 static bool s_control_dirty = false;
+static uint8_t s_last_espnow_channel = 0;
 static TickType_t s_last_control_send = 0;
 
 static esp_now_peer_info_t s_broadcast_peer = {0};
@@ -168,7 +172,7 @@ static const uint8_t s_broadcast_addr[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xF
 // -----------------------------------------------------------------------------
 static void publish_control_state(void);
 static void schedule_control_send(void);
-static void send_control_packet(void);
+static void send_control_packet(bool keepalive);
 static void ensure_espnow_started(void);
 static void stop_espnow(void);
 static void espnow_timeout_cb(TimerHandle_t xTimer);
@@ -199,7 +203,10 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
             s_sta_channel = event->channel;
             s_sta_channel_valid = true;
             ESP_LOGI(TAG_WIFI, "STA connected (channel %u)", (unsigned)s_sta_channel);
+        } else {
+            s_sta_channel = event->channel;
         }
+        s_last_espnow_channel = s_sta_channel;
         ensure_espnow_started();
         break;
     }
@@ -207,6 +214,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         ESP_LOGW(TAG_WIFI, "STA disconnected");
         s_wifi_ready = false;
         s_sta_channel_valid = false;
+        s_last_espnow_channel = 0;
         stop_espnow();
         esp_wifi_connect();
         break;
@@ -277,6 +285,7 @@ static void mqtt_subscribe_all(void) {
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_OTA_STATUS, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_BREW_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_STEAM_STATE, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_ZC_COUNT_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDP_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDI_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDD_STATE, 1);
@@ -353,6 +362,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             s_shot_volume = strtof(payload, NULL);
         } else if (strcmp(topic, TOPIC_SHOT) == 0) {
             s_shot_time = strtof(payload, NULL);
+        } else if (strcmp(topic, TOPIC_ZC_COUNT_STATE) == 0) {
+            s_zc_count = (uint32_t)strtoul(payload, NULL, 10);
         } else if (strcmp(topic, TOPIC_HEATER) == 0) {
             s_control.heater = parse_bool_str(payload);
             s_heater = s_control.heater;
@@ -510,7 +521,14 @@ static void ensure_espnow_started(void) {
     }
 
     esp_now_register_recv_cb(espnow_recv_cb);
-    esp_wifi_set_channel(s_sta_channel, WIFI_SECOND_CHAN_NONE);
+
+    if (s_last_espnow_channel != s_sta_channel) {
+        esp_err_t err = esp_wifi_set_channel(s_sta_channel, WIFI_SECOND_CHAN_NONE);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG_ESPNOW, "Failed to set channel %u: %d", (unsigned)s_sta_channel, err);
+        }
+        s_last_espnow_channel = s_sta_channel;
+    }
 
     memset(&s_broadcast_peer, 0, sizeof(s_broadcast_peer));
     memcpy(s_broadcast_peer.peer_addr, s_broadcast_addr, ESP_NOW_ETH_ALEN);
@@ -595,18 +613,24 @@ static void send_sensor_ack(const uint8_t *dest) {
     esp_now_send(dest, &ack, 1);
 }
 
-static void send_control_packet(void) {
+static void send_control_packet(bool keepalive) {
     if (!s_espnow_active || !s_use_espnow) return;
     if (!s_controller_peer_valid) return;
+
     TickType_t now = xTaskGetTickCount();
-    if ((now - s_last_control_send) < pdMS_TO_TICKS(CONTROL_RESEND_MS) && !s_control_dirty) return;
+    if (keepalive && (now - s_last_control_send) < pdMS_TO_TICKS(CONTROL_KEEPALIVE_MS)) return;
+
+    uint32_t revision = s_control_revision;
+    if (!keepalive || revision == 0) {
+        revision = ++s_control_revision;
+    }
 
     EspNowControlPacket pkt = {
         .type = ESPNOW_CONTROL_PACKET,
         .flags = 0,
         .pumpMode = s_control.pumpMode,
         .reserved = 0,
-        .revision = s_control_revision++,
+        .revision = revision,
         .brewSetpointC = s_control.brewSetpoint,
         .steamSetpointC = s_control.steamSetpoint,
         .pidP = s_control.pidP,
@@ -624,7 +648,11 @@ static void send_control_packet(void) {
     } else {
         s_last_control_send = now;
         s_control_dirty = false;
-        ESP_LOGI(TAG_ESPNOW, "Control revision %u sent", (unsigned)pkt.revision);
+        if (keepalive) {
+            ESP_LOGD(TAG_ESPNOW, "Control keepalive rev %u sent", (unsigned)revision);
+        } else {
+            ESP_LOGI(TAG_ESPNOW, "Control revision %u sent", (unsigned)revision);
+        }
     }
 }
 
@@ -715,8 +743,11 @@ static void Wireless_Task(void *arg) {
             }
         }
 
-        if (s_control_dirty && s_use_espnow) {
-            send_control_packet();
+        TickType_t now = xTaskGetTickCount();
+        bool keepalive_due = s_use_espnow && (now - s_last_control_send) >= pdMS_TO_TICKS(CONTROL_KEEPALIVE_MS);
+        if (s_use_espnow && (s_control_dirty || (keepalive_due && s_control_revision != 0))) {
+            bool keepalive = !s_control_dirty;
+            send_control_packet(keepalive);
         }
 
         vTaskDelay(delay);
@@ -732,6 +763,7 @@ float MQTT_GetCurrentPressure(void) { return s_pressure; }
 float MQTT_GetSetPressure(void) { return s_pressure; }
 float MQTT_GetShotTime(void) { return s_shot_time; }
 float MQTT_GetShotVolume(void) { return s_shot_volume; }
+uint32_t MQTT_GetZcCount(void) { return s_zc_count; }
 bool MQTT_GetHeaterState(void) { return s_heater; }
 
 void MQTT_SetHeaterState(bool heater) {
@@ -768,4 +800,3 @@ bool Wireless_ControllerStillSendingEspNow(void) {
 }
 
 bool Wireless_IsEspNowActive(void) { return s_espnow_active; }
-
