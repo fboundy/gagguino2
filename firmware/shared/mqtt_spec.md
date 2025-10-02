@@ -22,8 +22,8 @@ MQTT topic hierarchy.  All topics are rooted at:
 | `pressure/state` | pub by controller | Boiler pressure (bar) |
 | `shot_volume/state` | pub by controller | Shot volume (mL) |
 | `shot/state` | pub by controller | Shot active flag |
-| `ota/enable` | cmd to controller | Open OTA window |
-| `ota/status` | pub by controller | OTA status |
+| `ota/enable` | reserved | Former OTA control (unused) |
+| `ota/status` | reserved | Former OTA status (unused) |
 | `espnow/channel` | pub/sub | ESP‑NOW channel coordination |
 | `espnow/mac` | pub/sub | ESP‑NOW peer MAC |
 | `espnow/cmd` | pub/sub | ESP‑NOW control commands |

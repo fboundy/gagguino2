@@ -6,8 +6,8 @@
  * - Temperature control using a MAX31865 RTD amplifier (PT100) and PID.
  * - Heater PWM drive.
  * - Flow, pressure and shot timing measurement with debounced ISR counters.
- * - Wi-Fi + ESP-NOW link to the display for control/telemetry.
- * - Robust OTA (ArduinoOTA) that throttles other work while an update runs.
+ * - ESP-NOW link to the display for control/telemetry.
+ * - Brief Wi-Fi use to synchronize time over NTP.
  *
  * Hardware pins (ESP32 default board mapping):
  * - FLOW_PIN (26)   : Flow sensor input (interrupt on CHANGE)
@@ -22,7 +22,6 @@
 
 #include <Adafruit_MAX31865.h>
 #include <Arduino.h>
-#include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <ctype.h>
 #include <esp_now.h>
@@ -83,7 +82,6 @@ constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP
 
 // Simple handshake bytes for ESP-NOW link-up (values defined in shared/espnow_protocol.h)
 
-constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
 constexpr unsigned long DISPLAY_TIMEOUT_MS = 5000;  // ms without ACK before fallback
 constexpr unsigned long ESPNOW_CHANNEL_HOLD_MS = 1100;  // dwell time per channel when scanning
 constexpr uint8_t ESPNOW_FIRST_CHANNEL = 1;
@@ -137,6 +135,7 @@ Adafruit_MAX31865 max31865(MAX_CS);
 static String g_errorLog;
 // Tracks whether the RTC has successfully synchronized with NTP
 static bool g_clockSynced = false;
+static bool g_wifiNtpConnecting = false;
 
 /**
  * @brief Log a significant error and persist it in memory.
@@ -222,12 +221,6 @@ int acCount = 0;
 bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
      steamHwFlag = false, steamResetPending = false, setupComplete = false, debugData = false;
 
-// OTA
-static bool otaInitialized = false;
-static bool otaActive = false;         // minimize other work while OTA is in progress
-static bool otaWindowEnabled = false;  // OTA allowed via ESP-NOW command
-static unsigned long otaStart = 0;     // millis when OTA window was enabled
-
 // ESP-NOW diagnostics
 static uint8_t g_espnowChannel = 0;
 static String g_espnowStatus = "disabled";
@@ -269,109 +262,6 @@ static inline const char* wifiStatusName(wl_status_t s) {
             return "UNKNOWN";
     }
 }
-// ---------- OTA ----------
-/**
- * @brief Initialize ArduinoOTA once Wi-Fi is connected.
- *
- * Notes:
- * - Hostname is derived from MAC address for stability.
- * - If `OTA_PASSWORD` or `OTA_PASSWORD_HASH` is defined (via build flags),
- *   OTA authentication is enforced.
- * - During OTA, the heater output is disabled and main work throttled.
- */
-static void ensureOta() {
-    if (otaWindowEnabled && otaStart && (millis() - otaStart >= OTA_ENABLE_MS) && !otaActive) {
-        otaWindowEnabled = false;
-        otaStart = 0;
-        LOG("OTA: window expired");
-    }
-
-    if (otaInitialized || WiFi.status() != WL_CONNECTED) return;
-
-    // Derive a stable hostname from MAC
-    uint8_t mac[6];
-    WiFi.macAddress(mac);
-    char host[32];
-    snprintf(host, sizeof(host), "gaggia-%02X%02X%02X", mac[3], mac[4], mac[5]);
-
-    ArduinoOTA.setHostname(host);
-#if defined(OTA_PASSWORD_HASH)
-    ArduinoOTA.setPasswordHash(OTA_PASSWORD_HASH);
-#elif defined(OTA_PASSWORD)
-    ArduinoOTA.setPassword(OTA_PASSWORD);
-#endif
-
-    ArduinoOTA.onStart([]() {
-        LOG("OTA: Start (%s)", ArduinoOTA.getCommand() == U_FLASH ? "flash" : "fs");
-        otaActive = true;
-        otaStart = millis();
-        // Turn off heater to reduce power/noise during OTA
-        digitalWrite(HEAT_PIN, LOW);
-        heaterState = false;
-    });
-    ArduinoOTA.onEnd([]() {
-        LOG("OTA: End");
-        otaActive = false;
-        otaStart = 0;
-        otaWindowEnabled = false;
-        // (Optional) re-attach interrupts if you detached them on start
-        // attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
-        // attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
-    });
-    ArduinoOTA.setTimeout(120000);  // 120s OTA socket timeout (default is shorter)
-    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-        static unsigned int lastPct = 101;
-        unsigned int pct = (total ? (progress * 100u / total) : 0u);
-        if (pct != lastPct && (pct % 10u == 0u)) {
-            LOG("OTA: %u%%", pct);
-            lastPct = pct;
-        }
-    });
-    ArduinoOTA.onError([](ota_error_t error) {
-        const char* msg = "UNKNOWN";
-        switch (error) {
-            case OTA_AUTH_ERROR:
-                msg = "AUTH";
-                break;
-            case OTA_BEGIN_ERROR:
-                msg = "BEGIN";
-                break;
-            case OTA_CONNECT_ERROR:
-                msg = "CONNECT";
-                break;
-            case OTA_RECEIVE_ERROR:
-                msg = "RECEIVE";
-                break;
-            case OTA_END_ERROR:
-                msg = "END";
-                break;
-        }
-        LOG_ERROR("OTA: Error %d (%s)", (int)error, msg);
-        otaActive = false;
-        otaStart = 0;
-    });
-
-    ArduinoOTA.begin();
-    otaInitialized = true;
-    LOG("OTA: Ready as %s.local", host);
-}
-
-/**
- * @brief PID controller with integral windup guard and filtered derivative.
- * @param Kp Proportional gain
- * @param Ki Integral gain
- * @param Kd Derivative gain
- * @param sp Setpoint (target)
- * @param pv Process value (measured)
- * @param dt Timestep in seconds
- * @param pvFilt Storage for filtered process variable (updated)
- * @param iSum Integral accumulator (updated)
- * @param guard Absolute limit for iTerm contribution (anti-windup)
- * @param dTau Derivative low-pass filter time constant (seconds)
- * @return Control output (unclamped)
- */
-// Continuous-time gains: Kp [out/degC], Ki [out/(degC*s)], Kd [out*s/degC]
-
 // ------------------------------------------------------------------------------
 //  PID: dt-scaled I & D, iTerm clamp, derivative LPF, conditional integration
 // ------------------------------------------------------------------------------
@@ -641,10 +531,6 @@ static void revertToSafeDefaults() {
     steamResetPending = false;
     steamFlag = steamDispFlag || steamHwFlag;
     setTemp = steamFlag ? steamSetpoint : brewSetpoint;
-    if (otaWindowEnabled) {
-        otaWindowEnabled = false;
-        otaStart = 0;
-    }
 }
 
 static void sendEspNowPacket() {
@@ -685,13 +571,6 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
         steamFlag = steamDispFlag || steamHwFlag;
         setTemp = steamFlag ? steamSetpoint : brewSetpoint;
         LOG("ESP-NOW: Steam -> %s", steamFlag ? "ON" : "OFF");
-    }
-
-    bool otaFlag = (pkt.flags & ESPNOW_CONTROL_FLAG_OTA) != 0;
-    if (otaFlag != otaWindowEnabled) {
-        otaWindowEnabled = otaFlag;
-        otaStart = otaFlag ? millis() : 0;
-        LOG("ESP-NOW: OTA -> %s", otaWindowEnabled ? "ENABLED" : "DISABLED");
     }
 
     float newBrew = clampf(pkt.brewSetpointC, BREW_MIN, BREW_MAX);
@@ -898,6 +777,8 @@ static void maybeHopEspNowChannel() {
         return;
     }
 
+    if (g_wifiNtpConnecting) return;
+
     if (WiFi.status() == WL_CONNECTED) {
         return;
     }
@@ -921,61 +802,69 @@ static void maybeHopEspNowChannel() {
         g_espnowStatus = "scanning";
     }
 }
-static void ensureWifi() {
-    static wl_status_t last = (wl_status_t)255;
-    static unsigned long lastTry = 0;
+static void syncClockFromWifi() {
+    static bool attempted = false;
     static bool connecting = false;
+    static unsigned long lastTry = 0;
     static unsigned long connectStart = 0;
+    static bool loggedConnected = false;
 
-    wl_status_t now = WiFi.status();
-    if (now != WL_CONNECTED) {
-        forceHeaterOff();
-        g_clockSynced = false;
-        if (!g_espnowHandshake) {
-            g_espnowStatus = g_espnowScanning ? "scanning" : "disabled";
-        } else {
-            g_espnowStatus = "link-down";
+    wl_status_t status = WiFi.status();
+
+    if (g_clockSynced) {
+        if (status == WL_CONNECTED) {
+            LOG("WiFi: disconnecting after NTP sync");
+            WiFi.disconnect(false, true);
         }
-    }
-    if (now != last) {
-        if (now == WL_CONNECTED) {
-            LOG("WiFi: %s  IP=%s  GW=%s  RSSI=%d dBm", wifiStatusName(now),
-                WiFi.localIP().toString().c_str(), WiFi.gatewayIP().toString().c_str(),
-                WiFi.RSSI());
-            initEspNow();
-            if (!g_clockSynced) syncClock();
-        } else {
-            LOG("WiFi: %s (code=%d) ? reconnecting?", wifiStatusName(now), (int)now);
-        }
-        last = now;
-    }
-    if (now == WL_CONNECTED) {
         connecting = false;
+        g_wifiNtpConnecting = false;
         return;
     }
 
-    // gentler reconnect policy: don't tear down; try reconnect every 10s
-    if (!connecting && (millis() - lastTry) >= 10000) {
-        lastTry = millis();
-        WiFi.disconnect();
+    if (status == WL_CONNECTED) {
+        if (!loggedConnected) {
+            LOG("WiFi: %s  IP=%s  GW=%s  RSSI=%d dBm", wifiStatusName(status),
+                WiFi.localIP().toString().c_str(), WiFi.gatewayIP().toString().c_str(),
+                WiFi.RSSI());
+            loggedConnected = true;
+        }
+
+        syncClock();
+        if (g_clockSynced) {
+            WiFi.disconnect(false, true);
+            LOG("WiFi: NTP sync complete; Wi-Fi disabled");
+        }
+        g_wifiNtpConnecting = false;
+        return;
+    }
+
+    loggedConnected = false;
+
+    unsigned long now = millis();
+    if (!connecting && (!attempted || (now - lastTry) >= 10000)) {
+        LOG("WiFi: connecting to '%s' for NTP sync", WIFI_SSID);
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-        connectStart = millis();
         connecting = true;
+        attempted = true;
+        connectStart = now;
+        lastTry = now;
+        g_wifiNtpConnecting = true;
         return;
     }
 
     if (connecting) {
-        // Wait briefly for connection result while yielding to other tasks
         wl_status_t res = static_cast<wl_status_t>(WiFi.waitForConnectResult(100));
-
         if (res == WL_CONNECTED) {
             connecting = false;
-        } else if (millis() - connectStart > 10000) {
-            // Timed out, allow another attempt on next cycle
+            g_wifiNtpConnecting = false;
+        } else if ((millis() - connectStart) > 10000) {
             connecting = false;
+            g_wifiNtpConnecting = false;
+            WiFi.disconnect(false, true);
         }
         delay(1);
     }
+    if (!connecting) g_wifiNtpConnecting = false;
 }
 
 }  // namespace
@@ -1053,17 +942,15 @@ void setup() {
     setupComplete = true;
 
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 #if defined(ARDUINO_ARCH_ESP32)
-    // Improve OTA reliability by disabling WiFi modem sleep
     WiFi.setSleep(false);
-    // Auto-reassociate if the AP briefly disappears
-    WiFi.setAutoReconnect(true);
+    WiFi.setAutoReconnect(false);
 #endif
+
+    initEspNow();
 
     LOG("Pins: FLOW=%d ZC=%d HEAT=%d AC_SENS=%d PRESS=%d  SPI{CS=%d}", FLOW_PIN, ZC_PIN, HEAT_PIN,
         AC_SENS, PRESS_PIN, MAX_CS);
-    LOG("WiFi: connecting to '%s'", WIFI_SSID);
 }
 
 /**
@@ -1071,23 +958,6 @@ void setup() {
  */
 void loop() {
     currentTime = millis();
-
-    // Handle OTA as early and as often as possible
-    ensureOta();
-    bool otaAllowed = otaWindowEnabled || otaActive;
-    if (otaAllowed && WiFi.status() == WL_CONNECTED) ArduinoOTA.handle();
-
-    // If OTA is active, keep loop lean
-    if (otaActive) {
-        // (Optional) Detach high-rate ISRs during OTA to reduce CPU/latency spikes
-        // static bool isrDetached = false;
-        // if (!isrDetached) {
-        //     detachInterrupt(digitalPinToInterrupt(FLOW_PIN));
-        //     detachInterrupt(digitalPinToInterrupt(ZC_PIN));
-        //     isrDetached = true;
-        // }
-        return;
-    }
 
     // If the display stops acknowledging, fall back to safe defaults
     if (g_espnowHandshake && g_lastDisplayAckMs &&
@@ -1101,19 +971,16 @@ void loop() {
         revertToSafeDefaults();
     }
 
-    // Normal work (only when NOT doing OTA)
-    {
-        checkShotStartStop();
-        if (currentTime - lastPidTime >= PID_CYCLE) updateTempPID();
-        updateTempPWM();
-        updatePressure();
-        updatePreFlow();
-        updateVols();
-        updateSteamFlag();
-        updateShotTime();
-    }
+    checkShotStartStop();
+    if (currentTime - lastPidTime >= PID_CYCLE) updateTempPID();
+    updateTempPWM();
+    updatePressure();
+    updatePreFlow();
+    updateVols();
+    updateSteamFlag();
+    updateShotTime();
 
-    ensureWifi();
+    syncClockFromWifi();
     maybeHopEspNowChannel();
 
     if (g_espnowHandshake && (currentTime - lastEspNowTime) >= ESP_CYCLE) {
@@ -1121,8 +988,7 @@ void loop() {
         lastEspNowTime = currentTime;
     }
 
-    if (!otaActive && debugPrint &&
-        (currentTime - lastLogTime) > LOG_CYCLE) { /* optional debug printing */
+    if (debugPrint && (currentTime - lastLogTime) > LOG_CYCLE) {
         LOG("Pressure: Raw=%d, Now=%0.2f Last=%0.2f", rawPress, pressNow, lastPress);
         LOG("Temp: Set=%0.1f, Current=%0.2f", setTemp, currentTemp);
         LOG("Heat: Power=%0.1f, Cycles=%d", heatPower, heatCycles);
