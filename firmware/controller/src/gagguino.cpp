@@ -238,6 +238,8 @@ static bool g_espnowScanning = false;
 static uint8_t g_nextScanChannel = ESPNOW_FIRST_CHANNEL;
 static unsigned long g_lastChannelHopMs = 0;
 
+static bool applyEspNowChannel(uint8_t channel, bool forceSetWifiChannel, bool silent);
+
 // ---------- helpers ----------
 /**
  * @brief Convert Wi-Fi status to a readable string.
