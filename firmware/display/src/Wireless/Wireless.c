@@ -104,17 +104,19 @@ typedef struct {
     uint8_t pumpMode;
 } ControlState;
 
-static ControlState s_control = {
+static const ControlState CONTROL_DEFAULTS = {
     .heater = true,
     .steam = false,
-    .brewSetpoint = 0.0f,
-    .steamSetpoint = 0.0f,
-    .pidP = 0.0f,
-    .pidI = 0.0f,
-    .pidD = 0.0f,
+    .brewSetpoint = 92.0f,
+    .steamSetpoint = 152.0f,
+    .pidP = 15.0f,
+    .pidI = 0.35f,
+    .pidD = 60.0f,
     .pumpPower = 95.0f,
     .pumpMode = ESPNOW_PUMP_MODE_NORMAL,
 };
+
+static ControlState s_control;
 
 static float s_current_temp = NAN;
 static float s_set_temp = NAN;
@@ -131,6 +133,31 @@ static float s_pump_power = NAN;
 static uint8_t s_pump_mode = ESPNOW_PUMP_MODE_NORMAL;
 static bool s_heater = false;
 static bool s_steam = false;
+
+typedef enum {
+    CONTROL_BOOT_HEATER = 1u << 0,
+    CONTROL_BOOT_STEAM = 1u << 1,
+    CONTROL_BOOT_BREW = 1u << 2,
+    CONTROL_BOOT_STEAM_SET = 1u << 3,
+    CONTROL_BOOT_PID_P = 1u << 4,
+    CONTROL_BOOT_PID_I = 1u << 5,
+    CONTROL_BOOT_PID_D = 1u << 6,
+    CONTROL_BOOT_PUMP_POWER = 1u << 7,
+    CONTROL_BOOT_PUMP_MODE = 1u << 8,
+    CONTROL_BOOT_ALL = (1u << 9) - 1,
+} ControlBootstrapBit;
+
+static bool s_control_bootstrap_active = false;
+static uint32_t s_control_bootstrap_mask = 0;
+
+static void control_apply_defaults(void);
+static void control_bootstrap_reset(void);
+static void control_bootstrap_complete(void);
+static bool control_bootstrap_ignore(ControlBootstrapBit bit, bool retained, bool matches);
+static bool control_bootstrap_ignore_float(ControlBootstrapBit bit, bool retained, float value, float current, float tolerance);
+static bool control_bootstrap_ignore_u8(ControlBootstrapBit bit, bool retained, uint8_t value, uint8_t current);
+static bool control_bootstrap_ignore_bool(ControlBootstrapBit bit, bool retained, bool value, bool current);
+static uint8_t apply_steam_request(bool steam);
 
 static bool s_mqtt_connected = false;
 static esp_mqtt_client_handle_t s_mqtt = NULL;
@@ -157,6 +184,91 @@ static volatile bool s_espnow_timeout_req = false;
 static volatile bool s_espnow_ping_req = false;
 
 static const uint8_t s_broadcast_addr[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+#define CONTROL_TEMP_TOLERANCE        0.05f
+#define CONTROL_PID_TOLERANCE         0.005f
+#define CONTROL_PID_D_TOLERANCE       0.1f
+#define CONTROL_PUMP_POWER_TOLERANCE  0.05f
+#define STEAM_STATE_CHANGED_FLAG      0x01u
+#define HEATER_STATE_CHANGED_FLAG     0x02u
+
+static inline bool float_equals(float a, float b, float tolerance) {
+    return fabsf(a - b) <= tolerance;
+}
+
+static void control_apply_defaults(void) {
+    s_control = CONTROL_DEFAULTS;
+    s_heater = s_control.heater;
+    s_steam = s_control.steam;
+    s_brew_setpoint = s_control.brewSetpoint;
+    s_steam_setpoint = s_control.steamSetpoint;
+    s_pid_p = s_control.pidP;
+    s_pid_i = s_control.pidI;
+    s_pid_d = s_control.pidD;
+    s_pump_power = s_control.pumpPower;
+    s_pump_mode = s_control.pumpMode;
+    s_set_temp = s_control.brewSetpoint;
+    s_control_bootstrap_active = false;
+    s_control_bootstrap_mask = 0;
+}
+
+static void control_bootstrap_reset(void) {
+    s_control_bootstrap_active = true;
+    s_control_bootstrap_mask = CONTROL_BOOT_ALL;
+    ESP_LOGI(TAG_MQTT, "Control bootstrap reset");
+}
+
+static void control_bootstrap_complete(void) {
+    if (!s_control_bootstrap_active) return;
+    s_control_bootstrap_active = false;
+    s_control_bootstrap_mask = 0;
+    ESP_LOGI(TAG_MQTT, "Control bootstrap complete");
+}
+
+static bool control_bootstrap_ignore(ControlBootstrapBit bit, bool retained, bool matches) {
+    if (!s_control_bootstrap_active) return false;
+    if (!retained) {
+        control_bootstrap_complete();
+        return false;
+    }
+    if (matches) {
+        if (s_control_bootstrap_mask & bit) {
+            s_control_bootstrap_mask &= ~bit;
+            if (s_control_bootstrap_mask == 0) {
+                control_bootstrap_complete();
+            }
+        }
+        return false;
+    }
+    return true;
+}
+
+static bool control_bootstrap_ignore_float(ControlBootstrapBit bit, bool retained, float value, float current, float tolerance) {
+    return control_bootstrap_ignore(bit, retained, float_equals(value, current, tolerance));
+}
+
+static bool control_bootstrap_ignore_u8(ControlBootstrapBit bit, bool retained, uint8_t value, uint8_t current) {
+    return control_bootstrap_ignore(bit, retained, value == current);
+}
+
+static bool control_bootstrap_ignore_bool(ControlBootstrapBit bit, bool retained, bool value, bool current) {
+    return control_bootstrap_ignore(bit, retained, value == current);
+}
+
+static uint8_t apply_steam_request(bool steam) {
+    uint8_t changed = 0;
+    if (steam && !s_control.heater) {
+        s_control.heater = true;
+        s_heater = true;
+        changed |= HEATER_STATE_CHANGED_FLAG;
+    }
+    if (s_control.steam != steam) {
+        s_control.steam = steam;
+        s_steam = steam;
+        changed |= STEAM_STATE_CHANGED_FLAG;
+    }
+    return changed;
+}
 
 // -----------------------------------------------------------------------------
 // Forward declarations
@@ -244,6 +356,7 @@ void WIFI_Init(void *arg) {
 }
 
 void Wireless_Init(void) {
+    control_apply_defaults();
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -332,6 +445,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG_MQTT, "Connected");
         s_mqtt_connected = true;
+        control_bootstrap_reset();
         mqtt_subscribe_all();
 #ifdef MQTT_STATUS
         esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
@@ -365,34 +479,80 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         } else if (strcmp(topic, TOPIC_ZC_COUNT_STATE) == 0) {
             s_zc_count = (uint32_t)strtoul(payload, NULL, 10);
         } else if (strcmp(topic, TOPIC_HEATER) == 0) {
-            s_control.heater = parse_bool_str(payload);
+            bool hv = parse_bool_str(payload);
+            if (control_bootstrap_ignore_bool(CONTROL_BOOT_HEATER, event->retain, hv, s_control.heater)) {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: heater -> %s", payload);
+                break;
+            }
+            s_control.heater = hv;
             s_heater = s_control.heater;
         } else if (strcmp(topic, TOPIC_STEAM) == 0) {
-            s_control.steam = parse_bool_str(payload);
+            bool sv = parse_bool_str(payload);
+            if (control_bootstrap_ignore_bool(CONTROL_BOOT_STEAM, event->retain, sv, s_control.steam)) {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: steam -> %s", payload);
+                break;
+            }
+            s_control.steam = sv;
             s_steam = s_control.steam;
         } else if (strcmp(topic, TOPIC_BREW_STATE) == 0) {
-            s_control.brewSetpoint = strtof(payload, NULL);
+            float v = strtof(payload, NULL);
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_BREW, event->retain, v, s_control.brewSetpoint, CONTROL_TEMP_TOLERANCE)) {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: brew_setpoint -> %s", payload);
+                break;
+            }
+            s_control.brewSetpoint = v;
             s_brew_setpoint = s_control.brewSetpoint;
         } else if (strcmp(topic, TOPIC_STEAM_STATE) == 0) {
-            s_control.steamSetpoint = strtof(payload, NULL);
+            float v = strtof(payload, NULL);
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_STEAM_SET, event->retain, v, s_control.steamSetpoint, CONTROL_TEMP_TOLERANCE)) {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: steam_setpoint -> %s", payload);
+                break;
+            }
+            s_control.steamSetpoint = v;
             s_steam_setpoint = s_control.steamSetpoint;
         } else if (strcmp(topic, TOPIC_PIDP_STATE) == 0) {
-            s_control.pidP = strtof(payload, NULL);
+            float v = strtof(payload, NULL);
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_P, event->retain, v, s_control.pidP, CONTROL_PID_TOLERANCE)) {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_p -> %s", payload);
+                break;
+            }
+            s_control.pidP = v;
             s_pid_p = s_control.pidP;
         } else if (strcmp(topic, TOPIC_PIDI_STATE) == 0) {
-            s_control.pidI = strtof(payload, NULL);
+            float v = strtof(payload, NULL);
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_I, event->retain, v, s_control.pidI, CONTROL_PID_TOLERANCE)) {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_i -> %s", payload);
+                break;
+            }
+            s_control.pidI = v;
             s_pid_i = s_control.pidI;
         } else if (strcmp(topic, TOPIC_PIDD_STATE) == 0) {
-            s_control.pidD = strtof(payload, NULL);
+            float v = strtof(payload, NULL);
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_D, event->retain, v, s_control.pidD, CONTROL_PID_D_TOLERANCE)) {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_d -> %s", payload);
+                break;
+            }
+            s_control.pidD = v;
             s_pid_d = s_control.pidD;
         } else if (strcmp(topic, TOPIC_PUMP_POWER_STATE) == 0) {
-            s_control.pumpPower = strtof(payload, NULL);
+            float v = strtof(payload, NULL);
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PUMP_POWER, event->retain, v, s_control.pumpPower, CONTROL_PUMP_POWER_TOLERANCE)) {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pump_power -> %s", payload);
+                break;
+            }
+            s_control.pumpPower = v;
             s_pump_power = s_control.pumpPower;
         } else if (strcmp(topic, TOPIC_PUMP_MODE_STATE) == 0) {
-            s_control.pumpMode = (uint8_t)atoi(payload);
+            uint8_t v = (uint8_t)atoi(payload);
+            if (control_bootstrap_ignore_u8(CONTROL_BOOT_PUMP_MODE, event->retain, v, s_control.pumpMode)) {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pump_mode -> %s", payload);
+                break;
+            }
+            s_control.pumpMode = v;
             s_pump_mode = s_control.pumpMode;
         } else if (strcmp(topic, TOPIC_HEATER_SET) == 0) {
             bool hv = parse_bool_str(payload);
+            control_bootstrap_complete();
             if (hv != s_control.heater) {
                 s_control.heater = hv;
                 s_heater = hv;
@@ -401,14 +561,16 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
         } else if (strcmp(topic, TOPIC_STEAM_SET) == 0) {
             bool sv = parse_bool_str(payload);
-            if (sv != s_control.steam) {
-                s_control.steam = sv;
-                s_steam = sv;
-                log_control_bool("steam", sv);
+            control_bootstrap_complete();
+            uint8_t changed = apply_steam_request(sv);
+            if (changed) {
+                if (changed & HEATER_STATE_CHANGED_FLAG) log_control_bool("heater", true);
+                if (changed & STEAM_STATE_CHANGED_FLAG) log_control_bool("steam", sv);
                 handle_control_change();
             }
         } else if (strcmp(topic, TOPIC_BREW_SET_CMD) == 0) {
             float v = strtof(payload, NULL);
+            control_bootstrap_complete();
             if (v != s_control.brewSetpoint) {
                 s_control.brewSetpoint = v;
                 log_control_float("brew_setpoint", v, 1);
@@ -416,6 +578,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
         } else if (strcmp(topic, TOPIC_STEAM_SET_CMD) == 0) {
             float v = strtof(payload, NULL);
+            control_bootstrap_complete();
             if (v != s_control.steamSetpoint) {
                 s_control.steamSetpoint = v;
                 log_control_float("steam_setpoint", v, 1);
@@ -423,6 +586,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
         } else if (strcmp(topic, TOPIC_PIDP_CMD) == 0) {
             float v = strtof(payload, NULL);
+            control_bootstrap_complete();
             if (v != s_control.pidP) {
                 s_control.pidP = v;
                 log_control_float("pid_p", v, 2);
@@ -430,6 +594,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
         } else if (strcmp(topic, TOPIC_PIDI_CMD) == 0) {
             float v = strtof(payload, NULL);
+            control_bootstrap_complete();
             if (v != s_control.pidI) {
                 s_control.pidI = v;
                 log_control_float("pid_i", v, 2);
@@ -437,6 +602,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
         } else if (strcmp(topic, TOPIC_PIDD_CMD) == 0) {
             float v = strtof(payload, NULL);
+            control_bootstrap_complete();
             if (v != s_control.pidD) {
                 s_control.pidD = v;
                 log_control_float("pid_d", v, 2);
@@ -444,6 +610,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
         } else if (strcmp(topic, TOPIC_PUMP_POWER_CMD) == 0) {
             float v = strtof(payload, NULL);
+            control_bootstrap_complete();
             if (v != s_control.pumpPower) {
                 s_control.pumpPower = v;
                 log_control_float("pump_power", v, 1);
@@ -451,6 +618,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
         } else if (strcmp(topic, TOPIC_PUMP_MODE_CMD) == 0) {
             uint8_t v = (uint8_t)atoi(payload);
+            control_bootstrap_complete();
             if (v != s_control.pumpMode) {
                 s_control.pumpMode = v;
                 log_control_u8("pump_mode", v);
@@ -765,9 +933,10 @@ void MQTT_SetHeaterState(bool heater) {
 bool MQTT_GetSteamState(void) { return s_steam; }
 
 void MQTT_SetSteamState(bool steam) {
-    if (s_control.steam == steam) return;
-    s_control.steam = steam;
-    s_steam = steam;
+    uint8_t changed = apply_steam_request(steam);
+    if (!changed) return;
+    if (changed & HEATER_STATE_CHANGED_FLAG) log_control_bool("heater", true);
+    if (changed & STEAM_STATE_CHANGED_FLAG) log_control_bool("steam", steam);
     handle_control_change();
 }
 
