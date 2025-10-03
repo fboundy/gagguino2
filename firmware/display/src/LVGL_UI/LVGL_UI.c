@@ -49,9 +49,7 @@ static void reset_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
 static void heater_event_cb(lv_event_t *e);
 static void steam_event_cb(lv_event_t *e);
-static void ota_event_cb(lv_event_t *e);
 static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols);
-static void align_settings_controls(void);
 static void add_version_label(lv_obj_t *parent);
 static void shot_def_dd_event_cb(lv_event_t *e);
 static void beep_on_shot_btn_event_cb(lv_event_t *e);
@@ -81,7 +79,6 @@ static lv_obj_t *main_screen;
 static lv_obj_t *settings_scr;
 static lv_obj_t *heater_btn;
 static lv_obj_t *steam_btn;
-static lv_obj_t *ota_btn;
 static lv_obj_t *settings_btn;
 static lv_coord_t tab_h_global;
 
@@ -229,12 +226,6 @@ static void steam_event_cb(lv_event_t *e)
   MQTT_SetSteamState(!steam);
 }
 
-static void ota_event_cb(lv_event_t *e)
-{
-  bool ota = MQTT_GetOtaState();
-  MQTT_SetOtaState(!ota);
-}
-
 static void reset_event_cb(lv_event_t *e)
 {
   esp_restart();
@@ -372,7 +363,7 @@ static void Settings_create(void)
   lv_obj_add_flag(shot_volume_roller, LV_OBJ_FLAG_HIDDEN);
 
   /* DRY: Reuse main page button alignment for settings page */
-  lv_obj_t *ctrl_container = create_aligned_button_container(settings_scr, /*cols=*/3);
+  lv_obj_t *ctrl_container = create_aligned_button_container(settings_scr, /*cols=*/2);
 
   lv_obj_t *back_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(back_btn, 80, 80);
@@ -404,24 +395,7 @@ static void Settings_create(void)
   lv_obj_set_style_text_color(reset_text, lv_color_white(), 0);
   lv_obj_set_grid_cell(reset_text, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 1, 1);
 
-  ota_btn = lv_btn_create(ctrl_container);
-  lv_obj_set_size(ota_btn, 80, 80);
-  lv_obj_set_style_border_width(ota_btn, 0, 0);
-  lv_obj_set_style_bg_color(ota_btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_set_grid_cell(ota_btn, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);
-  lv_obj_t *ota_label = lv_label_create(ota_btn);
-  lv_label_set_text(ota_label, "OTA");
-  lv_obj_center(ota_label);
-  lv_obj_add_event_cb(ota_btn, ota_event_cb, LV_EVENT_CLICKED, NULL);
-
-  lv_obj_t *ota_text = lv_label_create(ctrl_container);
-  lv_label_set_text(ota_text, "OTA");
-  lv_obj_set_style_text_color(ota_text, lv_color_white(), 0);
-  lv_obj_set_grid_cell(ota_text, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_START, 1, 1);
-
   add_version_label(settings_scr);
-
-  align_settings_controls();
 }
 
 void Lvgl_Example1_close(void)
@@ -816,7 +790,6 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   float shot_vol = MQTT_GetShotVolume();
   bool heater = MQTT_GetHeaterState();
   bool steam = MQTT_GetSteamState();
-  bool ota = MQTT_GetOtaState();
   char buf[32];
 
   set_temp_val = set;
@@ -1066,8 +1039,6 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     lv_obj_set_style_bg_color(heater_btn, heater ? on : off, 0);
   if (steam_btn)
     lv_obj_set_style_bg_color(steam_btn, steam ? on : off, 0);
-  if (ota_btn)
-    lv_obj_set_style_bg_color(ota_btn, ota ? on : off, 0);
   if (settings_btn)
     lv_obj_set_style_bg_color(settings_btn, off, 0);
 }
@@ -1201,43 +1172,4 @@ static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols)
   lv_obj_set_style_pad_row(ctrl_container, 5, 0);
   lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100); /* ~70% */
   return ctrl_container;
-}
-
-static void align_settings_controls(void)
-{
-  if (!ota_btn || !settings_scr)
-    return;
-
-  /* Ensure layout is calculated so coordinates are valid */
-  lv_obj_update_layout(settings_scr);
-
-  lv_area_t ota_coords;
-  lv_obj_get_coords(ota_btn, &ota_coords);
-  lv_coord_t ota_right = ota_coords.x2;
-
-  lv_area_t coords;
-
-  if (shot_def_dd)
-  {
-    lv_obj_get_coords(shot_def_dd, &coords);
-    lv_obj_set_style_translate_x(shot_def_dd, ota_right - coords.x2, 0);
-  }
-
-  if (shot_duration_roller)
-  {
-    lv_obj_get_coords(shot_duration_roller, &coords);
-    lv_obj_set_style_translate_x(shot_duration_roller, ota_right - coords.x2, 0);
-  }
-
-  if (shot_volume_roller)
-  {
-    lv_obj_get_coords(shot_volume_roller, &coords);
-    lv_obj_set_style_translate_x(shot_volume_roller, ota_right - coords.x2, 0);
-  }
-
-  if (beep_on_shot_btn)
-  {
-    lv_obj_get_coords(beep_on_shot_btn, &coords);
-    lv_obj_set_style_translate_x(beep_on_shot_btn, ota_right - coords.x2, 0);
-  }
 }
