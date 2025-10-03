@@ -22,6 +22,7 @@
 
 #include <Adafruit_MAX31865.h>
 #include <Arduino.h>
+#include <RBDdimmer.h>
 #include <WiFi.h>
 #include <ctype.h>
 #include <esp_now.h>
@@ -34,10 +35,8 @@
 
 #include <cstdarg>
 
-#include <RBDdimmer.h>
-
 #include "espnow_packet.h"
-#include "secrets.h"      // WIFI_*
+#include "secrets.h"  // WIFI_*
 #include "version.h"
 #define STARTUP_WAIT 1000
 #define SERIAL_BAUD 115200
@@ -82,7 +81,7 @@ constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP
 
 // Simple handshake bytes for ESP-NOW link-up (values defined in shared/espnow_protocol.h)
 
-constexpr unsigned long DISPLAY_TIMEOUT_MS = 5000;  // ms without ACK before fallback
+constexpr unsigned long DISPLAY_TIMEOUT_MS = 5000;      // ms without ACK before fallback
 constexpr unsigned long ESPNOW_CHANNEL_HOLD_MS = 1100;  // dwell time per channel when scanning
 constexpr uint8_t ESPNOW_FIRST_CHANNEL = 1;
 constexpr uint8_t ESPNOW_LAST_CHANNEL = 13;
@@ -125,7 +124,7 @@ constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
 constexpr float PUMP_POWER_DEFAULT = 95.0f;
 
-const bool debugPrint = false;
+const bool debugPrint = true;
 }  // namespace
 
 // ---------- Devices / globals ----------
@@ -163,7 +162,6 @@ static inline void LOG_ERROR(const char* fmt, ...) {
         cut = g_errorLog.indexOf('\n', cut);
         if (cut >= 0) g_errorLog = g_errorLog.substring(cut + 1);
     }
-
 }
 
 static void syncClock() {
@@ -189,7 +187,7 @@ float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
       windupGuardTemp = WINDUP_GUARD_TEMP, dTauTemp = D_TAU_TEMP;
 int heatCycles = 0;
 bool heaterState = false;
-bool heaterEnabled = true;  // HA switch default ON at boot
+bool heaterEnabled = true;             // HA switch default ON at boot
 float pumpPower = PUMP_POWER_DEFAULT;  // Default pump power (%), overridden by display
 
 // Pressure
@@ -559,14 +557,13 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     if (pkt.revision && pkt.revision <= g_lastControlRevision) return;
     g_lastControlRevision = pkt.revision;
 
-    LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d ota=%d brew=%.1f steamSet=%.1f pidP=%.2f pidI=%.2f "
+    LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d ota=%d brew=%.1f steamSet=%.1f "
+        "pidP=%.2f pidI=%.2f "
         "pidD=%.2f pump=%.1f mode=%u",
-        static_cast<unsigned>(pkt.revision),
-        (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
+        static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
         (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0,
-        (pkt.flags & ESPNOW_CONTROL_FLAG_OTA) != 0 ? 1 : 0,
-        pkt.brewSetpointC, pkt.steamSetpointC, pkt.pidP, pkt.pidI, pkt.pidD,
-        pkt.pumpPowerPercent, static_cast<unsigned>(pkt.pumpMode));
+        (pkt.flags & ESPNOW_CONTROL_FLAG_OTA) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
+        pkt.pidP, pkt.pidI, pkt.pidD, pkt.pumpPowerPercent, static_cast<unsigned>(pkt.pumpMode));
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
     if (hv != heaterEnabled) {
@@ -807,8 +804,8 @@ static void maybeHopEspNowChannel() {
 
     uint8_t channel = g_nextScanChannel;
     g_nextScanChannel = (g_nextScanChannel >= ESPNOW_LAST_CHANNEL)
-                             ? ESPNOW_FIRST_CHANNEL
-                             : static_cast<uint8_t>(g_nextScanChannel + 1);
+                            ? ESPNOW_FIRST_CHANNEL
+                            : static_cast<uint8_t>(g_nextScanChannel + 1);
 
     if (applyEspNowChannel(channel, true, true)) {
         g_lastChannelHopMs = now;
