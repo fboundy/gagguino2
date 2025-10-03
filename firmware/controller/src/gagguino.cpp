@@ -559,6 +559,15 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     if (pkt.revision && pkt.revision <= g_lastControlRevision) return;
     g_lastControlRevision = pkt.revision;
 
+    LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d ota=%d brew=%.1f steamSet=%.1f pidP=%.2f pidI=%.2f "
+        "pidD=%.2f pump=%.1f mode=%u",
+        static_cast<unsigned>(pkt.revision),
+        (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
+        (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0,
+        (pkt.flags & ESPNOW_CONTROL_FLAG_OTA) != 0 ? 1 : 0,
+        pkt.brewSetpointC, pkt.steamSetpointC, pkt.pidP, pkt.pidI, pkt.pidD,
+        pkt.pumpPowerPercent, static_cast<unsigned>(pkt.pumpMode));
+
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
     if (hv != heaterEnabled) {
         heaterEnabled = hv;
@@ -623,9 +632,6 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
 
     if (len >= 2 && data[0] == ESPNOW_HANDSHAKE_REQ) {
         uint8_t requestedChannel = data[1];
-        LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X (chan %u)", mac ? mac[0] : 0,
-            mac ? mac[1] : 0, mac ? mac[2] : 0, mac ? mac[3] : 0, mac ? mac[4] : 0,
-            mac ? mac[5] : 0, requestedChannel);
         if (mac) {
             esp_now_peer_info_t peer{};
             memcpy(peer.peer_addr, mac, ESP_NOW_ETH_ALEN);
@@ -653,7 +659,12 @@ static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
         g_espnowScanning = false;
         g_nextScanChannel = requestedChannel;
         uint8_t ack[2] = {ESPNOW_HANDSHAKE_ACK, g_espnowChannel};
-        if (mac) esp_now_send(mac, ack, sizeof(ack));
+        if (mac) {
+            esp_err_t ackErr = esp_now_send(mac, ack, sizeof(ack));
+            if (ackErr != ESP_OK) {
+                LOG_ERROR("ESP-NOW: handshake ack send failed (%d)", static_cast<int>(ackErr));
+            }
+        }
         return;
     }
 
