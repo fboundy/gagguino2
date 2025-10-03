@@ -23,8 +23,11 @@ extern "C"
 #define MDI_COG "\U000F0493"         /* cog */
 #define MDI_POWER "\U000F0425"       /* power */
 #define MDI_STEAM "\U000F1799"       /* weather-fog or smoke, pick what you added */
-#define MDI_BEAKER "\U000F0CEA"
-#define MDI_COFFEE "\U000F109F"
+#define MDI_BEAKER "\U000F0690"
+#define MDI_MQTT_ON "\U000F12CC"
+#define MDI_MQTT_OFF "\U000F0164"
+#define MDI_WIFI_ON "\U000F05A9"
+#define MDI_WIFI_OFF "\U000F05AA"
 
 #ifdef __cplusplus
 } /* extern "C" */
