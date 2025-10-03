@@ -942,6 +942,7 @@ void MQTT_SetSteamState(bool steam) {
 
 bool Wireless_UsingEspNow(void) { return s_use_espnow; }
 bool Wireless_IsMQTTConnected(void) { return s_mqtt_connected; }
+bool Wireless_IsWiFiConnected(void) { return s_wifi_ready; }
 
 bool Wireless_ControllerStillSendingEspNow(void) {
     if (!s_espnow_last_rx) return false;
