@@ -8,6 +8,7 @@
 #include "Wireless.h"
 #include "Buzzer.h"
 #include "ST7701S.h"
+#include "fonts/mdi_icons_24.h"
 #include "fonts/mdi_icons_40.h"
 
 #define EXAMPLE1_LVGL_TICK_PERIOD_MS 1000

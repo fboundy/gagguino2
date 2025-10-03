@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "esp_log.h"
 #include "esp_system.h"
 #include "version.h"
@@ -48,15 +49,12 @@ static void reset_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
 static void heater_event_cb(lv_event_t *e);
 static void steam_event_cb(lv_event_t *e);
-static void ota_event_cb(lv_event_t *e);
 static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols);
-static void align_settings_controls(void);
 static void add_version_label(lv_obj_t *parent);
 static void shot_def_dd_event_cb(lv_event_t *e);
-static void shot_duration_slider_event_cb(lv_event_t *e);
-static void shot_volume_slider_event_cb(lv_event_t *e);
 static void beep_on_shot_btn_event_cb(lv_event_t *e);
 static void buzzer_timer_cb(lv_timer_t *t);
+static int roller_get_int_value(lv_obj_t *roller);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -81,7 +79,6 @@ static lv_obj_t *main_screen;
 static lv_obj_t *settings_scr;
 static lv_obj_t *heater_btn;
 static lv_obj_t *steam_btn;
-static lv_obj_t *ota_btn;
 static lv_obj_t *settings_btn;
 static lv_coord_t tab_h_global;
 
@@ -107,17 +104,18 @@ static lv_obj_t *beep_on_shot_btn;
 static lv_obj_t *beep_on_shot_label;
 static lv_obj_t *shot_def_dd;
 static lv_obj_t *shot_duration_label;
-static lv_obj_t *shot_duration_slider;
-static lv_obj_t *shot_duration_value;
+static lv_obj_t *shot_duration_roller;
 static lv_obj_t *shot_volume_label;
-static lv_obj_t *shot_volume_slider;
-static lv_obj_t *shot_volume_value;
-static lv_obj_t *conn_label;
-static lv_obj_t *conn_status_label;
+static lv_obj_t *shot_volume_roller;
+static lv_obj_t *comm_status_container;
+static lv_obj_t *wifi_status_icon;
+static lv_obj_t *mqtt_status_icon;
+static lv_obj_t *espnow_status_icon;
 static lv_obj_t *battery_bar;
 static lv_obj_t *battery_label;
-static int last_conn_type = -1;
-static int last_conn_status = -1;
+static int last_wifi_state = -1;
+static int last_mqtt_state = -1;
+static int last_esp_state = -1;
 static int last_battery = -1;
 static lv_timer_t *buzzer_timer;
 static bool shot_target_reached;
@@ -231,12 +229,6 @@ static void steam_event_cb(lv_event_t *e)
   MQTT_SetSteamState(!steam);
 }
 
-static void ota_event_cb(lv_event_t *e)
-{
-  bool ota = MQTT_GetOtaState();
-  MQTT_SetOtaState(!ota);
-}
-
 static void reset_event_cb(lv_event_t *e)
 {
   esp_restart();
@@ -342,20 +334,15 @@ static void Settings_create(void)
   lv_obj_set_grid_cell(shot_duration_label, LV_GRID_ALIGN_START, 1, 1,
                        LV_GRID_ALIGN_START, 4, 1);
 
-  shot_duration_slider = lv_slider_create(settings_scr);
-  lv_obj_set_size(shot_duration_slider, 200, 35);
-  lv_slider_set_range(shot_duration_slider, 20, 40);
-  lv_slider_set_value(shot_duration_slider, 27, LV_ANIM_OFF);
-  lv_obj_add_event_cb(shot_duration_slider, shot_duration_slider_event_cb,
-                      LV_EVENT_VALUE_CHANGED, NULL);
-  lv_obj_set_grid_cell(shot_duration_slider, LV_GRID_ALIGN_END, 1, 1,
+  static const char shot_duration_opts[] =
+      "20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40";
+  shot_duration_roller = lv_roller_create(settings_scr);
+  lv_roller_set_options(shot_duration_roller, shot_duration_opts, LV_ROLLER_MODE_NORMAL);
+  lv_roller_set_visible_row_count(shot_duration_roller, 3);
+  lv_roller_set_selected(shot_duration_roller, 7, LV_ANIM_OFF);
+  lv_obj_set_width(shot_duration_roller, 100);
+  lv_obj_set_grid_cell(shot_duration_roller, LV_GRID_ALIGN_END, 1, 1,
                        LV_GRID_ALIGN_START, 4, 1);
-  lv_obj_set_style_translate_y(shot_duration_slider, 20, 0);
-
-  shot_duration_value = lv_label_create(settings_scr);
-  lv_label_set_text(shot_duration_value, "27s");
-  lv_obj_align_to(shot_duration_value, shot_duration_slider,
-                  LV_ALIGN_OUT_RIGHT_MID, 10, 0);
 
   shot_volume_label = lv_label_create(settings_scr);
   lv_label_set_text(shot_volume_label, "Shot Volume");
@@ -363,30 +350,23 @@ static void Settings_create(void)
   lv_obj_set_grid_cell(shot_volume_label, LV_GRID_ALIGN_START, 1, 1,
                        LV_GRID_ALIGN_START, 4, 1);
 
-  shot_volume_slider = lv_slider_create(settings_scr);
-  lv_obj_set_size(shot_volume_slider, 200, 35);
-  lv_slider_set_range(shot_volume_slider, 30, 60);
-  lv_slider_set_value(shot_volume_slider, 40, LV_ANIM_OFF);
-  lv_obj_add_event_cb(shot_volume_slider, shot_volume_slider_event_cb,
-                      LV_EVENT_VALUE_CHANGED, NULL);
-  lv_obj_set_grid_cell(shot_volume_slider, LV_GRID_ALIGN_END, 1, 1,
+  static const char shot_volume_opts[] =
+      "30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60";
+  shot_volume_roller = lv_roller_create(settings_scr);
+  lv_roller_set_options(shot_volume_roller, shot_volume_opts, LV_ROLLER_MODE_NORMAL);
+  lv_roller_set_visible_row_count(shot_volume_roller, 3);
+  lv_roller_set_selected(shot_volume_roller, 10, LV_ANIM_OFF);
+  lv_obj_set_width(shot_volume_roller, 100);
+  lv_obj_set_grid_cell(shot_volume_roller, LV_GRID_ALIGN_END, 1, 1,
                        LV_GRID_ALIGN_START, 4, 1);
-  lv_obj_set_style_translate_y(shot_volume_slider, 20, 0);
-
-  shot_volume_value = lv_label_create(settings_scr);
-  lv_label_set_text(shot_volume_value, "40 ml");
-  lv_obj_align_to(shot_volume_value, shot_volume_slider, LV_ALIGN_OUT_RIGHT_MID,
-                  10, 0);
 
   lv_obj_add_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(shot_duration_slider, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(shot_duration_value, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(shot_duration_roller, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(shot_volume_slider, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_add_flag(shot_volume_value, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(shot_volume_roller, LV_OBJ_FLAG_HIDDEN);
 
   /* DRY: Reuse main page button alignment for settings page */
-  lv_obj_t *ctrl_container = create_aligned_button_container(settings_scr, /*cols=*/3);
+  lv_obj_t *ctrl_container = create_aligned_button_container(settings_scr, /*cols=*/2);
 
   lv_obj_t *back_btn = lv_btn_create(ctrl_container);
   lv_obj_set_size(back_btn, 80, 80);
@@ -418,24 +398,7 @@ static void Settings_create(void)
   lv_obj_set_style_text_color(reset_text, lv_color_white(), 0);
   lv_obj_set_grid_cell(reset_text, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 1, 1);
 
-  ota_btn = lv_btn_create(ctrl_container);
-  lv_obj_set_size(ota_btn, 80, 80);
-  lv_obj_set_style_border_width(ota_btn, 0, 0);
-  lv_obj_set_style_bg_color(ota_btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_set_grid_cell(ota_btn, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);
-  lv_obj_t *ota_label = lv_label_create(ota_btn);
-  lv_label_set_text(ota_label, "OTA");
-  lv_obj_center(ota_label);
-  lv_obj_add_event_cb(ota_btn, ota_event_cb, LV_EVENT_CLICKED, NULL);
-
-  lv_obj_t *ota_text = lv_label_create(ctrl_container);
-  lv_label_set_text(ota_text, "OTA");
-  lv_obj_set_style_text_color(ota_text, lv_color_white(), 0);
-  lv_obj_set_grid_cell(ota_text, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_START, 1, 1);
-
   add_version_label(settings_scr);
-
-  align_settings_controls();
 }
 
 void Lvgl_Example1_close(void)
@@ -464,20 +427,21 @@ void Lvgl_Example1_close(void)
   pressure_units_label = NULL;
   shot_time_units_label = NULL;
   shot_volume_units_label = NULL;
-  conn_label = NULL;
-  conn_status_label = NULL;
-  last_conn_type = -1;
-  last_conn_status = -1;
+  comm_status_container = NULL;
+  wifi_status_icon = NULL;
+  mqtt_status_icon = NULL;
+  espnow_status_icon = NULL;
+  last_wifi_state = -1;
+  last_mqtt_state = -1;
+  last_esp_state = -1;
   Backlight_slider = NULL;
   beep_on_shot_btn = NULL;
   beep_on_shot_label = NULL;
   shot_def_dd = NULL;
   shot_duration_label = NULL;
-  shot_duration_slider = NULL;
-  shot_duration_value = NULL;
+  shot_duration_roller = NULL;
   shot_volume_label = NULL;
-  shot_volume_slider = NULL;
-  shot_volume_value = NULL;
+  shot_volume_roller = NULL;
   set_temp_val = 0.0f;
   heater_on = false;
 
@@ -495,19 +459,31 @@ static void Status_create(lv_obj_t *parent)
 {
   lv_obj_set_style_border_width(parent, 0, 0);
 
-  conn_label = lv_label_create(parent);
-#if LV_FONT_MONTSERRAT_24
-  lv_obj_set_style_text_font(conn_label, &lv_font_montserrat_24, 0);
-#else
-  lv_obj_set_style_text_font(conn_label, LV_FONT_DEFAULT, 0);
-#endif
-  lv_obj_align(conn_label, LV_ALIGN_TOP_MID, 0, 0);
-  lv_label_set_text(conn_label, "");
+  comm_status_container = lv_obj_create(parent);
+  lv_obj_remove_style_all(comm_status_container);
+  lv_obj_set_style_bg_opa(comm_status_container, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_pad_all(comm_status_container, 0, 0);
+  lv_obj_set_style_pad_gap(comm_status_container, 12, 0);
+  lv_obj_set_style_border_width(comm_status_container, 0, 0);
+  lv_obj_set_flex_flow(comm_status_container, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(comm_status_container, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_align(comm_status_container, LV_ALIGN_TOP_MID, 0, 0);
 
-  conn_status_label = lv_label_create(parent);
-  lv_obj_set_style_text_font(conn_status_label, LV_FONT_DEFAULT, 0);
-  lv_obj_align(conn_status_label, LV_ALIGN_TOP_MID, 0, 24);
-  lv_label_set_text(conn_status_label, "");
+  wifi_status_icon = lv_label_create(comm_status_container);
+  lv_obj_set_style_text_font(wifi_status_icon, &mdi_icons_24, 0);
+  lv_label_set_text(wifi_status_icon, MDI_WIFI_OFF);
+  lv_obj_set_style_text_color(wifi_status_icon, lv_palette_main(LV_PALETTE_RED), 0);
+
+  mqtt_status_icon = lv_label_create(comm_status_container);
+  lv_obj_set_style_text_font(mqtt_status_icon, &mdi_icons_24, 0);
+  lv_label_set_text(mqtt_status_icon, MDI_MQTT_OFF);
+  lv_obj_set_style_text_color(mqtt_status_icon, lv_palette_main(LV_PALETTE_RED), 0);
+
+  espnow_status_icon = lv_label_create(comm_status_container);
+  lv_obj_set_style_text_font(espnow_status_icon, &mdi_icons_24, 0);
+  lv_label_set_text(espnow_status_icon, MDI_ESP_NOW_OFF);
+  lv_obj_set_style_text_color(espnow_status_icon, lv_palette_main(LV_PALETTE_RED), 0);
 
   const lv_coord_t current_arc_width = 20;
   lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
@@ -832,7 +808,6 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   float shot_vol = MQTT_GetShotVolume();
   bool heater = MQTT_GetHeaterState();
   bool steam = MQTT_GetSteamState();
-  bool ota = MQTT_GetOtaState();
   char buf[32];
 
   set_temp_val = set;
@@ -841,65 +816,48 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   if (tick_layer)
     lv_obj_invalidate(tick_layer);
 
-  enum
-  {
-    CONN_NONE,
-    CONN_MQTT,
-    CONN_ESPNOW
-  };
-  int conn = CONN_NONE;
+  bool wifi_ok = Wireless_IsWiFiConnected();
+  bool mqtt_ok = Wireless_IsMQTTConnected();
   bool espnow_active = Wireless_IsEspNowActive();
-  if (espnow_active)
-    conn = CONN_ESPNOW;
-  else if (Wireless_IsMQTTConnected())
-    conn = CONN_MQTT;
+  bool espnow_link = Wireless_UsingEspNow();
+  int esp_state = espnow_link ? 2 : (espnow_active ? 1 : 0);
 
-  enum
+  if (wifi_status_icon && wifi_ok != last_wifi_state)
   {
-    STATUS_NONE,
-    STATUS_CONNECTING,
-    STATUS_CONNECTED
-  };
-  int status = STATUS_NONE;
-  if (espnow_active)
-    status = Wireless_UsingEspNow() ? STATUS_CONNECTED : STATUS_CONNECTING;
-
-  if (conn_label && conn != last_conn_type)
-  {
-    switch (conn)
-    {
-    case CONN_MQTT:
-      lv_label_set_text(conn_label, "MQTT");
-      lv_obj_set_style_text_color(conn_label, lv_palette_main(LV_PALETTE_ORANGE), 0);
-      break;
-    case CONN_ESPNOW:
-      lv_label_set_text(conn_label, "ESP-NOW");
-      lv_obj_set_style_text_color(conn_label, lv_palette_main(LV_PALETTE_CYAN), 0);
-      break;
-    default:
-      lv_label_set_text(conn_label, "");
-      break;
-    }
-    last_conn_type = conn;
+    lv_label_set_text(wifi_status_icon, wifi_ok ? MDI_WIFI_ON : MDI_WIFI_OFF);
+    lv_color_t colour =
+        lv_palette_main(wifi_ok ? LV_PALETTE_GREEN : LV_PALETTE_RED);
+    lv_obj_set_style_text_color(wifi_status_icon, colour, 0);
+    last_wifi_state = wifi_ok;
   }
 
-  if (conn_status_label && status != last_conn_status)
+  if (mqtt_status_icon && mqtt_ok != last_mqtt_state)
   {
-    switch (status)
+    lv_label_set_text(mqtt_status_icon,
+                      mqtt_ok ? MDI_MQTT_ON : MDI_MQTT_OFF);
+    lv_color_t colour =
+        lv_palette_main(mqtt_ok ? LV_PALETTE_GREEN : LV_PALETTE_RED);
+    lv_obj_set_style_text_color(mqtt_status_icon, colour, 0);
+    last_mqtt_state = mqtt_ok;
+  }
+
+  if (espnow_status_icon && esp_state != last_esp_state)
+  {
+    const char *icon = MDI_ESP_NOW_OFF;
+    lv_color_t colour = lv_palette_main(LV_PALETTE_RED);
+    if (esp_state == 1)
     {
-    case STATUS_CONNECTING:
-      lv_label_set_text(conn_status_label, "Connecting");
-      lv_obj_set_style_text_color(conn_status_label, lv_palette_main(LV_PALETTE_YELLOW), 0);
-      break;
-    case STATUS_CONNECTED:
-      lv_label_set_text(conn_status_label, "Connected");
-      lv_obj_set_style_text_color(conn_status_label, lv_palette_main(LV_PALETTE_GREEN), 0);
-      break;
-    default:
-      lv_label_set_text(conn_status_label, "");
-      break;
+      icon = MDI_ESP_NOW_PAIR;
+      colour = lv_palette_main(LV_PALETTE_YELLOW);
     }
-    last_conn_status = status;
+    else if (esp_state == 2)
+    {
+      icon = MDI_ESP_NOW_ON;
+      colour = lv_palette_main(LV_PALETTE_GREEN);
+    }
+    lv_label_set_text(espnow_status_icon, icon);
+    lv_obj_set_style_text_color(espnow_status_icon, colour, 0);
+    last_esp_state = esp_state;
   }
 
   int batt = Battery_GetPercentage();
@@ -992,7 +950,7 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     bool beep_enabled = beep_on_shot_btn && lv_obj_has_state(beep_on_shot_btn, LV_STATE_CHECKED);
     if (sel == 1)
     {
-      int target = shot_duration_slider ? lv_slider_get_value(shot_duration_slider) : 0;
+      int target = roller_get_int_value(shot_duration_roller);
       lv_color_t col = white;
       if (shot_active && shot_time >= (float)target)
       {
@@ -1020,7 +978,7 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     }
     else if (sel == 2)
     {
-      int target = shot_volume_slider ? lv_slider_get_value(shot_volume_slider) : 0;
+      int target = roller_get_int_value(shot_volume_roller);
       lv_color_t col = white;
       if (shot_active && shot_vol >= (float)target)
       {
@@ -1087,8 +1045,6 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     lv_obj_set_style_bg_color(heater_btn, heater ? on : off, 0);
   if (steam_btn)
     lv_obj_set_style_bg_color(steam_btn, steam ? on : off, 0);
-  if (ota_btn)
-    lv_obj_set_style_bg_color(ota_btn, ota ? on : off, 0);
   if (settings_btn)
     lv_obj_set_style_bg_color(settings_btn, off, 0);
 }
@@ -1115,51 +1071,39 @@ static void shot_def_dd_event_cb(lv_event_t *e)
   {
   case 1: /* Time */
     lv_obj_clear_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(shot_duration_slider, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(shot_duration_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(shot_duration_roller, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_volume_slider, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_volume_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_volume_roller, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
     break;
   case 2: /* Volume */
     lv_obj_clear_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(shot_volume_slider, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(shot_volume_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(shot_volume_roller, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_duration_slider, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_duration_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_duration_roller, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
     break;
   default:
     lv_obj_add_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_duration_slider, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_duration_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_duration_roller, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_volume_slider, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_volume_value, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(shot_volume_roller, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
     break;
   }
 }
 
-static void shot_duration_slider_event_cb(lv_event_t *e)
+static int roller_get_int_value(lv_obj_t *roller)
 {
-  int val = lv_slider_get_value(lv_event_get_target(e));
-  char buf[8];
-  snprintf(buf, sizeof buf, "%ds", val);
-  lv_label_set_text(shot_duration_value, buf);
-}
+  if (!roller)
+    return 0;
 
-static void shot_volume_slider_event_cb(lv_event_t *e)
-{
-  int val = lv_slider_get_value(lv_event_get_target(e));
   char buf[8];
-  snprintf(buf, sizeof buf, "%d ml", val);
-  lv_label_set_text(shot_volume_value, buf);
+  lv_roller_get_selected_str(roller, buf, sizeof buf);
+  return atoi(buf);
 }
 
 static void beep_on_shot_btn_event_cb(lv_event_t *e)
@@ -1234,43 +1178,4 @@ static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols)
   lv_obj_set_style_pad_row(ctrl_container, 5, 0);
   lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100); /* ~70% */
   return ctrl_container;
-}
-
-static void align_settings_controls(void)
-{
-  if (!ota_btn || !settings_scr)
-    return;
-
-  /* Ensure layout is calculated so coordinates are valid */
-  lv_obj_update_layout(settings_scr);
-
-  lv_area_t ota_coords;
-  lv_obj_get_coords(ota_btn, &ota_coords);
-  lv_coord_t ota_right = ota_coords.x2;
-
-  lv_area_t coords;
-
-  if (shot_def_dd)
-  {
-    lv_obj_get_coords(shot_def_dd, &coords);
-    lv_obj_set_style_translate_x(shot_def_dd, ota_right - coords.x2, 0);
-  }
-
-  if (shot_duration_slider)
-  {
-    lv_obj_get_coords(shot_duration_slider, &coords);
-    lv_obj_set_style_translate_x(shot_duration_slider, ota_right - coords.x2, 0);
-  }
-
-  if (shot_volume_slider)
-  {
-    lv_obj_get_coords(shot_volume_slider, &coords);
-    lv_obj_set_style_translate_x(shot_volume_slider, ota_right - coords.x2, 0);
-  }
-
-  if (beep_on_shot_btn)
-  {
-    lv_obj_get_coords(beep_on_shot_btn, &coords);
-    lv_obj_set_style_translate_x(beep_on_shot_btn, ota_right - coords.x2, 0);
-  }
 }

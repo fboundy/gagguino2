@@ -2,12 +2,12 @@
  * @file gagguino.cpp
  * @brief Gagguino firmware: ESP32 control for Gaggia Classic.
  *
- * High‑level responsibilities:
+ * High-level responsibilities:
  * - Temperature control using a MAX31865 RTD amplifier (PT100) and PID.
  * - Heater PWM drive.
  * - Flow, pressure and shot timing measurement with debounced ISR counters.
- * - Wi‑Fi + MQTT with Home Assistant discovery for control/telemetry.
- * - Robust OTA (ArduinoOTA) that throttles other work while an update runs.
+ * - ESP-NOW link to the display for control/telemetry.
+ * - Brief Wi-Fi use to synchronize time over NTP.
  *
  * Hardware pins (ESP32 default board mapping):
  * - FLOW_PIN (26)   : Flow sensor input (interrupt on CHANGE)
@@ -22,8 +22,7 @@
 
 #include <Adafruit_MAX31865.h>
 #include <Arduino.h>
-#include <ArduinoOTA.h>
-#include <PubSubClient.h>
+#include <RBDdimmer.h>
 #include <WiFi.h>
 #include <ctype.h>
 #include <esp_now.h>
@@ -35,24 +34,15 @@
 #include <time.h>
 
 #include <cstdarg>
-#include <map>
-
-// Optional: triac dimmer (ESP32 AC pump control). Disabled by default to avoid
-// bringing in ESP-IDF intr headers that emit deprecation warnings. Define
-// USE_PUMP_DIMMER in build flags to enable.
-#ifdef USE_PUMP_DIMMER
-#include <RBDdimmer.h>
-#endif
 
 #include "espnow_packet.h"
-#include "mqtt_topics.h"  // GAG_TOPIC_ROOT
-#include "secrets.h"      // WIFI_*, MQTT_*
+#include "secrets.h"  // WIFI_*
 #include "version.h"
 #define STARTUP_WAIT 1000
 #define SERIAL_BAUD 115200
 
 /**
- * @brief Lightweight printf‑style logger to the serial console.
+ * @brief Lightweight printf-style logger to the serial console.
  */
 static inline void LOG(const char* fmt, ...) {
     static char buf[192];
@@ -70,7 +60,7 @@ static inline void LOG(const char* fmt, ...) {
 }
 
 /**
- * @brief Log a significant error and publish it to MQTT.
+ * @brief Log a significant error.
  *
  * Maintains a small rolling buffer of recent error messages to avoid
  * unbounded growth while still providing context for debugging.
@@ -89,41 +79,33 @@ constexpr int PRESS_PIN = 35;
 constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP_CYCLE = 500,
                         LOG_CYCLE = 2000;
 
-// Simple handshake bytes for ESP-NOW link-up
-constexpr uint8_t ESPNOW_HANDSHAKE_REQ = 0xAA;
-constexpr uint8_t ESPNOW_HANDSHAKE_ACK = 0x55;
-constexpr uint8_t ESPNOW_CMD_HEATER_ON = 0xA1;
-constexpr uint8_t ESPNOW_CMD_HEATER_OFF = 0xA0;
-constexpr uint8_t ESPNOW_CMD_STEAM_ON = 0xB1;
-constexpr uint8_t ESPNOW_CMD_STEAM_OFF = 0xB0;
+// Simple handshake bytes for ESP-NOW link-up (values defined in shared/espnow_protocol.h)
 
-constexpr unsigned long IDLE_CYCLE = 5000;       // ms between publishes when idle (reduced chatter)
-constexpr unsigned long SHOT_CYCLE = 1000;       // ms between publishes during a shot
-constexpr unsigned long OTA_ENABLE_MS = 300000;  // ms OTA window after enabling
+constexpr unsigned long DISPLAY_TIMEOUT_MS = 5000;      // ms without ACK before fallback
+constexpr unsigned long ESPNOW_CHANNEL_HOLD_MS = 1100;  // dwell time per channel when scanning
+constexpr uint8_t ESPNOW_FIRST_CHANNEL = 1;
+constexpr uint8_t ESPNOW_LAST_CHANNEL = 13;
+constexpr uint8_t ESPNOW_BROADCAST_ADDR[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // Brew & Steam setpoint limits
-constexpr float BREW_MIN = 90.0f, BREW_MAX = 99.0f;
+constexpr float BREW_MIN = 87.0f, BREW_MAX = 97.0f;
 constexpr float STEAM_MIN_C = 145.0f, STEAM_MAX_C = 155.0f;
 
 // Default steam setpoint (within limits)
 constexpr float STEAM_DEFAULT = 152.0f;
 
 constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
-// Default PID params (overridable via MQTT number entities)
+// Default PID params (overridable via ESP-NOW control packets)
 // Default PID parameters tuned for stability
-// Kp: 15–16 [out/°C]
-// Ki: 0.3–0.5 [out/(°C·s)] → start at 0.35
-// Kd: 50–70 [out·s/°C] → start at 60
-// guard: ±8–±12% integral clamp on 0–100% heater
+// Kp: 15-16 [out/degC]
+// Ki: 0.3-0.5 [out/(degC*s)] -> start at 0.35
+// Kd: 50-70 [out*s/degC] -> start at 60
+// guard: +/-8-+/-12% integral clamp on 0-100% heater
 constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
                 WINDUP_GUARD_TEMP = 10.0f;
 // Derivative filter time constant (seconds), exposed to HA
-constexpr float D_TAU_TEMP = 0.8f;
 
-// Pump dimmer instance (enabled only if USE_PUMP_DIMMER is set)
-#ifdef USE_PUMP_DIMMER
 dimmerLamp pumpDimmer(PUMP_PIN, ZC_PIN);
-#endif
 
 // Pressure calibration constants
 constexpr float PRESSURE_TOL = 1.0f, PRESS_GRAD = 0.00903f, PRESS_INT_0 = -4.0f;
@@ -135,27 +117,26 @@ constexpr float FLOW_CAL = 0.246f;
 constexpr unsigned long PULSE_MIN = 3;  // ms debounce (bounce + double-edges)
 
 constexpr unsigned ZC_MIN = 4;
-// Duration thresholds for zero‑cross (pump) activity
+// Duration thresholds for zero-cross (pump) activity
 constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 60000;
 constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
+constexpr float PUMP_POWER_DEFAULT = 95.0f;
 
-const bool streamData = true, debugPrint = false;
+const bool debugPrint = true;
 }  // namespace
 
 // ---------- Devices / globals ----------
 namespace {
 Adafruit_MAX31865 max31865(MAX_CS);
-WiFiClient wifiClient;
-PubSubClient mqttClient(wifiClient);
-
 // Rolling buffer of recent significant error messages
 static String g_errorLog;
 // Tracks whether the RTC has successfully synchronized with NTP
 static bool g_clockSynced = false;
+static bool g_wifiNtpConnecting = false;
 
 /**
- * @brief Log a significant error and publish it via MQTT.
+ * @brief Log a significant error and persist it in memory.
  */
 static inline void LOG_ERROR(const char* fmt, ...) {
     static char buf[192];
@@ -180,8 +161,6 @@ static inline void LOG_ERROR(const char* fmt, ...) {
         cut = g_errorLog.indexOf('\n', cut);
         if (cut >= 0) g_errorLog = g_errorLog.substring(cut + 1);
     }
-
-    if (mqttClient.connected()) mqttClient.publish(MQTT_ERRORS, g_errorLog.c_str(), true);
 }
 
 static void syncClock() {
@@ -198,17 +177,17 @@ static void syncClock() {
 
 // Temps / PID
 float currentTemp = 0.0f, lastTemp = 0.0f, pvFiltTemp = 0.0f;
-float brewSetpoint = 95.0f;           // HA-controllable (90–99)
-float steamSetpoint = STEAM_DEFAULT;  // HA-controllable (145–155)
+float brewSetpoint = 92.0f;           // HA-controllable (90?99)
+float steamSetpoint = STEAM_DEFAULT;  // HA-controllable (145?155)
 float setTemp = brewSetpoint;         // active target (brew or steam)
 float iStateTemp = 0.0f, heatPower = 0.0f;
 // Live-tunable PID parameters (default to constexprs above)
 float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
-      windupGuardTemp = WINDUP_GUARD_TEMP, dTauTemp = D_TAU_TEMP;
+      windupGuardTemp = WINDUP_GUARD_TEMP;
 int heatCycles = 0;
 bool heaterState = false;
-bool heaterEnabled = true;  // HA switch default ON at boot
-float pumpPower = 0.0f;     // HA-controllable pump power 0-100%
+bool heaterEnabled = true;             // HA switch default ON at boot
+float pumpPower = PUMP_POWER_DEFAULT;  // Default pump power (%), overridden by display
 
 // Pressure
 int rawPress = 0;
@@ -218,15 +197,15 @@ float pressBuff[PRESS_BUFF_SIZE] = {0};
 uint8_t pressBuffIdx = 0;
 
 // Time/shot
-unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, lastMqttTime = 0,
-              lastEspNowTime = 0, lastLogTime = 0;
+unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, lastEspNowTime = 0,
+              lastLogTime = 0;
 // microsecond timestamps for ISR debounce
 volatile int64_t lastPulseTime = 0;
 unsigned long shotStart = 0, startTime = 0;
-float shotTime = 0;  //
-unsigned long shotAccumulatedMs = 0;  //!< total pump‑active time of completed segments
-unsigned long shotTimeMs = 0;        //!< current shot time including active segment
-bool pumpPrevActive = false;         //!< tracks pump activity transitions
+float shotTime = 0;                   //
+unsigned long shotAccumulatedMs = 0;  //!< total pump?active time of completed segments
+unsigned long shotTimeMs = 0;         //!< current shot time including active segment
+bool pumpPrevActive = false;          //!< tracks pump activity transitions
 
 // Flow / flags
 volatile unsigned long pulseCount = 0;
@@ -239,69 +218,28 @@ int acCount = 0;
 bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
      steamHwFlag = false, steamResetPending = false, setupComplete = false, debugData = false;
 
-// OTA
-static bool otaInitialized = false;
-static bool otaActive = false;      // minimize other work while OTA is in progress
-static unsigned long otaStart = 0;  // millis when OTA was enabled
-
-// MQTT diagnostics
-static IPAddress g_mqttIp;
-static bool g_mqttIpResolved = false;
-
 // ESP-NOW diagnostics
 static uint8_t g_espnowChannel = 0;
 static String g_espnowStatus = "disabled";
 static String g_espnowMac;
 static bool g_espnowHandshake = false;
-static bool g_mqttDisabled = false;
-static unsigned long g_mqttDisabledSince = 0;
-static unsigned long g_lastEspnowEpoch = 0;  // Unix time of last ESP-NOW packet
+static uint8_t g_displayMac[ESP_NOW_ETH_ALEN] = {0};
+static bool g_haveDisplayPeer = false;
+static uint32_t g_lastControlRevision = 0;
+static unsigned long g_lastDisplayAckMs = 0;
+static EspNowPumpMode pumpMode = ESPNOW_PUMP_MODE_NORMAL;
+static bool g_espnowCoreInit = false;
+static bool g_espnowBroadcastPeerAdded = false;
+static esp_now_peer_info_t g_broadcastPeerInfo{};
+static bool g_espnowScanning = false;
+static uint8_t g_nextScanChannel = ESPNOW_FIRST_CHANNEL;
+static unsigned long g_lastChannelHopMs = 0;
 
-// ---------- HA Discovery identity / topics ----------
-const char* DISCOVERY_PREFIX = "homeassistant";
-// If your broker ACLs need a username prefix, change this:
-const char* STATE_BASE = GAG_TOPIC_ROOT;
+static bool applyEspNowChannel(uint8_t channel, bool forceSetWifiChannel, bool silent);
 
-char dev_id[32] = {0};
-char uid_suffix[16] = {0};
-
-// Sensor state topics
-char t_shotvol_state[96], t_settemp_state[96], t_curtemp_state[96], t_press_state[96],
-    t_shottime_state[96], t_ota_state[96], t_espnow_state[96], t_espnow_chan_state[96],
-    t_espnow_mac_state[96], t_espnow_last_state[96], t_espnow_cmd[96];
-// OTA command topic
-char t_ota_cmd[96];
-// Switch state/command topics
-char t_heater_state[96], t_heater_cmd[96], t_steam_cmd[96];
-// Diagnostics state topics
-char t_accnt_state[96], t_zccnt_state[96], t_pulsecnt_state[96];
-// Binary sensor state topics
-char t_shot_state[96], t_preflow_state[96], t_steam_state[96];
-// Number entities (brew/steam setpoint) command/state topics
-char t_brewset_state[96], t_brewset_cmd[96];
-char t_steamset_state[96], t_steamset_cmd[96];
-char t_pump_state[96], t_pump_cmd[96];
-// PID number entity topics
-char t_pidp_state[96], t_pidp_cmd[96];
-char t_pidi_state[96], t_pidi_cmd[96];
-char t_pidd_state[96], t_pidd_cmd[96];
-char t_pidg_state[96], t_pidg_cmd[96];
-// PID derivative filter tau topics
-char t_piddtau_state[96], t_piddtau_cmd[96];
-
-// Config topics
-char c_shotvol[128], c_settemp[128], c_curtemp[128], c_press[128], c_shottime[128], c_ota[128],
-    c_ota_switch[128], c_espnow[128], c_espnow_chan[128];
-char c_accnt[128], c_zccnt[128], c_pulsecnt[128];
-char c_pidp_number[128], c_pidi_number[128], c_pidd_number[128], c_pidg_number[128];
-char c_shot[128], c_preflow[128], c_steam[128];
-char c_brewset_number[128], c_steamset_number[128], c_pump_number[128];
-char c_piddtau_number[128];  // PID D Tau (seconds)
-// Switch config
-char c_heater[128];
 // ---------- helpers ----------
 /**
- * @brief Convert Wi‑Fi status to a readable string.
+ * @brief Convert Wi-Fi status to a readable string.
  */
 static inline const char* wifiStatusName(wl_status_t s) {
     switch (s) {
@@ -323,185 +261,20 @@ static inline const char* wifiStatusName(wl_status_t s) {
             return "UNKNOWN";
     }
 }
-/**
- * @brief Convert PubSubClient connection state to a readable string.
- */
-static inline const char* mqttStateName(int8_t s) {
-    switch (s) {
-        case MQTT_CONNECTION_TIMEOUT:
-            return "CONNECTION_TIMEOUT";
-        case MQTT_CONNECTION_LOST:
-            return "CONNECTION_LOST";
-        case MQTT_CONNECT_FAILED:
-            return "CONNECT_FAILED";
-        case MQTT_DISCONNECTED:
-            return "DISCONNECTED";
-        case MQTT_CONNECTED:
-            return "CONNECTED";
-        case MQTT_CONNECT_BAD_PROTOCOL:
-            return "BAD_PROTOCOL";
-        case MQTT_CONNECT_BAD_CLIENT_ID:
-            return "BAD_CLIENT_ID";
-        case MQTT_CONNECT_UNAVAILABLE:
-            return "UNAVAILABLE";
-        case MQTT_CONNECT_BAD_CREDENTIALS:
-            return "BAD_CREDENTIALS";
-        case MQTT_CONNECT_UNAUTHORIZED:
-            return "UNAUTHORIZED";
-        default:
-            return "UNKNOWN";
-    }
-}
-
-/**
- * @brief Tune MQTT timeouts/buffer to play nicer with OTA pauses.
- */
-static void initMqttTuning() {
-    // Longer keepalive so brief OTA stalls don't drop MQTT
-    mqttClient.setKeepAlive(60);
-    mqttClient.setSocketTimeout(5);
-    mqttClient.setBufferSize(1024);
-}
-/**
- * @brief Resolve `MQTT_HOST` to an IP once and cache it.
- */
-static void resolveBrokerIfNeeded() {
-    if (g_mqttIpResolved) return;
-    if (g_mqttIp.fromString(MQTT_HOST)) {
-        g_mqttIpResolved = true;
-        LOG("MQTT: using literal host %s", g_mqttIp.toString().c_str());
-        mqttClient.setServer(g_mqttIp, MQTT_PORT);
-        return;
-    }
-    if (WiFi.hostByName(MQTT_HOST, g_mqttIp) == 1) {
-        g_mqttIpResolved = true;
-        LOG("MQTT: %s resolved to %s", MQTT_HOST, g_mqttIp.toString().c_str());
-        mqttClient.setServer(g_mqttIp, MQTT_PORT);
-    } else
-        LOG_ERROR("MQTT: DNS resolve failed for %s", MQTT_HOST);
-}
-
-// ---------- OTA ----------
-// Forward declaration for MQTT publish helper used in OTA callbacks
-static void publishStr(const char* topic, const String& v, bool retain = true);
-static void publishBool(const char* topic, bool on, bool retain = true);
-/**
- * @brief Initialize ArduinoOTA once Wi‑Fi is connected.
- *
- * Notes:
- * - Hostname is derived from MAC address for stability.
- * - If `OTA_PASSWORD` or `OTA_PASSWORD_HASH` is defined (via build flags),
- *   OTA authentication is enforced.
- * - During OTA, the heater output is disabled and main work throttled.
- */
-static void ensureOta() {
-    if (otaActive && otaStart && (millis() - otaStart >= OTA_ENABLE_MS)) {
-        otaActive = false;
-        otaStart = 0;
-        publishBool(t_ota_state, false, true);
-        LOG("OTA: window expired");
-    }
-
-    if (otaInitialized || WiFi.status() != WL_CONNECTED) return;
-
-    // Derive a stable hostname from MAC
-    uint8_t mac[6];
-    WiFi.macAddress(mac);
-    char host[32];
-    snprintf(host, sizeof(host), "gaggia-%02X%02X%02X", mac[3], mac[4], mac[5]);
-
-    ArduinoOTA.setHostname(host);
-#if defined(OTA_PASSWORD_HASH)
-    ArduinoOTA.setPasswordHash(OTA_PASSWORD_HASH);
-#elif defined(OTA_PASSWORD)
-    ArduinoOTA.setPassword(OTA_PASSWORD);
-#endif
-
-    ArduinoOTA.onStart([]() {
-        LOG("OTA: Start (%s)", ArduinoOTA.getCommand() == U_FLASH ? "flash" : "fs");
-        otaActive = true;  // signal loop to reduce load and suppress MQTT publishing
-        otaStart = millis();
-        publishBool(t_ota_state, true, true);
-        // Turn off heater to reduce power/noise during OTA
-        digitalWrite(HEAT_PIN, LOW);
-        heaterState = false;
-    });
-    ArduinoOTA.onEnd([]() {
-        LOG("OTA: End");
-        otaActive = false;
-        otaStart = 0;
-        publishBool(t_ota_state, false, true);
-        // (Optional) re-attach interrupts if you detached them on start
-        // attachInterrupt(digitalPinToInterrupt(FLOW_PIN), flowInt, CHANGE);
-        // attachInterrupt(digitalPinToInterrupt(ZC_PIN), zcInt, RISING);
-    });
-    ArduinoOTA.setTimeout(120000);  // 120s OTA socket timeout (default is shorter)
-    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-        static unsigned int lastPct = 101;
-        unsigned int pct = (total ? (progress * 100u / total) : 0u);
-        if (pct != lastPct && (pct % 10u == 0u)) {
-            LOG("OTA: %u%%", pct);
-            lastPct = pct;
-        }
-    });
-    ArduinoOTA.onError([](ota_error_t error) {
-        const char* msg = "UNKNOWN";
-        switch (error) {
-            case OTA_AUTH_ERROR:
-                msg = "AUTH";
-                break;
-            case OTA_BEGIN_ERROR:
-                msg = "BEGIN";
-                break;
-            case OTA_CONNECT_ERROR:
-                msg = "CONNECT";
-                break;
-            case OTA_RECEIVE_ERROR:
-                msg = "RECEIVE";
-                break;
-            case OTA_END_ERROR:
-                msg = "END";
-                break;
-        }
-        LOG_ERROR("OTA: Error %d (%s)", (int)error, msg);
-        otaActive = false;
-        otaStart = 0;
-        publishBool(t_ota_state, false, true);
-    });
-
-    ArduinoOTA.begin();
-    otaInitialized = true;
-    LOG("OTA: Ready as %s.local", host);
-}
-
-/**
- * @brief PID controller with integral windup guard and filtered derivative.
- * @param Kp Proportional gain
- * @param Ki Integral gain
- * @param Kd Derivative gain
- * @param sp Setpoint (target)
- * @param pv Process value (measured)
- * @param dt Timestep in seconds
- * @param pvFilt Storage for filtered process variable (updated)
- * @param iSum Integral accumulator (updated)
- * @param guard Absolute limit for iTerm contribution (anti-windup)
- * @param dTau Derivative low-pass filter time constant (seconds)
- * @return Control output (unclamped)
- */
-// Continuous-time gains: Kp [out/°C], Ki [out/(°C·s)], Kd [out·s/°C]
-
-// ──────────────────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------------------------
 //  PID: dt-scaled I & D, iTerm clamp, derivative LPF, conditional integration
-// ──────────────────────────────────────────────────────────────────────────────
+// ------------------------------------------------------------------------------
 static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
-                     float dt,             // seconds (0.5 at 2 Hz)
-                     float& pvFilt,        // filtered PV (state)
-                     float& iSum,          // ∫err dt  (state)
-                     float guard,          // clamp on iTerm (output units)
-                     float dTau = 1.0f,    // derivative LPF time const (s)
-                     float outMin = 0.0f,  // actuator limits (for cond. integration)
-                     float outMax = 100.0f) {
+                     float dt,       // seconds (0.5 at 2 Hz)
+                     float& pvFilt,  // filtered PV (state)
+                     float& iSum,    // ?err dt  (state)
+                     float guard) {  // clamp on iTerm (output units)
+
     // 1) Error
+    float dTau = 0.8f;    // derivative LPF time const (s)
+    float outMin = 0.0f;  // actuator limits (for cond. integration)
+    float outMax = 100.0f;
+
     float err = sp - pv;
 
     // 2) Integral
@@ -526,9 +299,9 @@ static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
     // 5) Output (pre-clamp)
     float u = pTerm + iTerm + dTerm;
 
-    // 6) Conditional integration: don’t integrate when pushing into saturation
+    // 6) Conditional integration: don't integrate when pushing into saturation
     if ((u >= outMax && err > 0.0f) || (u <= outMin && err < 0.0f)) {
-        iSum -= err * dt;  // undo this step’s integral
+        iSum -= err * dt;  // undo this step?s integral
         iTerm = Ki * iSum;
         if (iTerm > guard) iTerm = guard;
         if (iTerm < -guard) iTerm = -guard;
@@ -539,7 +312,7 @@ static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
 
 // --------------- espresso logic ---------------
 /**
- * @brief Detect shot start/stop based on zero‑cross events and steam transitions.
+ * @brief Detect shot start/stop based on zero-cross events and steam transitions.
  */
 static void checkShotStartStop() {
     if ((zcCount >= ZC_MIN) && !shotFlag && setupComplete &&
@@ -589,8 +362,7 @@ static void updateTempPID() {
     setTemp = steamFlag ? steamSetpoint : brewSetpoint;
 
     heatPower = calcPID(pGainTemp, iGainTemp, dGainTemp, setTemp, currentTemp, dt, pvFiltTemp,
-                        iStateTemp, windupGuardTemp, /*dTau=*/dTauTemp, /*outMin=*/0.0f,
-                        /*outMax=*/100.0f);
+                        iStateTemp, windupGuardTemp);
 
     if (heatPower > 100.0f) heatPower = 100.0f;
     if (heatPower < 0.0f) heatPower = 0.0f;
@@ -599,7 +371,7 @@ static void updateTempPID() {
 }
 
 /**
- * @brief Apply time‑proportioning control to the heater output.
+ * @brief Apply time-proportioning control to the heater output.
  */
 static void updateTempPWM() {
     if (!heaterEnabled) {
@@ -620,12 +392,20 @@ static void updateTempPWM() {
     nLoop++;
 }
 
+static inline float clampf(float v, float lo, float hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
 /**
  * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
  */
 static void applyPumpPower() {
-    // pumpDimmer.setPower((int)pumpPower);
-    // pumpDimmer.setState(pumpPower > 0.0f ? ON : OFF);
+    float clamped = clampf(pumpPower, 0.0f, 100.0f);
+    int percent = static_cast<int>(lroundf(clamped));
+    pumpDimmer.setPower(percent);
+    pumpDimmer.setState(percent > 0 ? ON : OFF);
 }
 
 /**
@@ -644,7 +424,7 @@ static void updatePressure() {
 }
 
 /**
- * @brief Infer steam mode based on AC sense and recent zero‑cross activity.
+ * @brief Infer steam mode based on AC sense and recent zero-cross activity.
  */
 static void updateSteamFlag() {
     ac = !digitalRead(AC_SENS);
@@ -670,7 +450,7 @@ static void updateSteamFlag() {
 }
 
 /**
- * @brief Track pre‑infusion phase and capture volume up to threshold pressure.
+ * @brief Track pre-infusion phase and capture volume up to threshold pressure.
  */
 static void updatePreFlow() {
     if (preFlow && lastPress > PRESS_THRESHOLD) {
@@ -689,7 +469,7 @@ static void updateVols() {
 }
 
 /**
- * @brief Update shot timer, pausing when pump zero‑crosses cease.
+ * @brief Update shot timer, pausing when pump zero-crosses cease.
  */
 static void updateShotTime() {
     if (!shotFlag) return;
@@ -725,409 +505,6 @@ static void IRAM_ATTR flowInt() {
         lastPulseTime = now;
     }
 }
-/**
- * @brief Zero‑cross detect ISR: records pump activity timing.
- */
-static void IRAM_ATTR zcInt() {
-    int64_t now = esp_timer_get_time();
-    // Guard against spurious re-triggers/noise (<~6 ms @ 50 Hz)
-    if (now - lastZcTime < 6000) {
-        return;
-    }
-    lastZcTime = now;
-    zcCount++;
-}
-// ---------- HA Discovery helpers ----------
-/**
- * @brief Build stable device identifiers from the MAC address.
- */
-static void makeIdsFromMac() {
-    uint8_t mac[6];
-    WiFi.macAddress(mac);
-    snprintf(uid_suffix, sizeof(uid_suffix), "%02X%02X%02X", mac[3], mac[4], mac[5]);
-    snprintf(dev_id, sizeof(dev_id), "gaggia_classic-%s", uid_suffix);
-}
-
-/**
- * @brief Construct MQTT topics for state, commands and discovery.
- */
-static void buildTopics() {
-    // sensor states
-    snprintf(t_shotvol_state, sizeof(t_shotvol_state), "%s/%s/shot_volume/state", STATE_BASE,
-             uid_suffix);
-    snprintf(t_settemp_state, sizeof(t_settemp_state), "%s/%s/set_temp/state", STATE_BASE,
-             uid_suffix);
-    snprintf(t_curtemp_state, sizeof(t_curtemp_state), "%s/%s/current_temp/state", STATE_BASE,
-             uid_suffix);
-    snprintf(t_press_state, sizeof(t_press_state), "%s/%s/pressure/state", STATE_BASE, uid_suffix);
-    snprintf(t_shottime_state, sizeof(t_shottime_state), "%s/%s/shot_time/state", STATE_BASE,
-             uid_suffix);
-    snprintf(t_ota_state, sizeof(t_ota_state), "%s/%s/ota/status", STATE_BASE, uid_suffix);
-    snprintf(t_ota_cmd, sizeof(t_ota_cmd), "%s/%s/ota/enable", STATE_BASE, uid_suffix);
-    snprintf(t_espnow_state, sizeof(t_espnow_state), "%s/%s/espnow/status", STATE_BASE, uid_suffix);
-    snprintf(t_espnow_chan_state, sizeof(t_espnow_chan_state), "%s/%s/espnow/channel", STATE_BASE,
-             uid_suffix);
-    snprintf(t_espnow_mac_state, sizeof(t_espnow_mac_state), "%s/%s/espnow/mac", STATE_BASE,
-             uid_suffix);
-    snprintf(t_espnow_last_state, sizeof(t_espnow_last_state), "%s/%s/espnow/last", STATE_BASE,
-             uid_suffix);
-    snprintf(t_espnow_cmd, sizeof(t_espnow_cmd), "%s/%s/espnow/cmd", STATE_BASE, uid_suffix);
-    // switch topics
-    snprintf(t_heater_state, sizeof(t_heater_state), "%s/%s/heater/state", STATE_BASE, uid_suffix);
-    snprintf(t_heater_cmd, sizeof(t_heater_cmd), "%s/%s/heater/set", STATE_BASE, uid_suffix);
-    snprintf(t_steam_cmd, sizeof(t_steam_cmd), "%s/%s/steam/set", STATE_BASE, uid_suffix);
-    // diagnostic counters states
-    snprintf(t_accnt_state, sizeof(t_accnt_state), "%s/%s/ac_count/state", STATE_BASE, uid_suffix);
-    snprintf(t_zccnt_state, sizeof(t_zccnt_state), "%s/%s/zc_count/state", STATE_BASE, uid_suffix);
-    snprintf(t_pulsecnt_state, sizeof(t_pulsecnt_state), "%s/%s/pulse_count/state", STATE_BASE,
-             uid_suffix);
-    // binary sensor states
-    snprintf(t_shot_state, sizeof(t_shot_state), "%s/%s/shot/state", STATE_BASE, uid_suffix);
-    snprintf(t_preflow_state, sizeof(t_preflow_state), "%s/%s/preflow/state", STATE_BASE,
-             uid_suffix);
-    snprintf(t_steam_state, sizeof(t_steam_state), "%s/%s/steam/state", STATE_BASE, uid_suffix);
-    // number command/state
-    snprintf(t_brewset_cmd, sizeof(t_brewset_cmd), "%s/%s/brew_setpoint/set", STATE_BASE,
-             uid_suffix);
-    snprintf(t_brewset_state, sizeof(t_brewset_state), "%s/%s/brew_setpoint/state", STATE_BASE,
-             uid_suffix);
-    snprintf(t_steamset_cmd, sizeof(t_steamset_cmd), "%s/%s/steam_setpoint/set", STATE_BASE,
-             uid_suffix);
-    snprintf(t_steamset_state, sizeof(t_steamset_state), "%s/%s/steam_setpoint/state", STATE_BASE,
-             uid_suffix);
-    // snprintf(t_pump_cmd, sizeof(t_pump_cmd), "%s/%s/pump_power/set", STATE_BASE, uid_suffix);
-    // snprintf(t_pump_state, sizeof(t_pump_state), "%s/%s/pump_power/state", STATE_BASE, uid_suffix);
-    // PID numbers
-    snprintf(t_pidp_cmd, sizeof(t_pidp_cmd), "%s/%s/pid_p/set", STATE_BASE, uid_suffix);
-    snprintf(t_pidp_state, sizeof(t_pidp_state), "%s/%s/pid_p/state", STATE_BASE, uid_suffix);
-    snprintf(t_pidi_cmd, sizeof(t_pidi_cmd), "%s/%s/pid_i/set", STATE_BASE, uid_suffix);
-    snprintf(t_pidi_state, sizeof(t_pidi_state), "%s/%s/pid_i/state", STATE_BASE, uid_suffix);
-    snprintf(t_pidd_cmd, sizeof(t_pidd_cmd), "%s/%s/pid_d/set", STATE_BASE, uid_suffix);
-    snprintf(t_pidd_state, sizeof(t_pidd_state), "%s/%s/pid_d/state", STATE_BASE, uid_suffix);
-    snprintf(t_pidg_cmd, sizeof(t_pidg_cmd), "%s/%s/pid_guard/set", STATE_BASE, uid_suffix);
-    snprintf(t_pidg_state, sizeof(t_pidg_state), "%s/%s/pid_guard/state", STATE_BASE, uid_suffix);
-    // dTau (derivative filter time constant) command/state
-    snprintf(t_piddtau_cmd, sizeof(t_piddtau_cmd), "%s/%s/pid_d_tau/set", STATE_BASE, uid_suffix);
-    snprintf(t_piddtau_state, sizeof(t_piddtau_state), "%s/%s/pid_d_tau/state", STATE_BASE,
-             uid_suffix);
-
-    // configs
-    snprintf(c_shotvol, sizeof(c_shotvol), "%s/sensor/%s_shot_volume/config", DISCOVERY_PREFIX,
-             dev_id);
-    snprintf(c_settemp, sizeof(c_settemp), "%s/sensor/%s_set_temp/config", DISCOVERY_PREFIX,
-             dev_id);
-    snprintf(c_curtemp, sizeof(c_curtemp), "%s/sensor/%s_current_temp/config", DISCOVERY_PREFIX,
-             dev_id);
-    snprintf(c_press, sizeof(c_press), "%s/sensor/%s_pressure/config", DISCOVERY_PREFIX, dev_id);
-    snprintf(c_shottime, sizeof(c_shottime), "%s/sensor/%s_shot_time/config", DISCOVERY_PREFIX,
-             dev_id);
-    snprintf(c_ota, sizeof(c_ota), "%s/sensor/%s_ota_status/config", DISCOVERY_PREFIX, dev_id);
-    snprintf(c_ota_switch, sizeof(c_ota_switch), "%s/switch/%s_ota/config", DISCOVERY_PREFIX,
-             dev_id);
-    snprintf(c_espnow, sizeof(c_espnow), "%s/sensor/%s_espnow_status/config", DISCOVERY_PREFIX,
-             dev_id);
-    snprintf(c_espnow_chan, sizeof(c_espnow_chan), "%s/sensor/%s_espnow_channel/config",
-             DISCOVERY_PREFIX, dev_id);
-
-    snprintf(c_shot, sizeof(c_shot), "%s/binary_sensor/%s_shot/config", DISCOVERY_PREFIX, dev_id);
-    snprintf(c_preflow, sizeof(c_preflow), "%s/binary_sensor/%s_preflow/config", DISCOVERY_PREFIX,
-             dev_id);
-    snprintf(c_steam, sizeof(c_steam), "%s/binary_sensor/%s_steam/config", DISCOVERY_PREFIX,
-             dev_id);
-
-    // numbers
-    snprintf(c_brewset_number, sizeof(c_brewset_number), "%s/number/%s_brew_setpoint/config",
-             DISCOVERY_PREFIX, dev_id);
-    snprintf(c_steamset_number, sizeof(c_steamset_number), "%s/number/%s_steam_setpoint/config",
-             DISCOVERY_PREFIX, dev_id);
-    // snprintf(c_pump_number, sizeof(c_pump_number), "%s/number/%s_pump_power/config",
-    //          DISCOVERY_PREFIX, dev_id);
-    // PID numbers
-    snprintf(c_pidp_number, sizeof(c_pidp_number), "%s/number/%s_pid_p/config", DISCOVERY_PREFIX,
-             dev_id);
-    snprintf(c_piddtau_number, sizeof(c_piddtau_number), "%s/number/%s_pid_d_tau/config",
-             DISCOVERY_PREFIX, dev_id);
-    snprintf(c_pidi_number, sizeof(c_pidi_number), "%s/number/%s_pid_i/config", DISCOVERY_PREFIX,
-             dev_id);
-    snprintf(c_pidd_number, sizeof(c_pidd_number), "%s/number/%s_pid_d/config", DISCOVERY_PREFIX,
-             dev_id);
-    snprintf(c_pidg_number, sizeof(c_pidg_number), "%s/number/%s_pid_guard/config",
-             DISCOVERY_PREFIX, dev_id);
-    // diagnostic sensors
-    snprintf(c_accnt, sizeof(c_accnt), "%s/sensor/%s_ac_count/config", DISCOVERY_PREFIX, dev_id);
-    snprintf(c_zccnt, sizeof(c_zccnt), "%s/sensor/%s_zc_count/config", DISCOVERY_PREFIX, dev_id);
-    snprintf(c_pulsecnt, sizeof(c_pulsecnt), "%s/sensor/%s_pulse_count/config", DISCOVERY_PREFIX,
-             dev_id);
-    // switch
-    snprintf(c_heater, sizeof(c_heater), "%s/switch/%s_heater/config", DISCOVERY_PREFIX, dev_id);
-}
-
-/**
- * @brief JSON snippet describing the device for HA discovery payloads.
- */
-static String deviceJson() {
-    String j = "{";
-    j += "\"identifiers\":[\"" + String(dev_id) + "\"],";
-    j += "\"name\":\"Gaggia "
-         "Classic\",\"manufacturer\":\"Custom\",\"model\":\"Gagguino\",\"sw_version\":\"" VERSION
-         "\"}";
-    return j;
-}
-
-/**
- * @brief Publish a retained discovery/config message.
- */
-static void publishRetained(const char* topic, const String& payload) {
-    if (!mqttClient.publish(topic, payload.c_str(), true))
-        LOG_ERROR("MQTT: discovery publish failed (%s)", topic);
-}
-
-/**
- * @brief Publish Home Assistant discovery entities (sensors, numbers, switch).
- */
-static void publishDiscovery() {
-    String dev = deviceJson();
-
-    // --- sensors ---
-    publishRetained(c_shotvol,
-                    String("{\"name\":\"Shot Volume\",\"uniq_id\":\"") + dev_id +
-                        "_shot_volume\",\"stat_t\":\"" + t_shotvol_state +
-                        "\",\"dev_cla\":\"volume\",\"unit_of_meas\":\"mL\",\"stat_cla\":"
-                        "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
-                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                        "}");
-    publishRetained(c_settemp,
-                    String("{\"name\":\"Set Temperature\",\"uniq_id\":\"") + dev_id +
-                        "_set_temp\",\"stat_t\":\"" + t_settemp_state +
-                        "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"°C\",\"stat_cla\":"
-                        "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
-                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                        "}");
-    publishRetained(c_curtemp,
-                    String("{\"name\":\"Current Temperature\",\"uniq_id\":\"") + dev_id +
-                        "_current_temp\",\"stat_t\":\"" + t_curtemp_state +
-                        "\",\"dev_cla\":\"temperature\",\"unit_of_meas\":\"°C\",\"stat_cla\":"
-                        "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
-                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                        "}");
-    publishRetained(c_press,
-                    String("{\"name\":\"Pressure\",\"uniq_id\":\"") + dev_id +
-                        "_pressure\",\"stat_t\":\"" + t_press_state +
-                        "\",\"dev_cla\":\"pressure\",\"unit_of_meas\":\"bar\",\"stat_cla\":"
-                        "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
-                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                        "}");
-    publishRetained(c_shottime,
-                    String("{\"name\":\"Shot Time\",\"uniq_id\":\"") + dev_id +
-                        "_shot_time\",\"stat_t\":\"" + t_shottime_state +
-                        "\",\"dev_cla\":\"duration\",\"unit_of_meas\":\"s\",\"stat_cla\":"
-                        "\"measurement\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
-                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                        "}");
-
-    // OTA status (diagnostic sensor)
-    publishRetained(
-        c_ota, String("{\"name\":\"OTA Status\",\"uniq_id\":\"") + dev_id +
-                   "_ota_status\",\"stat_t\":\"" + t_ota_state +
-                   "\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" + String(MQTT_STATUS) +
-                   "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-
-    publishRetained(
-        c_espnow, String("{\"name\":\"ESP-NOW Status\",\"uniq_id\":\"") + dev_id +
-                      "_espnow_status\",\"stat_t\":\"" + t_espnow_state +
-                      "\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" + String(MQTT_STATUS) +
-                      "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                      "}");
-    publishRetained(
-        c_espnow_chan,
-        String("{\"name\":\"ESP-NOW Channel\",\"uniq_id\":\"") + dev_id +
-            "_espnow_channel\",\"stat_t\":\"" + t_espnow_chan_state +
-            "\",\"stat_cla\":\"measurement\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-
-    // Diagnostic counters
-    publishRetained(
-        c_accnt,
-        String("{\"name\":\"AC Count\",\"uniq_id\":\"") + dev_id + "_ac_count\",\"stat_t\":\"" +
-            t_accnt_state +
-            "\",\"stat_cla\":\"measurement\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-    publishRetained(
-        c_zccnt,
-        String("{\"name\":\"ZC Count\",\"uniq_id\":\"") + dev_id + "_zc_count\",\"stat_t\":\"" +
-            t_zccnt_state +
-            "\",\"stat_cla\":\"measurement\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-    publishRetained(
-        c_pulsecnt,
-        String("{\"name\":\"Pulse Count\",\"uniq_id\":\"") + dev_id +
-            "_pulse_count\",\"stat_t\":\"" + t_pulsecnt_state +
-            "\",\"stat_cla\":\"measurement\",\"entity_category\":\"diagnostic\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-
-    // --- binary sensors ---
-    publishRetained(
-        c_shot, String("{\"name\":\"Shot\",\"uniq_id\":\"") + dev_id + "_shot\",\"stat_t\":\"" +
-                    t_shot_state +
-                    "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"dev_cla\":\"running\",\"avty_t\":\"" +
-                    String(MQTT_STATUS) +
-                    "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-    publishRetained(
-        c_preflow,
-        String("{\"name\":\"Pre-Flow\",\"uniq_id\":\"") + dev_id + "_preflow\",\"stat_t\":\"" +
-            t_preflow_state +
-            "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"dev_cla\":\"running\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-    publishRetained(
-        c_steam,
-        String("{\"name\":\"Steam\",\"uniq_id\":\"") + dev_id + "_steam\",\"stat_t\":\"" +
-            t_steam_state +
-            "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"dev_cla\":\"running\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-
-    // --- switch: heater enable ---
-    publishRetained(
-        c_heater,
-        String("{\"name\":\"Heater\",\"uniq_id\":\"") + dev_id + "_heater\",\"cmd_t\":\"" +
-            t_heater_cmd + "\",\"stat_t\":\"" + t_heater_state +
-            "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-
-    // --- switch: OTA window ---
-    publishRetained(
-        c_ota_switch,
-        String("{\"name\":\"OTA\",\"uniq_id\":\"") + dev_id + "_ota\",\"cmd_t\":\"" + t_ota_cmd +
-            "\",\"stat_t\":\"" + t_ota_state +
-            "\",\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"" + String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-
-    // --- numbers (controllable) ---
-    publishRetained(
-        c_brewset_number,
-        String("{\"name\":\"Brew Setpoint\",\"uniq_id\":\"") + dev_id +
-            "_brew_setpoint\",\"cmd_t\":\"" + t_brewset_cmd + "\",\"stat_t\":\"" + t_brewset_state +
-            "\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"min\":90,\"max\":99,\"step\":"
-            "1,\"mode\":\"auto\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-
-    publishRetained(c_steamset_number,
-                    String("{\"name\":\"Steam Setpoint\",\"uniq_id\":\"") + dev_id +
-                        "_steam_setpoint\",\"cmd_t\":\"" + t_steamset_cmd + "\",\"stat_t\":\"" +
-                        t_steamset_state +
-                        "\",\"unit_of_meas\":\"°C\",\"dev_cla\":\"temperature\",\"min\":145,"
-                        "\"max\":155,\"step\":1,\"mode\":\"auto\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
-                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                        "}");
-    // publishRetained(
-    // c_pump_number,
-    // String("{\"name\":\"Pump Power\",\"uniq_id\":\"") + dev_id + "_pump_power\",\"cmd_t\":\"" +
-    // t_pump_cmd + "\",\"stat_t\":\"" + t_pump_state +
-    // "\",\"unit_of_meas\":\"%\",\"min\":0,\"max\":100,\"step\":1,\"mode\":\"auto\",\"avty_"
-    // "t\":\"" +
-    // String(MQTT_STATUS) +
-    // "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-
-    // --- number: PID D Tau (seconds) ---
-    publishRetained(c_piddtau_number, String("{\"name\":\"PID D Tau\",\"uniq_id\":\"") + dev_id +
-                                          "_pid_d_tau\",\"cmd_t\":\"" + t_piddtau_cmd +
-                                          "\",\"stat_t\":\"" + t_piddtau_state +
-                                          "\",\"unit_of_meas\":\"s\",\"min\":0.1,\"max\":5.0,"
-                                          "\"step\":0.1,\"mode\":\"auto\",\"avty_t\":\"" +
-                                          String(MQTT_STATUS) +
-                                          "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\","
-                                          "\"entity_category\":\"config\",\"dev\":" +
-                                          dev + "}");
-
-    // PID number entities
-    publishRetained(c_pidp_number,
-                    String("{\"name\":\"PID P\",\"uniq_id\":\"") + dev_id +
-                        "_pid_p\",\"cmd_t\":\"" + t_pidp_cmd + "\",\"stat_t\":\"" + t_pidp_state +
-                        "\",\"min\":0,\"max\":20,\"step\":0.1,\"mode\":\"auto\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
-                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                        "}");
-    publishRetained(c_pidi_number,
-                    String("{\"name\":\"PID I\",\"uniq_id\":\"") + dev_id +
-                        "_pid_i\",\"cmd_t\":\"" + t_pidi_cmd + "\",\"stat_t\":\"" + t_pidi_state +
-                        "\",\"min\":0,\"max\":1,\"step\":0.05,\"mode\":\"auto\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
-                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                        "}");
-    publishRetained(c_pidd_number,
-                    String("{\"name\":\"PID D\",\"uniq_id\":\"") + dev_id +
-                        "_pid_d\",\"cmd_t\":\"" + t_pidd_cmd + "\",\"stat_t\":\"" + t_pidd_state +
-                        "\",\"min\":50,\"max\":100,\"step\":0.5,\"mode\":\"auto\",\"avty_t\":\"" +
-                        String(MQTT_STATUS) +
-                        "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev +
-                        "}");
-    publishRetained(
-        c_pidg_number,
-        String("{\"name\":\"PID Guard\",\"uniq_id\":\"") + dev_id + "_pid_guard\",\"cmd_t\":\"" +
-            t_pidg_cmd + "\",\"stat_t\":\"" + t_pidg_state +
-            "\",\"min\":0,\"max\":20,\"step\":0.5,\"mode\":\"auto\",\"avty_t\":\"" +
-            String(MQTT_STATUS) +
-            "\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",\"dev\":" + dev + "}");
-}
-
-// ---------- publishing states ----------
-// Track last published values per topic to suppress duplicates
-static std::map<String, String> s_lastStr;
-static std::map<String, float> s_lastNum;
-static std::map<String, bool> s_lastBool;
-
-static void resetPublishCache() {
-    s_lastStr.clear();
-    s_lastNum.clear();
-    s_lastBool.clear();
-}
-/**
- * @brief Publish a string value to MQTT.
- */
-static void publishStr(const char* topic, const String& v, bool retain) {
-    auto it = s_lastStr.find(topic);
-    if (it != s_lastStr.end() && it->second == v) return;
-    s_lastStr[String(topic)] = v;
-    if (!mqttClient.publish(topic, v.c_str(), retain))
-        LOG_ERROR("MQTT: state publish failed (%s) val=%s", topic, v.c_str());
-}
-/**
- * @brief Publish a floating‑point value with fixed decimals.
- */
-static void publishNum(const char* topic, float v, uint8_t decimals = 1, bool retain = true,
-                       float threshold = 0.1f) {
-    auto it = s_lastNum.find(topic);
-    if (it != s_lastNum.end() && fabs(it->second - v) < threshold) return;
-    s_lastNum[String(topic)] = v;
-    char tmp[24];
-    dtostrf(v, 0, decimals, tmp);
-    publishStr(topic, String(tmp), retain);
-}
-static void publishBool(const char* topic, bool on, bool retain) {
-    auto it = s_lastBool.find(topic);
-    if (it != s_lastBool.end() && it->second == on) return;
-    s_lastBool[String(topic)] = on;
-    publishStr(topic, on ? "ON" : "OFF", retain);
-}
-
-// Publish retained number/config states once (on connect) or on change.
-static void publishNumberStatesSnapshot() {
-    // NOTE: Config/number states are published on connect and on change only.
-    // publishNum(t_pump_state, pumpPower, 0, true);
-}
-
 // Helper: immediately disable the heater output and prevent PID updates.
 // Also disables steam unless hardware AC sense keeps it active.
 static void forceHeaterOff() {
@@ -1139,49 +516,21 @@ static void forceHeaterOff() {
     if (!steamHwFlag) {
         steamDispFlag = false;
         steamFlag = false;
-        publishBool(t_steam_state, steamFlag, true);
     }
 }
 
-/**
- * @brief Publish periodic telemetry and mirrored setpoint values.
- */
-static void publishStates() {
-    // measurements
-    publishNum(t_shotvol_state, shotVol, 1);  // mL
-    publishNum(t_settemp_state, setTemp, 1);  // active target
-    publishNum(t_curtemp_state, currentTemp, 1);
-    publishNum(t_press_state, lastPress, 1);
-    publishNum(t_shottime_state, shotTime, 1);  // seconds
-    // heater switch state (retained so HA keeps last state)
-    publishBool(t_heater_state, heaterEnabled, true);
-    // diagnostics
-    publishNum(t_accnt_state, acCount, 0);
-    publishNum(t_zccnt_state, zcCount, 0);
-    publishNum(t_pulsecnt_state, pulseCount, 0);
-    publishStr(t_espnow_state, g_espnowStatus, true);
-    publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
-    publishStr(t_espnow_mac_state, g_espnowMac.c_str(), true);
-    char espnow_last_buf[24];
-    snprintf(espnow_last_buf, sizeof(espnow_last_buf), "%lu", g_lastEspnowEpoch);
-    publishStr(t_espnow_last_state, espnow_last_buf, true);
-    publishBool(t_ota_state, otaActive, true);
-
-    // flags
-    publishBool(t_shot_state, shotFlag);
-    publishBool(t_preflow_state, preFlow);
-    publishBool(t_steam_state, steamFlag);
-
-    // number entity states (retained so HA persists)
-    publishNum(t_brewset_state, brewSetpoint, 1, true);
-    publishNum(t_steamset_state, steamSetpoint, 1, true);
-    // publishNum(t_pump_state, pumpPower, 0, true);
-    // PID number states
-    publishNum(t_pidp_state, pGainTemp, 2, true);
-    publishNum(t_pidi_state, iGainTemp, 2, true);
-    publishNum(t_pidd_state, dGainTemp, 2, true);
-    publishNum(t_pidg_state, windupGuardTemp, 2, true);
-    publishNum(t_piddtau_state, dTauTemp, 2, true);
+static void revertToSafeDefaults() {
+    if (!heaterEnabled) {
+        heaterEnabled = true;
+        LOG("ESP-NOW: Heater default -> ON");
+    }
+    pumpPower = PUMP_POWER_DEFAULT;
+    applyPumpPower();
+    pumpMode = ESPNOW_PUMP_MODE_NORMAL;
+    steamDispFlag = false;
+    steamResetPending = false;
+    steamFlag = steamDispFlag || steamHwFlag;
+    setTemp = steamFlag ? steamSetpoint : brewSetpoint;
 }
 
 static void sendEspNowPacket() {
@@ -1196,244 +545,229 @@ static void sendEspNowPacket() {
     pkt.pressureBar = pressNow;
     pkt.steamSetpointC = steamSetpoint;
     pkt.brewSetpointC = brewSetpoint;
-    esp_now_send(nullptr, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
-    g_lastEspnowEpoch = static_cast<unsigned long>(time(nullptr));
+    const uint8_t* dest = g_haveDisplayPeer ? g_displayMac : nullptr;
+    esp_err_t err = esp_now_send(dest, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
+    if (err != ESP_OK) {
+        LOG_ERROR("ESP-NOW: telemetry send failed (%d)", (int)err);
+    }
 }
 
-static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
-    if (len == 1 && data[0] == ESPNOW_HANDSHAKE_REQ) {
-        LOG("ESP-NOW: handshake from %02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3],
-            mac[4], mac[5]);
-        uint8_t ack = ESPNOW_HANDSHAKE_ACK;
-        // Ensure we can reply directly to the sender. If the display has not
-        // yet been registered as a peer, add it now so the ACK can be sent
-        // unicast to its MAC address. Broadcasting via `nullptr` was not
-        // reliably delivered, leading to repeated handshake attempts.
-        if (!esp_now_is_peer_exist(mac)) {
-            esp_now_peer_info_t peer{};
-            memcpy(peer.peer_addr, mac, ESP_NOW_ETH_ALEN);
-            peer.channel = g_espnowChannel;
-            peer.ifidx = WIFI_IF_STA;
-            peer.encrypt = false;
-            esp_err_t res = esp_now_add_peer(&peer);
-            if (res != ESP_OK) {
-                LOG_ERROR("ESP-NOW: add peer failed (%d)", (int)res);
-            }
-        }
-        esp_now_send(mac, &ack, 1);
-        g_espnowHandshake = true;
-        LOG("ESP-NOW: handshake acknowledged");
-    } else if (len == 1 && (data[0] == ESPNOW_CMD_HEATER_ON || data[0] == ESPNOW_CMD_HEATER_OFF)) {
-        bool hv = (data[0] == ESPNOW_CMD_HEATER_ON);
+static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* mac) {
+    if (pkt.type != ESPNOW_CONTROL_PACKET) return;
+    if (pkt.revision && pkt.revision <= g_lastControlRevision) return;
+    g_lastControlRevision = pkt.revision;
+
+    LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f "
+        "pidP=%.2f pidI=%.2f "
+        "pidD=%.2f pump=%.1f mode=%u",
+        static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
+        (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
+        pkt.pidP, pkt.pidI, pkt.pidD, pkt.pumpPowerPercent, static_cast<unsigned>(pkt.pumpMode));
+
+    bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
+    if (hv != heaterEnabled) {
         heaterEnabled = hv;
-        if (!heaterEnabled) {
-            forceHeaterOff();
-        }
-        publishBool(t_heater_state, heaterEnabled, true);
+        if (!heaterEnabled) forceHeaterOff();
         LOG("ESP-NOW: Heater -> %s", heaterEnabled ? "ON" : "OFF");
-    } else if (len == 1 && (data[0] == ESPNOW_CMD_STEAM_ON || data[0] == ESPNOW_CMD_STEAM_OFF)) {
-        bool sv = (data[0] == ESPNOW_CMD_STEAM_ON);
+    }
+
+    bool sv = (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0;
+    if (sv != steamDispFlag) {
         steamDispFlag = sv;
         steamResetPending = false;
         steamFlag = steamDispFlag || steamHwFlag;
-        // Ensure the active target temperature reflects the display's steam mode immediately
         setTemp = steamFlag ? steamSetpoint : brewSetpoint;
-        // Reflect the new active set temperature promptly for HA/telemetry
-        publishNum(t_settemp_state, setTemp, 1, true);
-        publishBool(t_steam_state, steamFlag, true);
         LOG("ESP-NOW: Steam -> %s", steamFlag ? "ON" : "OFF");
     }
-}
 
-// ---------- MQTT callback (handle both setpoints) ----------
-/**
- * @brief Handle inbound MQTT commands (setpoints, PID gains, heater switch).
- */
-static void mqttCallback(char* topic, uint8_t* payload, unsigned int len) {
-    auto parse_clamped = [&](const char* t, float lo, float hi, float& outVal) -> bool {
-        if (strcmp(topic, t) != 0) return false;
-        char buf[32] = {0};
-        unsigned n = (len < sizeof(buf) - 1) ? len : sizeof(buf) - 1;
-        memcpy(buf, payload, n);
-        float v = atof(buf);
-        if (v < lo) v = lo;
-        if (v > hi) v = hi;
-        outVal = v;
-        return true;
-    };
-    auto parse_onoff = [&](const char* t, bool& outVal) -> bool {
-        if (strcmp(topic, t) != 0) return false;
-        char buf[8] = {0};
-        unsigned n = (len < sizeof(buf) - 1) ? len : sizeof(buf) - 1;
-        memcpy(buf, payload, n);
-        for (unsigned i = 0; i < n; ++i) buf[i] = (char)toupper((unsigned char)buf[i]);
-        if (strcmp(buf, "ON") == 0) {
-            outVal = true;
-            return true;
-        }
-        if (strcmp(buf, "OFF") == 0) {
-            outVal = false;
-            return true;
-        }
-        return false;
-    };
-    bool changed = false;
-    if (parse_clamped(t_brewset_cmd, BREW_MIN, BREW_MAX, brewSetpoint)) {
-        changed = true;
-        LOG("HA: Brew setpoint -> %.1f °C", brewSetpoint);
+    float newBrew = clampf(pkt.brewSetpointC, BREW_MIN, BREW_MAX);
+    float newSteam = clampf(pkt.steamSetpointC, STEAM_MIN_C, STEAM_MAX_C);
+    bool setChanged = false;
+    if (fabsf(newBrew - brewSetpoint) > 0.01f) {
+        brewSetpoint = newBrew;
+        setChanged = true;
     }
-    if (parse_clamped(t_steamset_cmd, STEAM_MIN_C, STEAM_MAX_C, steamSetpoint)) {
-        changed = true;
-        LOG("HA: Steam setpoint -> %.1f °C", steamSetpoint);
+    if (fabsf(newSteam - steamSetpoint) > 0.01f) {
+        steamSetpoint = newSteam;
+        setChanged = true;
     }
-    // if (parse_clamped(t_pump_cmd, 0.0f, 100.0f, pumpPower)) {
-    // applyPumpPower();
-    // publishNum(t_pump_state, pumpPower, 0, true);
-    // LOG("HA: Pump power -> %.0f%%", pumpPower);
-    // }
-    // PID params
-    float tmp;
-    if (parse_clamped(t_pidp_cmd, 0.0f, 200.0f, tmp)) {
-        pGainTemp = tmp;
-        publishNum(t_pidp_state, pGainTemp, 2, true);
-        LOG("HA: PID P -> %.2f", pGainTemp);
-    }
-    if (parse_clamped(t_pidi_cmd, 0.0f, 10.0f, tmp)) {
-        iGainTemp = tmp;
-        publishNum(t_pidi_state, iGainTemp, 2, true);
-        LOG("HA: PID I -> %.2f", iGainTemp);
-    }
-    if (parse_clamped(t_pidd_cmd, 0.0f, 500.0f, tmp)) {
-        dGainTemp = tmp;
-        publishNum(t_pidd_state, dGainTemp, 2, true);
-        LOG("HA: PID D -> %.2f", dGainTemp);
-    }
-    if (parse_clamped(t_pidg_cmd, 0.0f, 100.0f, tmp)) {
-        windupGuardTemp = tmp;
-        publishNum(t_pidg_state, windupGuardTemp, 2, true);
-        LOG("HA: PID Guard -> %.2f", windupGuardTemp);
+    if (setChanged) {
+        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
+        LOG("ESP-NOW: Setpoints Brew=%.1f Steam=%.1f", brewSetpoint, steamSetpoint);
     }
 
-    // dTau (0.1 .. 5.0 seconds)
-    if (parse_clamped(t_piddtau_cmd, 0.1f, 5.0f, tmp)) {
-        dTauTemp = tmp;
-        publishNum(t_piddtau_state, dTauTemp, 2, true);
-        LOG("HA: PID D Tau -> %.2f s", dTauTemp);
+    float newP = clampf(pkt.pidP, 0.0f, 200.0f);
+    float newI = clampf(pkt.pidI, 0.0f, 10.0f);
+    float newD = clampf(pkt.pidD, 0.0f, 500.0f);
+    if (fabsf(newP - pGainTemp) > 0.01f) {
+        pGainTemp = newP;
     }
-    // heater switch
-    bool hv;
-    if (parse_onoff(t_heater_cmd, hv)) {
-        heaterEnabled = hv;
-        if (!heaterEnabled) {
-            forceHeaterOff();
-        }
-        publishBool(t_heater_state, heaterEnabled, true);
-        LOG("HA: Heater -> %s", heaterEnabled ? "ON" : "OFF");
+    if (fabsf(newI - iGainTemp) > 0.01f) {
+        iGainTemp = newI;
     }
-    if (parse_onoff(t_steam_cmd, hv)) {
-        steamDispFlag = hv;
-        steamResetPending = false;
-        steamFlag = steamDispFlag || steamHwFlag;
-        // Update active setpoint to match current mode and reflect it via MQTT
-        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
-        publishNum(t_settemp_state, setTemp, 1, true);
-        publishBool(t_steam_state, steamFlag, true);
-        LOG("HA: Steam -> %s", steamFlag ? "ON" : "OFF");
+    if (fabsf(newD - dGainTemp) > 0.1f) {
+        dGainTemp = newD;
     }
-    if (parse_onoff(t_espnow_cmd, hv)) {
-        g_mqttDisabled = !hv;
-        if (g_mqttDisabled) {
-            g_mqttDisabledSince = millis();
-            mqttClient.disconnect();
-            LOG("HA: MQTT disabled");
-        } else {
-            LOG("HA: MQTT enabled");
-        }
+
+    float newPump = clampf(pkt.pumpPowerPercent, 0.0f, 100.0f);
+    if (fabsf(newPump - pumpPower) > 0.1f) {
+        pumpPower = newPump;
+        applyPumpPower();
     }
-    if (parse_onoff(t_ota_cmd, hv)) {
-        otaActive = hv;
-        otaStart = otaActive ? millis() : 0;
-        publishBool(t_ota_state, otaActive, true);
-        LOG("HA: OTA -> %s", otaActive ? "ON" : "OFF");
-    }
-    if (changed) {
-        // Update the active set temperature and mirror all setpoints
-        setTemp = steamFlag ? steamSetpoint : brewSetpoint;
-        publishNum(t_brewset_state, brewSetpoint, 1, true);
-        publishNum(t_steamset_state, steamSetpoint, 1, true);
-        publishNum(t_settemp_state, setTemp, 1, true);
+
+    pumpMode = static_cast<EspNowPumpMode>(pkt.pumpMode);
+
+    if (mac) {
+        memcpy(g_displayMac, mac, ESP_NOW_ETH_ALEN);
+        g_haveDisplayPeer = true;
     }
 }
 
-// ---------- WiFi / MQTT ----------
-static void initEspNow() {
-    uint8_t channel;
-    wifi_second_chan_t second;
-    if (esp_wifi_get_channel(&channel, &second) != ESP_OK) {
-        LOG_ERROR("ESP-NOW: failed to get channel");
-        g_espnowStatus = "error";
-        if (mqttClient.connected()) publishStr(t_espnow_state, g_espnowStatus, true);
-        return;
-    }
+static void espNowRecv(const uint8_t* mac, const uint8_t* data, int len) {
+    if (!data || len <= 0) return;
 
-    if (channel < 1 || channel > 13) {
-        LOG_ERROR("ESP-NOW: invalid channel %u", channel);
-        g_espnowStatus = "error";
-        g_espnowChannel = 0;
-        if (mqttClient.connected()) {
-            publishStr(t_espnow_state, g_espnowStatus, true);
-            publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
+    if (len >= 2 && data[0] == ESPNOW_HANDSHAKE_REQ) {
+        uint8_t requestedChannel = data[1];
+        if (mac) {
+            esp_now_peer_info_t peer{};
+            memcpy(peer.peer_addr, mac, ESP_NOW_ETH_ALEN);
+            peer.channel = requestedChannel;
+            peer.ifidx = WIFI_IF_STA;
+            peer.encrypt = false;
+            if (esp_now_is_peer_exist(peer.peer_addr)) {
+                esp_now_mod_peer(&peer);
+            } else {
+                esp_now_add_peer(&peer);
+            }
+            memcpy(g_displayMac, mac, ESP_NOW_ETH_ALEN);
+            g_haveDisplayPeer = true;
         }
-        return;
-    }
 
-    // Only initialise ESP-NOW once and update the broadcast peer on subsequent
-    // Wi-Fi reconnects. Repeated init/deinit was causing log spam and Wi-Fi
-    // churn, which in turn dropped the MQTT session.
-    static bool espNowInit = false;
-    static bool espPeerAdded = false;
-    static esp_now_peer_info_t peerInfo{};
-    static const uint8_t broadcastAddr[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-
-    if (!espNowInit) {
-        if (esp_now_init() != ESP_OK) {
-            LOG_ERROR("ESP-NOW: init failed");
-            g_espnowStatus = "error";
-            if (mqttClient.connected()) publishStr(t_espnow_state, g_espnowStatus, true);
+        if (!applyEspNowChannel(requestedChannel, true, false)) {
+            LOG_ERROR("ESP-NOW: failed to switch to channel %u", requestedChannel);
             return;
         }
-        memcpy(peerInfo.peer_addr, broadcastAddr, 6);
-        peerInfo.encrypt = false;
-        espNowInit = true;
-        esp_now_register_recv_cb(espNowRecv);
-        g_espnowHandshake = false;
+        g_espnowHandshake = true;
+        g_espnowStatus = "linked";
+        unsigned long nowMs = millis();
+        g_lastDisplayAckMs = nowMs;
+        g_lastChannelHopMs = nowMs;
+        g_espnowScanning = false;
+        g_nextScanChannel = requestedChannel;
+        uint8_t ack[2] = {ESPNOW_HANDSHAKE_ACK, g_espnowChannel};
+        if (mac) {
+            esp_err_t ackErr = esp_now_send(mac, ack, sizeof(ack));
+            if (ackErr != ESP_OK) {
+                LOG_ERROR("ESP-NOW: handshake ack send failed (%d)", static_cast<int>(ackErr));
+            }
+        }
+        return;
     }
 
-    peerInfo.channel = channel;
+    if (len == sizeof(EspNowControlPacket) && data[0] == ESPNOW_CONTROL_PACKET) {
+        applyControlPacket(*reinterpret_cast<const EspNowControlPacket*>(data), mac);
+        g_lastDisplayAckMs = millis();
+        g_espnowHandshake = true;
+        g_espnowStatus = "linked";
+        return;
+    }
+
+    if (len == 1 && data[0] == ESPNOW_SENSOR_ACK) {
+        g_lastDisplayAckMs = millis();
+        return;
+    }
+}
+
+static bool ensureEspNowCore(bool silent = false) {
+    if (g_espnowCoreInit) return true;
+
+    esp_err_t err = esp_now_init();
+    if (err != ESP_OK) {
+        if (!silent) LOG_ERROR("ESP-NOW: init failed (%d)", static_cast<int>(err));
+        g_espnowStatus = "error";
+        return false;
+    }
+
+    memset(&g_broadcastPeerInfo, 0, sizeof(g_broadcastPeerInfo));
+    memcpy(g_broadcastPeerInfo.peer_addr, ESPNOW_BROADCAST_ADDR, ESP_NOW_ETH_ALEN);
+    g_broadcastPeerInfo.ifidx = WIFI_IF_STA;
+    g_broadcastPeerInfo.encrypt = false;
+
+    esp_now_register_recv_cb(espNowRecv);
+    g_espnowHandshake = false;
+    g_haveDisplayPeer = false;
+    g_lastDisplayAckMs = 0;
+    g_lastControlRevision = 0;
+
+    g_espnowCoreInit = true;
+    g_espnowBroadcastPeerAdded = false;
+    return true;
+}
+
+static bool applyEspNowChannel(uint8_t channel, bool forceSetWifiChannel, bool silent) {
+    if (channel < ESPNOW_FIRST_CHANNEL || channel > ESPNOW_LAST_CHANNEL) return false;
+
+    if (!ensureEspNowCore(silent)) return false;
+
+    if (forceSetWifiChannel && WiFi.status() != WL_CONNECTED) {
+        esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+        if (err != ESP_OK) {
+            if (!silent) {
+                LOG_ERROR("ESP-NOW: failed to set channel %u (%d)", channel, static_cast<int>(err));
+            }
+            return false;
+        }
+    }
+
+    g_broadcastPeerInfo.channel = channel;
     esp_err_t res;
-    if (!espPeerAdded) {
-        res = esp_now_add_peer(&peerInfo);
-        if (res == ESP_OK) {
-            espPeerAdded = true;
+    if (!g_espnowBroadcastPeerAdded) {
+        res = esp_now_add_peer(&g_broadcastPeerInfo);
+        if (res == ESP_OK || res == ESP_ERR_ESPNOW_EXIST) {
+            g_espnowBroadcastPeerAdded = true;
+        } else {
+            if (!silent) LOG_ERROR("ESP-NOW: add peer failed (%d)", static_cast<int>(res));
+            return false;
         }
     } else {
-        res = esp_now_mod_peer(&peerInfo);
+        res = esp_now_mod_peer(&g_broadcastPeerInfo);
         if (res == ESP_ERR_ESPNOW_NOT_FOUND) {
-            // Peer dropped somehow; try re-adding
-            res = esp_now_add_peer(&peerInfo);
-            if (res == ESP_OK) espPeerAdded = true;
+            g_espnowBroadcastPeerAdded = false;
+            return applyEspNowChannel(channel, forceSetWifiChannel, silent);
         }
-    }
-
-    if (res != ESP_OK) {
-        LOG_ERROR("ESP-NOW: add/mod peer failed");
-        g_espnowStatus = "error";
-        if (mqttClient.connected()) publishStr(t_espnow_state, g_espnowStatus, true);
-        return;
+        if (res != ESP_OK) {
+            if (!silent) LOG_ERROR("ESP-NOW: update peer failed (%d)", static_cast<int>(res));
+            return false;
+        }
     }
 
     g_espnowChannel = channel;
-    g_espnowStatus = "enabled";
+    if (!silent) {
+        bool manual = forceSetWifiChannel && WiFi.status() != WL_CONNECTED;
+        LOG("ESP-NOW: using channel %u%s", channel, manual ? " (manual)" : "");
+    }
+    return true;
+}
+
+static void initEspNow() {
+    wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
+    uint8_t channel = 0;
+    if (esp_wifi_get_channel(&channel, &second) != ESP_OK || channel < ESPNOW_FIRST_CHANNEL ||
+        channel > ESPNOW_LAST_CHANNEL) {
+        LOG_ERROR("ESP-NOW: invalid channel %u", channel);
+        g_espnowStatus = "error";
+        g_espnowChannel = 0;
+        return;
+    }
+
+    if (!applyEspNowChannel(channel, false, true)) {
+        g_espnowStatus = "error";
+        return;
+    }
+
+    g_nextScanChannel = channel;
+    g_espnowScanning = false;
+    if (!g_espnowHandshake) g_espnowStatus = "enabled";
 
     uint8_t mac[6];
     if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
@@ -1443,154 +777,109 @@ static void initEspNow() {
         g_espnowMac = buf;
     }
 
-    if (mqttClient.connected()) {
-        publishStr(t_espnow_state, g_espnowStatus, true);
-        publishNum(t_espnow_chan_state, g_espnowChannel, 0, true);
-        publishStr(t_espnow_mac_state, g_espnowMac.c_str(), true);
-    }
-    LOG("ESP-NOW: initialized on channel %u — awaiting handshake", channel);
+    LOG("ESP-NOW: initialized on channel %u - awaiting handshake", channel);
 }
 
-/**
- * @brief Maintain Wi‑Fi connection with periodic reconnect attempts.
- */
-static void ensureWifi() {
-    static wl_status_t last = (wl_status_t)255;
-    static unsigned long lastTry = 0;
-    static bool connecting = false;
-    static unsigned long connectStart = 0;
-
-    wl_status_t now = WiFi.status();
-    if (now != WL_CONNECTED) {
-        forceHeaterOff();
-        g_espnowStatus = "disabled";
-        g_clockSynced = false;
-    }
-    if (now != last) {
-        if (now == WL_CONNECTED) {
-            LOG("WiFi: %s  IP=%s  GW=%s  RSSI=%d dBm", wifiStatusName(now),
-                WiFi.localIP().toString().c_str(), WiFi.gatewayIP().toString().c_str(),
-                WiFi.RSSI());
-            g_mqttIpResolved = false;
-            resolveBrokerIfNeeded();
-            initEspNow();
-            if (!g_clockSynced) syncClock();
-        } else {
-            LOG("WiFi: %s (code=%d) — reconnecting…", wifiStatusName(now), (int)now);
+static void maybeHopEspNowChannel() {
+    if (g_espnowHandshake) {
+        if (g_espnowScanning) {
+            g_espnowScanning = false;
+            g_nextScanChannel =
+                g_espnowChannel >= ESPNOW_FIRST_CHANNEL ? g_espnowChannel : ESPNOW_FIRST_CHANNEL;
         }
-        last = now;
-    }
-    if (now == WL_CONNECTED) {
-        connecting = false;
         return;
     }
 
-    // gentler reconnect policy: don't tear down; try reconnect every 10s
-    if (!connecting && (millis() - lastTry) >= 10000) {
-        lastTry = millis();
-        WiFi.disconnect();
+    if (g_wifiNtpConnecting) return;
+
+    if (WiFi.status() == WL_CONNECTED) {
+        return;
+    }
+
+    unsigned long now = millis();
+    if ((now - g_lastChannelHopMs) < ESPNOW_CHANNEL_HOLD_MS) return;
+
+    if (!ensureEspNowCore(true)) return;
+
+    uint8_t channel = g_nextScanChannel;
+    g_nextScanChannel = (g_nextScanChannel >= ESPNOW_LAST_CHANNEL)
+                            ? ESPNOW_FIRST_CHANNEL
+                            : static_cast<uint8_t>(g_nextScanChannel + 1);
+
+    if (applyEspNowChannel(channel, true, true)) {
+        g_lastChannelHopMs = now;
+        if (!g_espnowScanning || channel == ESPNOW_FIRST_CHANNEL) {
+            LOG("ESP-NOW: scanning on channel %u", channel);
+        }
+        g_espnowScanning = true;
+        g_espnowStatus = "scanning";
+    }
+}
+static void syncClockFromWifi() {
+    static bool attempted = false;
+    static bool connecting = false;
+    static unsigned long lastTry = 0;
+    static unsigned long connectStart = 0;
+    static bool loggedConnected = false;
+
+    wl_status_t status = WiFi.status();
+
+    if (g_clockSynced) {
+        if (status == WL_CONNECTED) {
+            LOG("WiFi: disconnecting after NTP sync");
+            WiFi.disconnect(false, true);
+        }
+        connecting = false;
+        g_wifiNtpConnecting = false;
+        return;
+    }
+
+    if (status == WL_CONNECTED) {
+        if (!loggedConnected) {
+            LOG("WiFi: %s  IP=%s  GW=%s  RSSI=%d dBm", wifiStatusName(status),
+                WiFi.localIP().toString().c_str(), WiFi.gatewayIP().toString().c_str(),
+                WiFi.RSSI());
+            loggedConnected = true;
+        }
+
+        syncClock();
+        if (g_clockSynced) {
+            WiFi.disconnect(false, true);
+            LOG("WiFi: NTP sync complete; Wi-Fi disabled");
+        }
+        g_wifiNtpConnecting = false;
+        return;
+    }
+
+    loggedConnected = false;
+
+    unsigned long now = millis();
+    if (!connecting && (!attempted || (now - lastTry) >= 10000)) {
+        LOG("WiFi: connecting to '%s' for NTP sync", WIFI_SSID);
         WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-        connectStart = millis();
         connecting = true;
+        attempted = true;
+        connectStart = now;
+        lastTry = now;
+        g_wifiNtpConnecting = true;
         return;
     }
 
     if (connecting) {
-        // Wait briefly for connection result while yielding to other tasks
         wl_status_t res = static_cast<wl_status_t>(WiFi.waitForConnectResult(100));
-
         if (res == WL_CONNECTED) {
             connecting = false;
-        } else if (millis() - connectStart > 10000) {
-            // Timed out, allow another attempt on next cycle
+            g_wifiNtpConnecting = false;
+        } else if ((millis() - connectStart) > 10000) {
             connecting = false;
+            g_wifiNtpConnecting = false;
+            WiFi.disconnect(false, true);
         }
         delay(1);
     }
+    if (!connecting) g_wifiNtpConnecting = false;
 }
 
-/**
- * @brief Maintain MQTT session, (re)publish discovery and subscribe to commands.
- */
-static void ensureMqtt() {
-    if (g_mqttDisabled) {
-        if (mqttClient.connected()) mqttClient.disconnect();
-        if (millis() - g_mqttDisabledSince < 30000) return;
-        g_mqttDisabled = false;
-    }
-    // Skip MQTT servicing during OTA to avoid starving the OTA socket
-    if (!otaActive) {
-        mqttClient.loop();
-    }
-    if (otaActive) {
-        // Avoid connect/discovery/publishing churn during OTA
-        return;
-    }
-    static bool lastConn = false;
-    if (WiFi.status() != WL_CONNECTED) {
-        lastConn = false;
-        forceHeaterOff();
-        return;
-    }
-    if (mqttClient.connected()) {
-        if (!lastConn) {
-            LOG("MQTT: connected (state=%d %s)", mqttClient.state(),
-                mqttStateName(mqttClient.state()));
-            mqttClient.publish(MQTT_STATUS, "online", true);
-            makeIdsFromMac();
-            buildTopics();
-            publishDiscovery();
-            mqttClient.subscribe(t_brewset_cmd);
-            mqttClient.subscribe(t_steamset_cmd);
-            // mqttClient.subscribe(t_pump_cmd);
-            // PID control subscriptions
-            mqttClient.subscribe(t_pidp_cmd);
-            mqttClient.subscribe(t_pidi_cmd);
-            mqttClient.subscribe(t_pidd_cmd);
-            mqttClient.subscribe(t_pidg_cmd);
-            // dTau
-            mqttClient.subscribe(t_piddtau_cmd);
-            // heater switch
-            mqttClient.subscribe(t_heater_cmd);
-            mqttClient.subscribe(t_steam_cmd);
-            mqttClient.subscribe(t_espnow_cmd);
-            // ✅ B) Immediately publish a full snapshot so HA has data right away
-            // Do this only once, right after a successful (re)connect.
-            resetPublishCache();
-            publishStates();
-            publishNumberStatesSnapshot();  // include retained number/config states once
-            // Reset cadence so the next periodic publish is spaced correctly.
-            // Use millis() here since ensureMqtt() may be called outside the main cadence point.
-            lastMqttTime = millis();
-        }
-        lastConn = true;
-        return;
-    }
-    // Ensure heater is off while attempting MQTT reconnect
-    forceHeaterOff();
-    if (lastConn) {
-        LOG("MQTT: disconnected (state=%d %s) — will retry", mqttClient.state(),
-            mqttStateName(mqttClient.state()));
-        lastConn = false;
-    }
-    static unsigned long lastAttempt = 0;
-    if (millis() - lastAttempt < 2000) return;
-    lastAttempt = millis();
-    LOG("MQTT: connecting to %s:%u as '%s' (user=%s)…", MQTT_HOST, MQTT_PORT,
-        MQTT_CONTROLLER_CLIENT_ID, (MQTT_USER && MQTT_USER[0]) ? MQTT_USER : "(none)");
-    bool ok;
-    if (MQTT_USER && MQTT_USER[0])
-        ok = mqttClient.connect(MQTT_CONTROLLER_CLIENT_ID, MQTT_USER, MQTT_PASSWORD, MQTT_STATUS, 0,
-                                true, "offline");
-    else
-        ok = mqttClient.connect(MQTT_CONTROLLER_CLIENT_ID, nullptr, nullptr, MQTT_STATUS, 0, true,
-                                "offline");
-    if (!ok)
-        LOG_ERROR("MQTT: connect failed rc=%d (%s)  WiFi=%s RSSI=%d IP=%s GW=%s",
-                  mqttClient.state(), mqttStateName(mqttClient.state()),
-                  wifiStatusName(WiFi.status()), WiFi.RSSI(), WiFi.localIP().toString().c_str(),
-                  WiFi.gatewayIP().toString().c_str());
-}
 }  // namespace
 
 // RBDdimmer uses the same ZC pin and installs its own ISR. To avoid
@@ -1612,7 +901,7 @@ namespace gag {
 void setup() {
     Serial.begin(SERIAL_BAUD);
     delay(300);
-    LOG("Booting… FW %s", VERSION);
+    LOG("Booting? FW %s", VERSION);
 #if defined(CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH)
     LOG("RTOS: Tmr Svc stack depth=%d (words)", (int)CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH);
 #endif
@@ -1629,12 +918,10 @@ void setup() {
     pinMode(ZC_PIN, INPUT);
     pinMode(AC_SENS, INPUT_PULLUP);
     pinMode(PUMP_PIN, OUTPUT);
-    // pumpDimmer.begin(NORMAL_MODE, OFF);
+    pumpDimmer.begin(NORMAL_MODE, OFF);
     digitalWrite(HEAT_PIN, LOW);
     heaterState = false;
-    // applyPumpPower();
-
-    // Initialize MAX31865 (set wiring: 2/3/4-wire as appropriate)
+    applyPumpPower();
     max31865.begin(MAX31865_2WIRE);
 
     // Initialize filtered PV & lastTemp to avoid first-step D kick
@@ -1668,22 +955,15 @@ void setup() {
     setupComplete = true;
 
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 #if defined(ARDUINO_ARCH_ESP32)
-    // Improve OTA/MQTT reliability by disabling WiFi modem sleep
     WiFi.setSleep(false);
-    // Auto-reassociate if the AP briefly disappears
-    WiFi.setAutoReconnect(true);
+    WiFi.setAutoReconnect(false);
 #endif
-    mqttClient.setServer(MQTT_HOST, MQTT_PORT);
-    mqttClient.setCallback(mqttCallback);
-    initMqttTuning();
-    resolveBrokerIfNeeded();
+
+    initEspNow();
 
     LOG("Pins: FLOW=%d ZC=%d HEAT=%d AC_SENS=%d PRESS=%d  SPI{CS=%d}", FLOW_PIN, ZC_PIN, HEAT_PIN,
         AC_SENS, PRESS_PIN, MAX_CS);
-    LOG("WiFi: connecting to '%s'…  MQTT: %s:%u id=%s", WIFI_SSID, MQTT_HOST, MQTT_PORT,
-        MQTT_CONTROLLER_CLIENT_ID);
 }
 
 /**
@@ -1692,54 +972,36 @@ void setup() {
 void loop() {
     currentTime = millis();
 
-    // Handle OTA as early and as often as possible
-    ensureOta();
-    if (WiFi.status() == WL_CONNECTED) ArduinoOTA.handle();
-
-    // If OTA is active, keep loop lean
-    if (otaActive) {
-        // (Optional) Detach high-rate ISRs during OTA to reduce CPU/latency spikes
-        // static bool isrDetached = false;
-        // if (!isrDetached) {
-        //     detachInterrupt(digitalPinToInterrupt(FLOW_PIN));
-        //     detachInterrupt(digitalPinToInterrupt(ZC_PIN));
-        //     isrDetached = true;
-        // }
-        return;
+    // If the display stops acknowledging, fall back to safe defaults
+    if (g_espnowHandshake && g_lastDisplayAckMs &&
+        (currentTime - g_lastDisplayAckMs) > DISPLAY_TIMEOUT_MS) {
+        LOG("ESP-NOW: display timeout after %lu ms ? reverting to defaults",
+            currentTime - g_lastDisplayAckMs);
+        g_espnowHandshake = false;
+        g_haveDisplayPeer = false;
+        g_lastControlRevision = 0;
+        g_espnowStatus = "timeout";
+        revertToSafeDefaults();
     }
 
-    // Normal work (only when NOT doing OTA)
-    {
-        checkShotStartStop();
-        if (currentTime - lastPidTime >= PID_CYCLE) updateTempPID();
-        updateTempPWM();
-        updatePressure();
-        updatePreFlow();
-        updateVols();
-        updateSteamFlag();
-        updateShotTime();
-    }
+    checkShotStartStop();
+    if (currentTime - lastPidTime >= PID_CYCLE) updateTempPID();
+    updateTempPWM();
+    updatePressure();
+    updatePreFlow();
+    updateVols();
+    updateSteamFlag();
+    updateShotTime();
 
-    ensureWifi();
-    ensureMqtt();
+    syncClockFromWifi();
+    maybeHopEspNowChannel();
 
-    if (g_espnowStatus == "enabled" && g_espnowHandshake &&
-        (currentTime - lastEspNowTime) >= ESP_CYCLE) {
+    if (g_espnowHandshake && (currentTime - lastEspNowTime) >= ESP_CYCLE) {
         sendEspNowPacket();
         lastEspNowTime = currentTime;
     }
 
-    unsigned long publishInterval = shotFlag ? SHOT_CYCLE : IDLE_CYCLE;
-    if (!otaActive && streamData && (currentTime - lastMqttTime) >= publishInterval) {
-        // ✅ A) Only advance the timer when we actually publish
-        if (mqttClient.connected()) {
-            publishStates();
-            lastMqttTime = currentTime;
-        }
-    }
-
-    if (!otaActive && debugPrint &&
-        (currentTime - lastLogTime) > LOG_CYCLE) { /* optional debug printing */
+    if (debugPrint && (currentTime - lastLogTime) > LOG_CYCLE) {
         LOG("Pressure: Raw=%d, Now=%0.2f Last=%0.2f", rawPress, pressNow, lastPress);
         LOG("Temp: Set=%0.1f, Current=%0.2f", setTemp, currentTemp);
         LOG("Heat: Power=%0.1f, Cycles=%d", heatPower, heatCycles);

@@ -1,9 +1,15 @@
-
+# Private secrets that should never be committed
 firmware/secrets/include/secrets.h
-# VS Code folders (per project)
+
+# IDE workspace settings (re-generated locally)
 firmware/controller/.vscode/
 firmware/display/.vscode/
 
-# PlatformIO build folders
+# PlatformIO build output
 firmware/controller/.pio/
 firmware/display/.pio/
+firmware/display/components/lvgl__lvgl/demos/
+firmware/display/components/lvgl__lvgl/docs/
+firmware/display/components/lvgl__lvgl/examples/
+firmware/display/components/lvgl__lvgl/src/demos/
+firmware/controller/lib/RBDdimmer
