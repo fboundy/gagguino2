@@ -104,7 +104,6 @@ constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
                 WINDUP_GUARD_TEMP = 10.0f;
 // Derivative filter time constant (seconds), exposed to HA
-constexpr float D_TAU_TEMP = 0.8f;
 
 dimmerLamp pumpDimmer(PUMP_PIN, ZC_PIN);
 
@@ -184,7 +183,7 @@ float setTemp = brewSetpoint;         // active target (brew or steam)
 float iStateTemp = 0.0f, heatPower = 0.0f;
 // Live-tunable PID parameters (default to constexprs above)
 float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
-      windupGuardTemp = WINDUP_GUARD_TEMP, dTauTemp = D_TAU_TEMP;
+      windupGuardTemp = WINDUP_GUARD_TEMP;
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;             // HA switch default ON at boot
@@ -266,14 +265,16 @@ static inline const char* wifiStatusName(wl_status_t s) {
 //  PID: dt-scaled I & D, iTerm clamp, derivative LPF, conditional integration
 // ------------------------------------------------------------------------------
 static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
-                     float dt,             // seconds (0.5 at 2 Hz)
-                     float& pvFilt,        // filtered PV (state)
-                     float& iSum,          // ?err dt  (state)
-                     float guard,          // clamp on iTerm (output units)
-                     float dTau = 1.0f,    // derivative LPF time const (s)
-                     float outMin = 0.0f,  // actuator limits (for cond. integration)
-                     float outMax = 100.0f) {
+                     float dt,       // seconds (0.5 at 2 Hz)
+                     float& pvFilt,  // filtered PV (state)
+                     float& iSum,    // ?err dt  (state)
+                     float guard) {  // clamp on iTerm (output units)
+
     // 1) Error
+    float dTau = 0.8f;    // derivative LPF time const (s)
+    float outMin = 0.0f;  // actuator limits (for cond. integration)
+    float outMax = 100.0f;
+
     float err = sp - pv;
 
     // 2) Integral
@@ -361,8 +362,7 @@ static void updateTempPID() {
     setTemp = steamFlag ? steamSetpoint : brewSetpoint;
 
     heatPower = calcPID(pGainTemp, iGainTemp, dGainTemp, setTemp, currentTemp, dt, pvFiltTemp,
-                        iStateTemp, windupGuardTemp, /*dTau=*/dTauTemp, /*outMin=*/0.0f,
-                        /*outMax=*/100.0f);
+                        iStateTemp, windupGuardTemp);
 
     if (heatPower > 100.0f) heatPower = 100.0f;
     if (heatPower < 0.0f) heatPower = 0.0f;

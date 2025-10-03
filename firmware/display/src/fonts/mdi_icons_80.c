@@ -5,20 +5,18 @@
  ******************************************************************************/
 
 #ifdef __has_include
-    #if __has_include("lvgl.h")
-        #ifndef LV_LVGL_H_INCLUDE_SIMPLE
-            #define LV_LVGL_H_INCLUDE_SIMPLE
-        #endif
-    #endif
+#if __has_include("lvgl.h")
+#ifndef LV_LVGL_H_INCLUDE_SIMPLE
+#define LV_LVGL_H_INCLUDE_SIMPLE
+#endif
+#endif
 #endif
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
-    #include "lvgl.h"
+#include "lvgl.h"
 #else
-    #include "lvgl/lvgl.h"
+#include "lvgl/lvgl.h"
 #endif
-
-
 
 #ifndef MDI_ICONS_80
 #define MDI_ICONS_80 1
@@ -1732,9 +1730,7 @@ static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
     0x0, 0x3f, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0,
     0x0, 0x0, 0x7c, 0x0, 0x0, 0x0, 0x0, 0x0,
     0x0, 0x0, 0x0, 0xe0, 0x0, 0x0, 0x0, 0x0,
-    0x0, 0x0, 0x0, 0x0, 0x0
-};
-
+    0x0, 0x0, 0x0, 0x0, 0x0};
 
 /*---------------------
  *  GLYPH DESCRIPTION
@@ -1769,8 +1765,7 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
     {.bitmap_index = 10984, .adv_w = 1280, .box_w = 67, .box_h = 53, .ofs_x = 6, .ofs_y = 0},
     {.bitmap_index = 11428, .adv_w = 1280, .box_w = 67, .box_h = 66, .ofs_x = 6, .ofs_y = -3},
     {.bitmap_index = 11981, .adv_w = 1280, .box_w = 54, .box_h = 66, .ofs_x = 13, .ofs_y = -3},
-    {.bitmap_index = 12427, .adv_w = 1280, .box_w = 70, .box_h = 70, .ofs_x = 4, .ofs_y = -6}
-};
+    {.bitmap_index = 12427, .adv_w = 1280, .box_w = 70, .box_h = 70, .ofs_x = 4, .ofs_y = -6}};
 
 /*---------------------
  *  CHARACTER MAPPING
@@ -1780,19 +1775,12 @@ static const uint16_t unicode_list_0[] = {
     0x0, 0x161, 0x297, 0x2d9, 0x2fa, 0x422, 0x490, 0x4af,
     0x4c2, 0x4e3, 0x50c, 0x518, 0x5a6, 0x622, 0x68d, 0x6e1,
     0xba8, 0xd3c, 0xe07, 0x1061, 0x1235, 0x12c9, 0x13ff, 0x150e,
-    0x1535, 0x1796, 0x1818, 0x1b1f
-};
+    0x1535, 0x1796, 0x1818, 0x1b1f};
 
 /*Collect the unicode lists and glyph_id offsets*/
 static const lv_font_fmt_txt_cmap_t cmaps[] =
-{
     {
-        .range_start = 983043, .range_length = 6944, .glyph_id_start = 1,
-        .unicode_list = unicode_list_0, .glyph_id_ofs_list = NULL, .list_length = 28, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
-    }
-};
-
-
+        {.range_start = 983043, .range_length = 6944, .glyph_id_start = 1, .unicode_list = unicode_list_0, .glyph_id_ofs_list = NULL, .list_length = 28, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY}};
 
 /*--------------------
  *  ALL CUSTOM DATA
@@ -1800,7 +1788,7 @@ static const lv_font_fmt_txt_cmap_t cmaps[] =
 
 #if LVGL_VERSION_MAJOR == 8
 /*Store all the custom data of the font*/
-static  lv_font_fmt_txt_glyph_cache_t cache;
+static lv_font_fmt_txt_glyph_cache_t cache;
 #endif
 
 #if LVGL_VERSION_MAJOR >= 8
@@ -1823,8 +1811,6 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
 
 };
 
-
-
 /*-----------------
  *  PUBLIC FONT
  *----------------*/
@@ -1835,10 +1821,10 @@ const lv_font_t mdi_icons_80 = {
 #else
 lv_font_t mdi_icons_80 = {
 #endif
-    .get_glyph_dsc = lv_font_get_glyph_dsc_fmt_txt,    /*Function pointer to get glyph's data*/
-    .get_glyph_bitmap = lv_font_get_bitmap_fmt_txt,    /*Function pointer to get glyph's bitmap*/
-    .line_height = 72,          /*The maximum line height required by the font*/
-    .base_line = 6,             /*Baseline measured from the bottom of the line*/
+    .get_glyph_dsc = lv_font_get_glyph_dsc_fmt_txt, /*Function pointer to get glyph's data*/
+    .get_glyph_bitmap = lv_font_get_bitmap_fmt_txt, /*Function pointer to get glyph's bitmap*/
+    .line_height = 72,                              /*The maximum line height required by the font*/
+    .base_line = 6,                                 /*Baseline measured from the bottom of the line*/
 #if !(LVGL_VERSION_MAJOR == 6 && LVGL_VERSION_MINOR == 0)
     .subpx = LV_FONT_SUBPX_NONE,
 #endif
@@ -1846,14 +1832,11 @@ lv_font_t mdi_icons_80 = {
     .underline_position = 1,
     .underline_thickness = 0,
 #endif
-    .static_bitmap = 0,
-    .dsc = &font_dsc,          /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */
+    .dsc = &font_dsc, /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */
 #if LV_VERSION_CHECK(8, 2, 0) || LVGL_VERSION_MAJOR >= 9
     .fallback = NULL,
 #endif
     .user_data = NULL,
 };
-
-
 
 #endif /*#if MDI_ICONS_80*/
