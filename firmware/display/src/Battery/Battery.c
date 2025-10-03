@@ -70,6 +70,7 @@ static int64_t last_batt_sample_us = 0;
 static float smoothed_pct = -1.0f; /* EWMA over ~30s */
 static int64_t last_adc_read_us = 0; /* rate-limit actual ADC reads */
 static int cached_pct = -1;          /* last returned percentage */
+static int64_t last_log_us = 0;      /* throttle verbose logging */
 
 void Battery_Init(void)
 {
@@ -123,8 +124,13 @@ int Battery_GetPercentage(void)
         mv = (raw * 3900) / 4095;
     }
     int batt_mv = (int)((float)mv * 3.0f / (float)Measurement_offset);
-    ESP_LOGI(BAT_TAG, "ADC raw=%d, at_pin=%dmV, battery=%d.%03dV",
-             raw, mv, batt_mv / 1000, batt_mv % 1000);
+    bool should_log = (last_log_us == 0) || ((now_us - last_log_us) >= 30000000);
+    if (should_log)
+    {
+        ESP_LOGI(BAT_TAG, "ADC raw=%d, at_pin=%dmV, battery=%d.%03dV",
+                 raw, mv, batt_mv / 1000, batt_mv % 1000);
+        last_log_us = now_us;
+    }
 
     /* Compute instantaneous percentage from current sample */
     int pct_now = raw_to_percent(raw);

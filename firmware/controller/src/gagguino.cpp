@@ -557,12 +557,11 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     if (pkt.revision && pkt.revision <= g_lastControlRevision) return;
     g_lastControlRevision = pkt.revision;
 
-    LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d ota=%d brew=%.1f steamSet=%.1f "
+    LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f "
         "pidP=%.2f pidI=%.2f "
         "pidD=%.2f pump=%.1f mode=%u",
         static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
-        (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0,
-        (pkt.flags & ESPNOW_CONTROL_FLAG_OTA) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
+        (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
         pkt.pidP, pkt.pidI, pkt.pidD, pkt.pumpPowerPercent, static_cast<unsigned>(pkt.pumpMode));
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;

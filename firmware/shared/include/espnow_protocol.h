@@ -20,10 +20,9 @@
 // Identifier for control payloads pushed from the display to the controller.
 #define ESPNOW_CONTROL_PACKET 0xC0
 
-// Identifier for OTA enable/disable commands piggybacked on the control packet.
-#define ESPNOW_CONTROL_FLAG_HEATER   0x01
-#define ESPNOW_CONTROL_FLAG_STEAM    0x02
-#define ESPNOW_CONTROL_FLAG_OTA      0x04  //!< Reserved (legacy OTA enable)
+// Bit flags embedded in EspNowControlPacket::flags.
+#define ESPNOW_CONTROL_FLAG_HEATER 0x01
+#define ESPNOW_CONTROL_FLAG_STEAM  0x02
 
 // Pump operating modes understood by the controller. The display always sends
 // one of these values in EspNowControlPacket::pumpMode.

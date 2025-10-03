@@ -42,8 +42,6 @@ static char TOPIC_PRESSURE[128];
 static char TOPIC_SHOTVOL[128];
 static char TOPIC_SHOT[128];
 static char TOPIC_ZC_COUNT_STATE[128];
-static char TOPIC_OTA_STATUS[128];
-static char TOPIC_OTA_ENABLE[128];
 static char TOPIC_BREW_STATE[128];
 static char TOPIC_BREW_SET_CMD[128];
 static char TOPIC_STEAM_STATE[128];
@@ -70,8 +68,6 @@ static inline void build_topics(void) {
     snprintf(TOPIC_SHOTVOL, sizeof TOPIC_SHOTVOL, "%s/%s/shot_volume/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_SHOT, sizeof TOPIC_SHOT, "%s/%s/shot/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_ZC_COUNT_STATE, sizeof TOPIC_ZC_COUNT_STATE, "%s/%s/zc_count/state", GAG_TOPIC_ROOT, GAGGIA_ID);
-    snprintf(TOPIC_OTA_STATUS, sizeof TOPIC_OTA_STATUS, "%s/%s/ota/status", GAG_TOPIC_ROOT, GAGGIA_ID);
-    snprintf(TOPIC_OTA_ENABLE, sizeof TOPIC_OTA_ENABLE, "%s/%s/ota/enable", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_BREW_STATE, sizeof TOPIC_BREW_STATE, "%s/%s/brew_setpoint/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_BREW_SET_CMD, sizeof TOPIC_BREW_SET_CMD, "%s/%s/brew_setpoint/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_STEAM_STATE, sizeof TOPIC_STEAM_STATE, "%s/%s/steam_setpoint/state", GAG_TOPIC_ROOT, GAGGIA_ID);
@@ -99,7 +95,6 @@ static inline bool parse_bool_str(const char *s) {
 typedef struct {
     bool heater;
     bool steam;
-    bool ota;
     float brewSetpoint;
     float steamSetpoint;
     float pidP;
@@ -112,7 +107,6 @@ typedef struct {
 static ControlState s_control = {
     .heater = true,
     .steam = false,
-    .ota = false,
     .brewSetpoint = 0.0f,
     .steamSetpoint = 0.0f,
     .pidP = 0.0f,
@@ -137,7 +131,6 @@ static float s_pump_power = NAN;
 static uint8_t s_pump_mode = ESPNOW_PUMP_MODE_NORMAL;
 static bool s_heater = false;
 static bool s_steam = false;
-static bool s_ota = false;
 
 static bool s_mqtt_connected = false;
 static esp_mqtt_client_handle_t s_mqtt = NULL;
@@ -269,7 +262,6 @@ static void mqtt_subscribe_all(void) {
     if (!s_mqtt) return;
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_HEATER_SET, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_STEAM_SET, 1);
-    esp_mqtt_client_subscribe(s_mqtt, TOPIC_OTA_ENABLE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_BREW_SET_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_STEAM_SET_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDP_CMD, 1);
@@ -280,7 +272,6 @@ static void mqtt_subscribe_all(void) {
     // State mirrors for retained bootstrap
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_HEATER, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_STEAM, 1);
-    esp_mqtt_client_subscribe(s_mqtt, TOPIC_OTA_STATUS, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_BREW_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_STEAM_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_ZC_COUNT_STATE, 1);
@@ -307,7 +298,6 @@ static void publish_control_state(void) {
     if (!s_mqtt_connected) return;
     publish_bool_topic(TOPIC_HEATER, s_control.heater);
     publish_bool_topic(TOPIC_STEAM, s_control.steam);
-    publish_bool_topic(TOPIC_OTA_STATUS, s_control.ota);
     publish_float(TOPIC_BREW_STATE, s_control.brewSetpoint, 1);
     publish_float(TOPIC_STEAM_STATE, s_control.steamSetpoint, 1);
     publish_float(TOPIC_PIDP_STATE, s_control.pidP, 2);
@@ -322,6 +312,18 @@ static void publish_control_state(void) {
 static void handle_control_change(void) {
     publish_control_state();
     schedule_control_send();
+}
+
+static void log_control_bool(const char *name, bool value) {
+    ESP_LOGI(TAG_MQTT, "MQTT control %s -> %s", name, value ? "ON" : "OFF");
+}
+
+static void log_control_float(const char *name, float value, uint8_t precision) {
+    ESP_LOGI(TAG_MQTT, "MQTT control %s -> %.*f", name, precision, (double)value);
+}
+
+static void log_control_u8(const char *name, uint8_t value) {
+    ESP_LOGI(TAG_MQTT, "MQTT control %s -> %u", name, (unsigned)value);
 }
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
@@ -368,9 +370,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         } else if (strcmp(topic, TOPIC_STEAM) == 0) {
             s_control.steam = parse_bool_str(payload);
             s_steam = s_control.steam;
-        } else if (strcmp(topic, TOPIC_OTA_STATUS) == 0) {
-            s_control.ota = parse_bool_str(payload);
-            s_ota = s_control.ota;
         } else if (strcmp(topic, TOPIC_BREW_STATE) == 0) {
             s_control.brewSetpoint = strtof(payload, NULL);
             s_brew_setpoint = s_control.brewSetpoint;
@@ -397,6 +396,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             if (hv != s_control.heater) {
                 s_control.heater = hv;
                 s_heater = hv;
+                log_control_bool("heater", hv);
                 handle_control_change();
             }
         } else if (strcmp(topic, TOPIC_STEAM_SET) == 0) {
@@ -404,55 +404,56 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             if (sv != s_control.steam) {
                 s_control.steam = sv;
                 s_steam = sv;
-                handle_control_change();
-            }
-        } else if (strcmp(topic, TOPIC_OTA_ENABLE) == 0) {
-            bool ov = parse_bool_str(payload);
-            if (ov != s_control.ota) {
-                s_control.ota = ov;
-                s_ota = ov;
+                log_control_bool("steam", sv);
                 handle_control_change();
             }
         } else if (strcmp(topic, TOPIC_BREW_SET_CMD) == 0) {
             float v = strtof(payload, NULL);
             if (v != s_control.brewSetpoint) {
                 s_control.brewSetpoint = v;
+                log_control_float("brew_setpoint", v, 1);
                 handle_control_change();
             }
         } else if (strcmp(topic, TOPIC_STEAM_SET_CMD) == 0) {
             float v = strtof(payload, NULL);
             if (v != s_control.steamSetpoint) {
                 s_control.steamSetpoint = v;
+                log_control_float("steam_setpoint", v, 1);
                 handle_control_change();
             }
         } else if (strcmp(topic, TOPIC_PIDP_CMD) == 0) {
             float v = strtof(payload, NULL);
             if (v != s_control.pidP) {
                 s_control.pidP = v;
+                log_control_float("pid_p", v, 2);
                 handle_control_change();
             }
         } else if (strcmp(topic, TOPIC_PIDI_CMD) == 0) {
             float v = strtof(payload, NULL);
             if (v != s_control.pidI) {
                 s_control.pidI = v;
+                log_control_float("pid_i", v, 2);
                 handle_control_change();
             }
         } else if (strcmp(topic, TOPIC_PIDD_CMD) == 0) {
             float v = strtof(payload, NULL);
             if (v != s_control.pidD) {
                 s_control.pidD = v;
+                log_control_float("pid_d", v, 2);
                 handle_control_change();
             }
         } else if (strcmp(topic, TOPIC_PUMP_POWER_CMD) == 0) {
             float v = strtof(payload, NULL);
             if (v != s_control.pumpPower) {
                 s_control.pumpPower = v;
+                log_control_float("pump_power", v, 1);
                 handle_control_change();
             }
         } else if (strcmp(topic, TOPIC_PUMP_MODE_CMD) == 0) {
             uint8_t v = (uint8_t)atoi(payload);
             if (v != s_control.pumpMode) {
                 s_control.pumpMode = v;
+                log_control_u8("pump_mode", v);
                 handle_control_change();
             }
         }
@@ -631,7 +632,6 @@ static void send_control_packet(void) {
     };
     if (s_control.heater) pkt.flags |= ESPNOW_CONTROL_FLAG_HEATER;
     if (s_control.steam) pkt.flags |= ESPNOW_CONTROL_FLAG_STEAM;
-    if (s_control.ota) pkt.flags |= ESPNOW_CONTROL_FLAG_OTA;
 
     esp_err_t err = esp_now_send(s_controller_peer.peer_addr, (const uint8_t *)&pkt, sizeof(pkt));
     if (err != ESP_OK) {
@@ -639,9 +639,9 @@ static void send_control_packet(void) {
     } else {
         s_control_dirty = false;
         ESP_LOGI(TAG_ESPNOW,
-                 "Control sent rev %u: heater=%d steam=%d ota=%d brew=%.1f steamSet=%.1f pidP=%.2f pidI=%.2f "
+                 "Control sent rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f pidP=%.2f pidI=%.2f "
                  "pidD=%.2f pump=%.1f mode=%u",
-                 (unsigned)revision, s_control.heater, s_control.steam, s_control.ota,
+                 (unsigned)revision, s_control.heater, s_control.steam,
                  (double)s_control.brewSetpoint, (double)s_control.steamSetpoint,
                  (double)s_control.pidP, (double)s_control.pidI, (double)s_control.pidD,
                  (double)s_control.pumpPower, (unsigned)s_control.pumpMode);
@@ -768,15 +768,6 @@ void MQTT_SetSteamState(bool steam) {
     if (s_control.steam == steam) return;
     s_control.steam = steam;
     s_steam = steam;
-    handle_control_change();
-}
-
-bool MQTT_GetOtaState(void) { return s_control.ota; }
-
-void MQTT_SetOtaState(bool ota) {
-    if (s_control.ota == ota) return;
-    s_control.ota = ota;
-    s_ota = ota;
     handle_control_change();
 }
 
