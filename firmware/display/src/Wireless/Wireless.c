@@ -24,7 +24,6 @@
 
 #define ESPNOW_TIMEOUT_MS      5000
 #define ESPNOW_PING_PERIOD_MS  1000
-#define CONTROL_KEEPALIVE_MS      5000  // resend unchanged control every 5 s
 
 static const char *TAG_WIFI = "WiFi";
 static const char *TAG_MQTT = "MQTT";
@@ -154,7 +153,6 @@ static time_t s_espnow_last_rx = 0;
 static uint32_t s_control_revision = 0;
 static bool s_control_dirty = false;
 static uint8_t s_last_espnow_channel = 0;
-static TickType_t s_last_control_send = 0;
 
 static esp_now_peer_info_t s_broadcast_peer = {0};
 static esp_now_peer_info_t s_controller_peer = {0};
@@ -172,7 +170,7 @@ static const uint8_t s_broadcast_addr[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xF
 // -----------------------------------------------------------------------------
 static void publish_control_state(void);
 static void schedule_control_send(void);
-static void send_control_packet(bool keepalive);
+static void send_control_packet(void);
 static void ensure_espnow_started(void);
 static void stop_espnow(void);
 static void espnow_timeout_cb(TimerHandle_t xTimer);
@@ -602,8 +600,6 @@ static void send_handshake_request(void) {
     esp_err_t err = esp_now_send(s_broadcast_addr, payload, sizeof(payload));
     if (err != ESP_OK) {
         ESP_LOGW(TAG_ESPNOW, "Handshake send failed: %d", err);
-    } else {
-        ESP_LOGI(TAG_ESPNOW, "Handshake request sent (chan %u)", (unsigned)s_sta_channel);
     }
 }
 
@@ -613,17 +609,12 @@ static void send_sensor_ack(const uint8_t *dest) {
     esp_now_send(dest, &ack, 1);
 }
 
-static void send_control_packet(bool keepalive) {
+static void send_control_packet(void) {
     if (!s_espnow_active || !s_use_espnow) return;
     if (!s_controller_peer_valid) return;
+    if (!s_control_dirty) return;
 
-    TickType_t now = xTaskGetTickCount();
-    if (keepalive && (now - s_last_control_send) < pdMS_TO_TICKS(CONTROL_KEEPALIVE_MS)) return;
-
-    uint32_t revision = s_control_revision;
-    if (!keepalive || revision == 0) {
-        revision = ++s_control_revision;
-    }
+    uint32_t revision = ++s_control_revision;
 
     EspNowControlPacket pkt = {
         .type = ESPNOW_CONTROL_PACKET,
@@ -646,13 +637,14 @@ static void send_control_packet(bool keepalive) {
     if (err != ESP_OK) {
         ESP_LOGW(TAG_ESPNOW, "Control send failed: %d", err);
     } else {
-        s_last_control_send = now;
         s_control_dirty = false;
-        if (keepalive) {
-            ESP_LOGD(TAG_ESPNOW, "Control keepalive rev %u sent", (unsigned)revision);
-        } else {
-            ESP_LOGI(TAG_ESPNOW, "Control revision %u sent", (unsigned)revision);
-        }
+        ESP_LOGI(TAG_ESPNOW,
+                 "Control sent rev %u: heater=%d steam=%d ota=%d brew=%.1f steamSet=%.1f pidP=%.2f pidI=%.2f "
+                 "pidD=%.2f pump=%.1f mode=%u",
+                 (unsigned)revision, s_control.heater, s_control.steam, s_control.ota,
+                 (double)s_control.brewSetpoint, (double)s_control.steamSetpoint,
+                 (double)s_control.pidP, (double)s_control.pidI, (double)s_control.pidD,
+                 (double)s_control.pumpPower, (unsigned)s_control.pumpMode);
     }
 }
 
@@ -676,8 +668,6 @@ static void publish_sensor_to_mqtt(const EspNowPacket *pkt) {
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int data_len) {
     if (data_len <= 0 || !data) return;
     if (data[0] == ESPNOW_HANDSHAKE_ACK) {
-        uint8_t controller_channel = (data_len > 1) ? data[1] : s_sta_channel;
-        ESP_LOGI(TAG_ESPNOW, "Handshake ACK (chan %u)", (unsigned)controller_channel);
         if (info) {
             update_controller_peer(info->src_addr);
         }
@@ -685,7 +675,9 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
         s_espnow_handshake = true;
         s_espnow_last_rx = time(NULL);
         if (s_espnow_timer) xTimerReset(s_espnow_timer, 0);
-        schedule_control_send();
+        if (s_control_revision == 0 && !s_control_dirty) {
+            schedule_control_send();
+        }
         return;
     }
 
@@ -743,11 +735,8 @@ static void Wireless_Task(void *arg) {
             }
         }
 
-        TickType_t now = xTaskGetTickCount();
-        bool keepalive_due = s_use_espnow && (now - s_last_control_send) >= pdMS_TO_TICKS(CONTROL_KEEPALIVE_MS);
-        if (s_use_espnow && (s_control_dirty || (keepalive_due && s_control_revision != 0))) {
-            bool keepalive = !s_control_dirty;
-            send_control_packet(keepalive);
+        if (s_use_espnow && s_control_dirty) {
+            send_control_packet();
         }
 
         vTaskDelay(delay);
