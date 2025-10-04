@@ -76,6 +76,7 @@ static void standby_timer_cb(lv_timer_t *t);
 static void exit_standby_event_cb(lv_event_t *e);
 static void update_standby_clock(void);
 static void switch_to_screen(lv_obj_t *screen);
+static void perform_screen_switch(lv_obj_t *screen);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -110,6 +111,8 @@ static lv_obj_t *standby_time_label;
 static lv_timer_t *standby_timer;
 static lv_obj_t *last_non_standby_screen;
 static bool standby_active;
+static lv_obj_t *volatile requested_screen;
+static volatile bool screen_switch_pending;
 
 static lv_obj_t *current_temp_arc;
 static lv_obj_t *set_temp_arc;
@@ -228,6 +231,8 @@ void Lvgl_Example1(void)
   standby_time_label = NULL;
   standby_active = false;
   last_non_standby_screen = NULL;
+  requested_screen = NULL;
+  screen_switch_pending = false;
 
   Brew_screen_create();
   Menu_screen_create();
@@ -748,7 +753,10 @@ void LVGL_Show_Standby(void)
   if (standby_active)
     return;
 
-  last_non_standby_screen = lv_scr_act();
+  if (screen_switch_pending && requested_screen && requested_screen != standby_screen)
+    last_non_standby_screen = requested_screen;
+  else
+    last_non_standby_screen = lv_scr_act();
   standby_active = true;
 
   if (!standby_timer)
@@ -778,6 +786,15 @@ void LVGL_Exit_Standby(void)
 bool LVGL_Is_Standby_Active(void) { return standby_active; }
 
 static void switch_to_screen(lv_obj_t *screen)
+{
+  if (!screen)
+    return;
+
+  requested_screen = screen;
+  screen_switch_pending = true;
+}
+
+static void perform_screen_switch(lv_obj_t *screen)
 {
   if (!screen)
     return;
@@ -892,6 +909,13 @@ static void draw_ticks_cb(lv_event_t *e)
 
 void example1_increase_lvgl_tick(lv_timer_t *t)
 {
+  if (screen_switch_pending)
+  {
+    lv_obj_t *target = requested_screen;
+    screen_switch_pending = false;
+    perform_screen_switch(target);
+  }
+
   float current = MQTT_GetCurrentTemp();
   float set = MQTT_GetSetTemp();
   float current_p = MQTT_GetCurrentPressure();
