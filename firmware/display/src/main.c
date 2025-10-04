@@ -88,6 +88,7 @@ void app_main(void)
     LVGL_Init();     // Initialize graphics library
 /********************* Demo *********************/
     Lvgl_Example1();
+    LVGL_UI_PollTelemetry();
 
     // Alternative demos:
     // lv_demo_widgets();
@@ -107,6 +108,7 @@ void app_main(void)
     while (1) {
         // Run lv_timer_handler every 250 ms
         vTaskDelay(pdMS_TO_TICKS(250));
+        LVGL_UI_PollTelemetry();
         lv_timer_handler();
 
         TickType_t now = xTaskGetTickCount();

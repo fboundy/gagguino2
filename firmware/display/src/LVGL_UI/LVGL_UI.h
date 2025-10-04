@@ -33,3 +33,4 @@ void LVGL_Backlight_adjustment(uint8_t Backlight);
 void LVGL_Show_Standby(void);
 void LVGL_Exit_Standby(void);
 bool LVGL_Is_Standby_Active(void);
+void LVGL_UI_PollTelemetry(void);

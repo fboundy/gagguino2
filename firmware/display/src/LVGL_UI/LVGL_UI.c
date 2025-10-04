@@ -79,6 +79,20 @@ static void switch_to_screen(lv_obj_t *screen);
 static void perform_screen_switch(lv_obj_t *screen);
 static void screen_switch_async_cb(void *param);
 
+typedef struct
+{
+  float current_temp;
+  float set_temp;
+  float current_pressure;
+  float shot_time;
+  float shot_volume;
+  bool heater_on;
+  bool wifi_ok;
+  bool mqtt_ok;
+  int esp_state;
+  int battery_percent;
+} telemetry_snapshot_t;
+
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
  *  STATIC VARIABLES
@@ -153,6 +167,10 @@ static lv_timer_t *buzzer_timer;
 static bool shot_target_reached;
 static float set_temp_val;
 static bool heater_on;
+static telemetry_snapshot_t pending_snapshot;
+static telemetry_snapshot_t active_snapshot;
+static bool snapshot_pending;
+static bool snapshot_valid;
 
 void Lvgl_Example1(void)
 {
@@ -295,6 +313,10 @@ void Lvgl_Example1_close(void)
   shot_volume_roller = NULL;
   set_temp_val = 0.0f;
   heater_on = false;
+  snapshot_pending = false;
+  snapshot_valid = false;
+  memset(&pending_snapshot, 0, sizeof(pending_snapshot));
+  memset(&active_snapshot, 0, sizeof(active_snapshot));
   standby_time_label = NULL;
   standby_active = false;
   brew_screen = NULL;
@@ -786,6 +808,27 @@ void LVGL_Exit_Standby(void)
 
 bool LVGL_Is_Standby_Active(void) { return standby_active; }
 
+void LVGL_UI_PollTelemetry(void)
+{
+  telemetry_snapshot_t snap = {
+      .current_temp = MQTT_GetCurrentTemp(),
+      .set_temp = MQTT_GetSetTemp(),
+      .current_pressure = MQTT_GetCurrentPressure(),
+      .shot_time = MQTT_GetShotTime(),
+      .shot_volume = MQTT_GetShotVolume(),
+      .heater_on = MQTT_GetHeaterState(),
+      .wifi_ok = Wireless_IsWiFiConnected(),
+      .mqtt_ok = Wireless_IsMQTTConnected(),
+      .esp_state = Wireless_UsingEspNow()
+                       ? 2
+                       : (Wireless_IsEspNowActive() ? 1 : 0),
+      .battery_percent = Battery_GetPercentage(),
+  };
+
+  pending_snapshot = snap;
+  snapshot_pending = true;
+}
+
 static void switch_to_screen(lv_obj_t *screen)
 {
   if (!screen)
@@ -923,26 +966,35 @@ static void draw_ticks_cb(lv_event_t *e)
 
 void example1_increase_lvgl_tick(lv_timer_t *t)
 {
-  float current = MQTT_GetCurrentTemp();
-  float set = MQTT_GetSetTemp();
-  float current_p = MQTT_GetCurrentPressure();
-  float shot_time = MQTT_GetShotTime();
-  float shot_vol = MQTT_GetShotVolume();
-  bool heater = MQTT_GetHeaterState();
-  bool steam = MQTT_GetSteamState();
+  (void)t;
+
+  if (snapshot_pending)
+  {
+    active_snapshot = pending_snapshot;
+    snapshot_pending = false;
+    snapshot_valid = true;
+  }
+
+  if (!snapshot_valid)
+    return;
+
+  const telemetry_snapshot_t snap = active_snapshot;
+  float current = snap.current_temp;
+  float set = snap.set_temp;
+  float current_p = snap.current_pressure;
+  float shot_time = snap.shot_time;
+  float shot_vol = snap.shot_volume;
   char buf[32];
 
   set_temp_val = set;
-  heater_on = heater;
+  heater_on = snap.heater_on;
 
   if (tick_layer)
     lv_obj_invalidate(tick_layer);
 
-  bool wifi_ok = Wireless_IsWiFiConnected();
-  bool mqtt_ok = Wireless_IsMQTTConnected();
-  bool espnow_active = Wireless_IsEspNowActive();
-  bool espnow_link = Wireless_UsingEspNow();
-  int esp_state = espnow_link ? 2 : (espnow_active ? 1 : 0);
+  bool wifi_ok = snap.wifi_ok;
+  bool mqtt_ok = snap.mqtt_ok;
+  int esp_state = snap.esp_state;
 
   if (wifi_status_icon && wifi_ok != last_wifi_state)
   {
@@ -982,7 +1034,7 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     last_esp_state = esp_state;
   }
 
-  int batt = Battery_GetPercentage();
+  int batt = snap.battery_percent;
   if (battery_bar && batt != last_battery)
   {
     lv_bar_set_value(battery_bar, batt, LV_ANIM_OFF);
