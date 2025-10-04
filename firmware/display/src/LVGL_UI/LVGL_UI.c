@@ -75,6 +75,7 @@ static void standby_timer_cb(lv_timer_t *t);
 static void exit_standby_event_cb(lv_event_t *e);
 static void update_standby_clock(void);
 static void switch_to_screen(lv_obj_t *screen);
+static void switch_to_screen_async_cb(void *user_data);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -111,6 +112,8 @@ static lv_obj_t *standby_time_label;
 static lv_timer_t *standby_timer;
 static lv_obj_t *last_non_standby_screen;
 static bool standby_active;
+
+static lv_obj_t *pending_screen_switch;
 
 static lv_obj_t *current_temp_arc;
 static lv_obj_t *set_temp_arc;
@@ -230,6 +233,7 @@ void Lvgl_Example1(void)
   standby_time_label = NULL;
   standby_active = false;
   last_non_standby_screen = NULL;
+  pending_screen_switch = NULL;
 
   Brew_screen_create();
   Menu_screen_create();
@@ -301,6 +305,7 @@ void Lvgl_Example1_close(void)
   standby_screen = NULL;
   active_template = NULL;
   last_non_standby_screen = NULL;
+  pending_screen_switch = NULL;
 
   lv_style_reset(&style_text_muted);
   lv_style_reset(&style_title);
@@ -407,7 +412,7 @@ static void template_set_back_handler(screen_template_t *tmpl, lv_event_cb_t cb,
   if (cb)
   {
     lv_obj_clear_flag(tmpl->back_btn, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(tmpl->back_btn, cb, LV_EVENT_RELEASED, user_data);
+    lv_obj_add_event_cb(tmpl->back_btn, cb, LV_EVENT_CLICKED, user_data);
   }
   else
   {
@@ -600,7 +605,7 @@ static lv_obj_t *create_menu_button(lv_obj_t *parent, const char *text,
   lv_obj_set_height(btn, 54);
   lv_obj_set_style_border_width(btn, 0, 0);
   lv_obj_set_style_bg_color(btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_add_event_cb(btn, cb, LV_EVENT_RELEASED, NULL);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
 
   lv_obj_t *label = lv_label_create(btn);
   lv_label_set_text(label, text);
@@ -615,6 +620,7 @@ static void Menu_screen_create(void)
   template_set_back_handler(&menu_template, NULL, NULL);
 
   lv_obj_t *content = menu_template.content_area;
+  lv_obj_clear_flag(content, LV_OBJ_FLAG_IGNORE_LAYOUT);
   lv_obj_set_style_pad_top(content, 120, 0);
   lv_obj_set_style_pad_bottom(content, 180, 0);
   lv_obj_set_style_pad_row(content, 16, 0);
@@ -762,6 +768,20 @@ void LVGL_Exit_Standby(void)
 
 bool LVGL_Is_Standby_Active(void) { return standby_active; }
 
+static void switch_to_screen_async_cb(void *user_data)
+{
+  lv_obj_t *screen = (lv_obj_t *)user_data;
+  pending_screen_switch = NULL;
+
+  if (!screen)
+    return;
+
+  if (lv_scr_act() == screen)
+    return;
+
+  lv_scr_load(screen);
+}
+
 static void switch_to_screen(lv_obj_t *screen)
 {
   if (!screen)
@@ -770,7 +790,11 @@ static void switch_to_screen(lv_obj_t *screen)
   if (lv_scr_act() == screen)
     return;
 
-  lv_scr_load(screen);
+  if (pending_screen_switch == screen)
+    return;
+
+  pending_screen_switch = screen;
+  lv_async_call(switch_to_screen_async_cb, screen);
 }
 
 static void draw_ticks_cb(lv_event_t *e)
