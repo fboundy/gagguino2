@@ -88,7 +88,7 @@ static inline void build_topics(void)
     snprintf(TOPIC_PIDG_STATE, sizeof TOPIC_PIDG_STATE, "%s/%s/pid_guard/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PIDG_CMD, sizeof TOPIC_PIDG_CMD, "%s/%s/pid_guard/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_DTAU_STATE, sizeof TOPIC_DTAU_STATE, "%s/%s/pid_dtau/state", GAG_TOPIC_ROOT, GAGGIA_ID);
-    snprintf(TOPIC_DTAU_CMD, sizeof TOPIC_DTAU_CMD, "%s/%s/pid_stau/set", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_DTAU_CMD, sizeof TOPIC_DTAU_CMD, "%s/%s/pid_dtau/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_STATE, sizeof TOPIC_PUMP_POWER_STATE, "%s/%s/pump_power/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_CMD, sizeof TOPIC_PUMP_POWER_CMD, "%s/%s/pump_power/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_MODE_STATE, sizeof TOPIC_PUMP_MODE_STATE, "%s/%s/pump_mode/state", GAG_TOPIC_ROOT, GAGGIA_ID);
