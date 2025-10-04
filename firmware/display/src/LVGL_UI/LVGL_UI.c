@@ -61,7 +61,8 @@ static void Profiles_screen_create(void);
 static void Settings_screen_create(void);
 static void Standby_screen_create(void);
 static void template_init(screen_template_t *tmpl);
-static void template_screen_loaded_cb(lv_event_t *e);
+static void apply_template(screen_template_t *tmpl);
+static screen_template_t *find_template_for_screen(lv_obj_t *screen);
 static void template_set_back_handler(screen_template_t *tmpl, lv_event_cb_t cb, void *user_data);
 static void draw_ticks_cb(lv_event_t *e);
 static void buzzer_timer_cb(lv_timer_t *t);
@@ -98,8 +99,6 @@ static screen_template_t steam_template;
 static screen_template_t profiles_template;
 static screen_template_t settings_template;
 static screen_template_t standby_template;
-
-static screen_template_t *active_template;
 
 static lv_obj_t *brew_screen;
 static lv_obj_t *menu_screen;
@@ -225,7 +224,6 @@ void Lvgl_Example1(void)
   lv_style_set_radius(&style_bullet, LV_RADIUS_CIRCLE);
 
   Backlight_slider = NULL;
-  active_template = NULL;
   standby_timer = NULL;
   standby_time_label = NULL;
   standby_active = false;
@@ -299,7 +297,6 @@ void Lvgl_Example1_close(void)
   profiles_screen = NULL;
   settings_screen = NULL;
   standby_screen = NULL;
-  active_template = NULL;
   last_non_standby_screen = NULL;
 
   lv_style_reset(&style_text_muted);
@@ -394,8 +391,6 @@ static void template_init(screen_template_t *tmpl)
   lv_obj_move_foreground(footer);
   lv_obj_move_foreground(status_container);
 
-  lv_obj_add_event_cb(tmpl->screen, template_screen_loaded_cb,
-                      LV_EVENT_SCREEN_LOADED, tmpl);
 }
 
 static void template_set_back_handler(screen_template_t *tmpl, lv_event_cb_t cb,
@@ -415,13 +410,11 @@ static void template_set_back_handler(screen_template_t *tmpl, lv_event_cb_t cb,
   }
 }
 
-static void template_screen_loaded_cb(lv_event_t *e)
+static void apply_template(screen_template_t *tmpl)
 {
-  screen_template_t *tmpl = lv_event_get_user_data(e);
   if (!tmpl)
     return;
 
-  active_template = tmpl;
   wifi_status_icon = tmpl->wifi_icon;
   mqtt_status_icon = tmpl->mqtt_icon;
   espnow_status_icon = tmpl->esp_icon;
@@ -434,6 +427,27 @@ static void template_screen_loaded_cb(lv_event_t *e)
 
   if (tmpl != &standby_template)
     last_non_standby_screen = tmpl->screen;
+}
+
+static screen_template_t *find_template_for_screen(lv_obj_t *screen)
+{
+  if (!screen)
+    return NULL;
+
+  if (screen == brew_template.screen)
+    return &brew_template;
+  if (screen == menu_template.screen)
+    return &menu_template;
+  if (screen == steam_template.screen)
+    return &steam_template;
+  if (screen == profiles_template.screen)
+    return &profiles_template;
+  if (screen == settings_template.screen)
+    return &settings_template;
+  if (screen == standby_template.screen)
+    return &standby_template;
+
+  return NULL;
 }
 
 static void Brew_screen_create(void)
@@ -768,10 +782,11 @@ static void switch_to_screen(lv_obj_t *screen)
   if (!screen)
     return;
 
-  if (lv_scr_act() == screen)
-    return;
+  if (lv_scr_act() != screen)
+    lv_scr_load(screen);
 
-  lv_scr_load(screen);
+  screen_template_t *tmpl = find_template_for_screen(screen);
+  apply_template(tmpl);
 }
 
 static void draw_ticks_cb(lv_event_t *e)
