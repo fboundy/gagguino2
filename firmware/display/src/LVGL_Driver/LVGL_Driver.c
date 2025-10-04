@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "LVGL_Driver.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -79,13 +81,16 @@ void LVGL_Init(void)
     // initialize LVGL draw buffers
     lv_disp_draw_buf_init(&disp_buf, buf1, buf2, EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES);
 #else
+    const size_t draw_buf_lines = 100; // number of horizontal lines per draw buffer
+    const size_t draw_buf_pixels = EXAMPLE_LCD_H_RES * draw_buf_lines;
+
     ESP_LOGI(LVGL_TAG, "Allocate separate LVGL draw buffers from PSRAM");
-    buf1 = heap_caps_malloc(EXAMPLE_LCD_H_RES * 100 * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    buf1 = heap_caps_malloc(draw_buf_pixels * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
     assert(buf1);
-    buf2 = heap_caps_malloc(EXAMPLE_LCD_H_RES * 100 * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+    buf2 = heap_caps_malloc(draw_buf_pixels * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
     assert(buf2);
     // initialize LVGL draw buffers
-    lv_disp_draw_buf_init(&disp_buf, buf1, buf2, EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES);
+    lv_disp_draw_buf_init(&disp_buf, buf1, buf2, draw_buf_pixels);
 #endif // CONFIG_EXAMPLE_DOUBLE_FB
 
     ESP_LOGI(LVGL_TAG, "Register display driver to LVGL");
