@@ -597,8 +597,8 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
         LOG("ESP-NOW: Setpoints Brew=%.1f Steam=%.1f", brewSetpoint, steamSetpoint);
     }
 
-    float newP = clampf(pkt.pidP, 0.0f, 200.0f);
-    float newI = clampf(pkt.pidI, 0.0f, 10.0f);
+    float newP = clampf(pkt.pidP, 0.0f, 100.0f);
+    float newI = clampf(pkt.pidI, 0.0f, 2.0f);
     float newGuard = clampf(pkt.pidGuard, 0.0f, 100.0f);
     float newD = clampf(pkt.pidD, 0.0f, 500.0f);
     if (fabsf(newP - pGainTemp) > 0.01f) {
