@@ -103,6 +103,7 @@ constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 // guard: +/-8-+/-12% integral clamp on 0-100% heater
 constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f, DTAU_TEMP = 0.8f,
                 WINDUP_GUARD_TEMP = 10.0f;
+
 // Derivative filter time constant (seconds), exposed to HA
 
 dimmerLamp pumpDimmer(PUMP_PIN, ZC_PIN);

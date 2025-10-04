@@ -29,7 +29,7 @@ MQTT topic hierarchy.  All topics are rooted at:
 | `espnow/cmd` | pub/sub | ESP‑NOW control commands |
 | `brew_setpoint/set` & `.../state` | cmd/state | Brew temperature setpoint |
 | `steam_setpoint/set` & `.../state` | cmd/state | Steam temperature setpoint |
-| `pid_p`, `pid_i`, `pid_d`, `pid_guard`, `pid_d_tau` | cmd/state | PID tuning parameters |
+| `pid_p`, `pid_i`, `pid_d`, `pid_guard`, `pid_d_tau` | cmd/state | PID tuning parameters (`pid_guard` range 0–100) |
 | `status` | pub by controller & display | Availability ("online"/"offline") |
 | `error` | pub by controller | Aggregated error log |
 
