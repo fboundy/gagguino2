@@ -1152,11 +1152,11 @@ static void send_control_packet(void)
         s_control_dirty = false;
         ESP_LOGI(TAG_ESPNOW,
                  "Control sent rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f pidP=%.2f pidI=%.2f "
-                 "pidGuard=%.2f pidD=%.2f dTau = %.2f pump=%.1f mode=%u",
+                 "pidGuard=%.2f pidD=%.2f dTau=%0.2f pump=%.1f mode=%u",
                  (unsigned)revision, s_control.heater, s_control.steam,
                  (double)s_control.brewSetpoint, (double)s_control.steamSetpoint,
                  (double)s_control.pidP, (double)s_control.pidI, (double)s_control.pidGuard,
-                 (double)s_control.pidD, (double)s_control.pidGuard, (double)s_control.pumpPower, (unsigned)s_control.pumpMode);
+                 (double)s_control.pidD, (double)s_control.dTau, (double)s_control.pumpPower, (unsigned)s_control.pumpMode);
     }
 }
 
