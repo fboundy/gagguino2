@@ -817,7 +817,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         {
             float v = strtof(payload, NULL);
             control_bootstrap_complete();
-            if (v != s_control.brewSetpoint)
+            if (!float_equals(v, s_control.brewSetpoint, CONTROL_TEMP_TOLERANCE))
             {
                 s_control.brewSetpoint = v;
                 log_control_float("brew_setpoint", v, 1);
@@ -828,7 +828,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         {
             float v = strtof(payload, NULL);
             control_bootstrap_complete();
-            if (v != s_control.steamSetpoint)
+            if (!float_equals(v, s_control.steamSetpoint, CONTROL_TEMP_TOLERANCE))
             {
                 s_control.steamSetpoint = v;
                 log_control_float("steam_setpoint", v, 1);
@@ -841,7 +841,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             if (v < 0.0f)
                 v = 0.0f;
             control_bootstrap_complete();
-            if (v != s_control.pidP)
+            if (!float_equals(v, s_control.pidP, CONTROL_PID_TOLERANCE))
             {
                 s_control.pidP = v;
                 log_control_float("pid_p", v, 2);
@@ -854,7 +854,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             if (v < 0.0f)
                 v = 0.0f;
             control_bootstrap_complete();
-            if (v != s_control.pidI)
+            if (!float_equals(v, s_control.pidI, CONTROL_PID_TOLERANCE))
             {
                 s_control.pidI = v;
                 log_control_float("pid_i", v, 2);
@@ -867,7 +867,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             if (v < 0.0f)
                 v = 0.0f;
             control_bootstrap_complete();
-            if (v != s_control.pidD)
+            if (!float_equals(v, s_control.pidD, CONTROL_PID_TOLERANCE))
             {
                 s_control.pidD = v;
                 log_control_float("pid_d", v, 2);
@@ -880,10 +880,26 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             if (v < 0.0f)
                 v = 0.0f;
             control_bootstrap_complete();
-            if (v != s_control.pidGuard)
+            if (!float_equals(v, s_control.pidGuard, CONTROL_PID_TOLERANCE))
             {
                 s_control.pidGuard = v;
                 log_control_float("pid_guard", v, 2);
+                handle_control_change();
+            }
+        }
+        else if (strcmp(topic, TOPIC_DTAU_CMD) == 0)
+        {
+            float v = strtof(payload, NULL);
+            if (v < 0.0f)
+                v = 0.0f;
+            else if (v > 2.0f)
+                v = 2.0f;
+            control_bootstrap_complete();
+            if (!float_equals(v, s_control.dTau, CONTROL_PID_TOLERANCE))
+            {
+                s_control.dTau = v;
+                s_dtau = v;
+                log_control_float("pid_dtau", v, 2);
                 handle_control_change();
             }
         }
@@ -891,7 +907,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         {
             float v = strtof(payload, NULL);
             control_bootstrap_complete();
-            if (v != s_control.pumpPower)
+            if (!float_equals(v, s_control.pumpPower, CONTROL_PUMP_POWER_TOLERANCE))
             {
                 s_control.pumpPower = v;
                 log_control_float("pump_power", v, 1);
