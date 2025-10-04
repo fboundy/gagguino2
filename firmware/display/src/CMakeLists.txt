@@ -14,7 +14,9 @@ set(app_sources
     ${DEMO_MAIN_DIR}/LVGL_UI/LVGL_UI.c
     ${DEMO_MAIN_DIR}/Wireless/Wireless.c
     ${DEMO_MAIN_DIR}/Buzzer/Buzzer.c
+    ${DEMO_MAIN_DIR}/fonts/mdi_icons_24.c    
     ${DEMO_MAIN_DIR}/fonts/mdi_icons_40.c
+    ${DEMO_MAIN_DIR}/fonts/mdi_icons_80.c
     ${DEMO_MAIN_DIR}/Battery/Battery.c
 )
 

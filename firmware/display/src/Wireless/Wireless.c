@@ -13,6 +13,7 @@
 #include "secrets.h"
 #include "mqtt_topics.h"
 #include "espnow_protocol.h"
+#include "version.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -22,8 +23,8 @@
 #include <strings.h>
 #include <time.h>
 
-#define ESPNOW_TIMEOUT_MS      5000
-#define ESPNOW_PING_PERIOD_MS  1000
+#define ESPNOW_TIMEOUT_MS 5000
+#define ESPNOW_PING_PERIOD_MS 1000
 
 static const char *TAG_WIFI = "WiFi";
 static const char *TAG_MQTT = "MQTT";
@@ -52,12 +53,18 @@ static char TOPIC_PIDI_STATE[128];
 static char TOPIC_PIDI_CMD[128];
 static char TOPIC_PIDD_STATE[128];
 static char TOPIC_PIDD_CMD[128];
+static char TOPIC_PIDG_STATE[128];
+static char TOPIC_PIDG_CMD[128];
+static char TOPIC_DTAU_STATE[128];
+static char TOPIC_DTAU_CMD[128];
+
 static char TOPIC_PUMP_POWER_STATE[128];
 static char TOPIC_PUMP_POWER_CMD[128];
 static char TOPIC_PUMP_MODE_STATE[128];
 static char TOPIC_PUMP_MODE_CMD[128];
 
-static inline void build_topics(void) {
+static inline void build_topics(void)
+{
     snprintf(TOPIC_HEATER, sizeof TOPIC_HEATER, "%s/%s/heater/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_HEATER_SET, sizeof TOPIC_HEATER_SET, "%s/%s/heater/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_STEAM, sizeof TOPIC_STEAM, "%s/%s/steam/state", GAG_TOPIC_ROOT, GAGGIA_ID);
@@ -78,13 +85,18 @@ static inline void build_topics(void) {
     snprintf(TOPIC_PIDI_CMD, sizeof TOPIC_PIDI_CMD, "%s/%s/pid_i/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PIDD_STATE, sizeof TOPIC_PIDD_STATE, "%s/%s/pid_d/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PIDD_CMD, sizeof TOPIC_PIDD_CMD, "%s/%s/pid_d/set", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PIDG_STATE, sizeof TOPIC_PIDG_STATE, "%s/%s/pid_guard/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PIDG_CMD, sizeof TOPIC_PIDG_CMD, "%s/%s/pid_guard/set", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_DTAU_STATE, sizeof TOPIC_DTAU_STATE, "%s/%s/pid_dtau/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_DTAU_CMD, sizeof TOPIC_DTAU_CMD, "%s/%s/pid_dtau/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_STATE, sizeof TOPIC_PUMP_POWER_STATE, "%s/%s/pump_power/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_CMD, sizeof TOPIC_PUMP_POWER_CMD, "%s/%s/pump_power/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_MODE_STATE, sizeof TOPIC_PUMP_MODE_STATE, "%s/%s/pump_mode/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_MODE_CMD, sizeof TOPIC_PUMP_MODE_CMD, "%s/%s/pump_mode/set", GAG_TOPIC_ROOT, GAGGIA_ID);
 }
 
-static inline bool parse_bool_str(const char *s) {
+static inline bool parse_bool_str(const char *s)
+{
     return (strcmp(s, "1") == 0) || (strcasecmp(s, "true") == 0) || (strcasecmp(s, "on") == 0) ||
            (strcasecmp(s, "yes") == 0) || (strcasecmp(s, "enable") == 0);
 }
@@ -92,7 +104,8 @@ static inline bool parse_bool_str(const char *s) {
 // -----------------------------------------------------------------------------
 // State mirrors
 // -----------------------------------------------------------------------------
-typedef struct {
+typedef struct
+{
     bool heater;
     bool steam;
     float brewSetpoint;
@@ -100,6 +113,8 @@ typedef struct {
     float pidP;
     float pidI;
     float pidD;
+    float pidGuard;
+    float dTau;
     float pumpPower;
     uint8_t pumpMode;
 } ControlState;
@@ -109,9 +124,11 @@ static const ControlState CONTROL_DEFAULTS = {
     .steam = false,
     .brewSetpoint = 92.0f,
     .steamSetpoint = 152.0f,
-    .pidP = 15.0f,
-    .pidI = 0.35f,
-    .pidD = 60.0f,
+    .pidP = 8.0f,
+    .pidI = 0.6,
+    .pidD = 10.0f,
+    .pidGuard = 25.0f,
+    .dTau = 0.8f,
     .pumpPower = 95.0f,
     .pumpMode = ESPNOW_PUMP_MODE_NORMAL,
 };
@@ -129,12 +146,15 @@ static float s_steam_setpoint = NAN;
 static float s_pid_p = NAN;
 static float s_pid_i = NAN;
 static float s_pid_d = NAN;
+static float s_pid_guard = NAN;
+static float s_dtau = NAN;
 static float s_pump_power = NAN;
 static uint8_t s_pump_mode = ESPNOW_PUMP_MODE_NORMAL;
 static bool s_heater = false;
 static bool s_steam = false;
 
-typedef enum {
+typedef enum
+{
     CONTROL_BOOT_HEATER = 1u << 0,
     CONTROL_BOOT_STEAM = 1u << 1,
     CONTROL_BOOT_BREW = 1u << 2,
@@ -142,9 +162,11 @@ typedef enum {
     CONTROL_BOOT_PID_P = 1u << 4,
     CONTROL_BOOT_PID_I = 1u << 5,
     CONTROL_BOOT_PID_D = 1u << 6,
-    CONTROL_BOOT_PUMP_POWER = 1u << 7,
-    CONTROL_BOOT_PUMP_MODE = 1u << 8,
-    CONTROL_BOOT_ALL = (1u << 9) - 1,
+    CONTROL_BOOT_PID_GUARD = 1u << 7,
+    CONTROL_BOOT_DTAU = 1u << 8,
+    CONTROL_BOOT_PUMP_POWER = 1u << 9,
+    CONTROL_BOOT_PUMP_MODE = 1u << 10,
+    CONTROL_BOOT_ALL = (1u << 11) - 1,
 } ControlBootstrapBit;
 
 static bool s_control_bootstrap_active = false;
@@ -185,18 +207,19 @@ static volatile bool s_espnow_ping_req = false;
 
 static const uint8_t s_broadcast_addr[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-#define CONTROL_TEMP_TOLERANCE        0.05f
-#define CONTROL_PID_TOLERANCE         0.005f
-#define CONTROL_PID_D_TOLERANCE       0.1f
-#define CONTROL_PUMP_POWER_TOLERANCE  0.05f
-#define STEAM_STATE_CHANGED_FLAG      0x01u
-#define HEATER_STATE_CHANGED_FLAG     0x02u
+#define CONTROL_TEMP_TOLERANCE 0.05f
+#define CONTROL_PID_TOLERANCE 0.005f
+#define CONTROL_PUMP_POWER_TOLERANCE 0.05f
+#define STEAM_STATE_CHANGED_FLAG 0x01u
+#define HEATER_STATE_CHANGED_FLAG 0x02u
 
-static inline bool float_equals(float a, float b, float tolerance) {
+static inline bool float_equals(float a, float b, float tolerance)
+{
     return fabsf(a - b) <= tolerance;
 }
 
-static void control_apply_defaults(void) {
+static void control_apply_defaults(void)
+{
     s_control = CONTROL_DEFAULTS;
     s_heater = s_control.heater;
     s_steam = s_control.steam;
@@ -205,6 +228,8 @@ static void control_apply_defaults(void) {
     s_pid_p = s_control.pidP;
     s_pid_i = s_control.pidI;
     s_pid_d = s_control.pidD;
+    s_pid_guard = s_control.pidGuard;
+    s_dtau = s_control.dTau,
     s_pump_power = s_control.pumpPower;
     s_pump_mode = s_control.pumpMode;
     s_set_temp = s_control.brewSetpoint;
@@ -212,29 +237,38 @@ static void control_apply_defaults(void) {
     s_control_bootstrap_mask = 0;
 }
 
-static void control_bootstrap_reset(void) {
+static void control_bootstrap_reset(void)
+{
     s_control_bootstrap_active = true;
     s_control_bootstrap_mask = CONTROL_BOOT_ALL;
     ESP_LOGI(TAG_MQTT, "Control bootstrap reset");
 }
 
-static void control_bootstrap_complete(void) {
-    if (!s_control_bootstrap_active) return;
+static void control_bootstrap_complete(void)
+{
+    if (!s_control_bootstrap_active)
+        return;
     s_control_bootstrap_active = false;
     s_control_bootstrap_mask = 0;
     ESP_LOGI(TAG_MQTT, "Control bootstrap complete");
 }
 
-static bool control_bootstrap_ignore(ControlBootstrapBit bit, bool retained, bool matches) {
-    if (!s_control_bootstrap_active) return false;
-    if (!retained) {
+static bool control_bootstrap_ignore(ControlBootstrapBit bit, bool retained, bool matches)
+{
+    if (!s_control_bootstrap_active)
+        return false;
+    if (!retained)
+    {
         control_bootstrap_complete();
         return false;
     }
-    if (matches) {
-        if (s_control_bootstrap_mask & bit) {
+    if (matches)
+    {
+        if (s_control_bootstrap_mask & bit)
+        {
             s_control_bootstrap_mask &= ~bit;
-            if (s_control_bootstrap_mask == 0) {
+            if (s_control_bootstrap_mask == 0)
+            {
                 control_bootstrap_complete();
             }
         }
@@ -243,26 +277,32 @@ static bool control_bootstrap_ignore(ControlBootstrapBit bit, bool retained, boo
     return true;
 }
 
-static bool control_bootstrap_ignore_float(ControlBootstrapBit bit, bool retained, float value, float current, float tolerance) {
+static bool control_bootstrap_ignore_float(ControlBootstrapBit bit, bool retained, float value, float current, float tolerance)
+{
     return control_bootstrap_ignore(bit, retained, float_equals(value, current, tolerance));
 }
 
-static bool control_bootstrap_ignore_u8(ControlBootstrapBit bit, bool retained, uint8_t value, uint8_t current) {
+static bool control_bootstrap_ignore_u8(ControlBootstrapBit bit, bool retained, uint8_t value, uint8_t current)
+{
     return control_bootstrap_ignore(bit, retained, value == current);
 }
 
-static bool control_bootstrap_ignore_bool(ControlBootstrapBit bit, bool retained, bool value, bool current) {
+static bool control_bootstrap_ignore_bool(ControlBootstrapBit bit, bool retained, bool value, bool current)
+{
     return control_bootstrap_ignore(bit, retained, value == current);
 }
 
-static uint8_t apply_steam_request(bool steam) {
+static uint8_t apply_steam_request(bool steam)
+{
     uint8_t changed = 0;
-    if (steam && !s_control.heater) {
+    if (steam && !s_control.heater)
+    {
         s_control.heater = true;
         s_heater = true;
         changed |= HEATER_STATE_CHANGED_FLAG;
     }
-    if (s_control.steam != steam) {
+    if (s_control.steam != steam)
+    {
         s_control.steam = steam;
         s_steam = steam;
         changed |= STEAM_STATE_CHANGED_FLAG;
@@ -286,27 +326,37 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
 // -----------------------------------------------------------------------------
 // Wi-Fi initialisation and event handling
 // -----------------------------------------------------------------------------
-static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
-    if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
+    {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG_WIFI, "Got IP: %d.%d.%d.%d", IP2STR(&event->ip_info.ip));
         s_wifi_ready = true;
     }
 }
 
-static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
-    if (base != WIFI_EVENT) return;
-    switch (id) {
-    case WIFI_EVENT_STA_CONNECTED: {
+static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    if (base != WIFI_EVENT)
+        return;
+    switch (id)
+    {
+    case WIFI_EVENT_STA_CONNECTED:
+    {
         wifi_event_sta_connected_t *event = (wifi_event_sta_connected_t *)data;
-        if (!s_sta_channel_valid || s_sta_channel != event->channel) {
-            if (s_espnow_active) {
+        if (!s_sta_channel_valid || s_sta_channel != event->channel)
+        {
+            if (s_espnow_active)
+            {
                 stop_espnow();
             }
             s_sta_channel = event->channel;
             s_sta_channel_valid = true;
             ESP_LOGI(TAG_WIFI, "STA connected (channel %u)", (unsigned)s_sta_channel);
-        } else {
+        }
+        else
+        {
             s_sta_channel = event->channel;
         }
         s_last_espnow_channel = s_sta_channel;
@@ -326,7 +376,8 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
     }
 }
 
-void WIFI_Init(void *arg) {
+void WIFI_Init(void *arg)
+{
     esp_netif_init();
     esp_event_loop_create_default();
     esp_netif_create_default_wifi_sta();
@@ -355,10 +406,12 @@ void WIFI_Init(void *arg) {
     vTaskDelete(NULL);
 }
 
-void Wireless_Init(void) {
+void Wireless_Init(void)
+{
     control_apply_defaults();
     esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    {
         ESP_ERROR_CHECK(nvs_flash_erase());
         ret = nvs_flash_init();
     }
@@ -371,8 +424,10 @@ void Wireless_Init(void) {
 // -----------------------------------------------------------------------------
 // MQTT handling
 // -----------------------------------------------------------------------------
-static void mqtt_subscribe_all(void) {
-    if (!s_mqtt) return;
+static void mqtt_subscribe_all(void)
+{
+    if (!s_mqtt)
+        return;
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_HEATER_SET, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_STEAM_SET, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_BREW_SET_CMD, 1);
@@ -380,6 +435,8 @@ static void mqtt_subscribe_all(void) {
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDP_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDI_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDD_CMD, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDG_CMD, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_DTAU_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_POWER_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_MODE_CMD, 1);
     // State mirrors for retained bootstrap
@@ -391,24 +448,111 @@ static void mqtt_subscribe_all(void) {
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDP_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDI_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDD_STATE, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDG_STATE, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_DTAU_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_POWER_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_MODE_STATE, 1);
 }
 
-static void publish_float(const char *topic, float value, uint8_t decimals) {
-    if (!s_mqtt) return;
+static void publish_float(const char *topic, float value, uint8_t decimals)
+{
+    if (!s_mqtt)
+        return;
     char buf[32];
     snprintf(buf, sizeof(buf), "%.*f", decimals, value);
     esp_mqtt_client_publish(s_mqtt, topic, buf, 0, 1, true);
 }
 
-static void publish_bool_topic(const char *topic, bool value) {
-    if (!s_mqtt) return;
+static void publish_bool_topic(const char *topic, bool value)
+{
+    if (!s_mqtt)
+        return;
     esp_mqtt_client_publish(s_mqtt, topic, value ? "ON" : "OFF", 0, 1, true);
 }
 
-static void publish_control_state(void) {
-    if (!s_mqtt_connected) return;
+#if defined(MQTT_STATUS) && defined(GAGGIA_ID)
+static bool s_pid_p_discovery_published = false;
+static bool s_pid_i_discovery_published = false;
+static bool s_pid_d_discovery_published = false;
+static bool s_pid_g_discovery_published = false;
+static bool s_dtau_discovery_published = false;
+
+static bool publish_pid_number_discovery(const char *name, const char *suffix, const char *cmd_topic,
+                                         const char *state_topic, float min, float max, float step,
+                                         bool *published_flag)
+{
+    if (!s_mqtt || *published_flag)
+        return false;
+
+    char dev_id[64];
+    snprintf(dev_id, sizeof dev_id, "%s-%s", GAG_TOPIC_ROOT, GAGGIA_ID);
+
+    char topic[128];
+    snprintf(topic, sizeof topic, "homeassistant/number/%s_%s/config", dev_id, suffix);
+
+    const char *availability = MQTT_STATUS;
+    const char *version = VERSION;
+
+    char payload[512];
+    int written = snprintf(payload, sizeof payload,
+                           "{\"name\":\"%s\",\"uniq_id\":\"%s_%s\","
+                           "\"cmd_t\":\"%s\",\"stat_t\":\"%s\",\"min\":%.3g,\"max\":%.3g,"
+                           "\"step\":%.3g,\"mode\":\"auto\",\"avty_t\":\"%s\","
+                           "\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\","
+                           "\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\","
+                           "\"manufacturer\":\"Custom\",\"model\":\"Gagguino\",\"sw_version\":\"%s\"}}",
+                           name, dev_id, suffix, cmd_topic, state_topic, min, max, step, availability, dev_id, version);
+
+    if (written > 0 && written < (int)sizeof(payload))
+    {
+        int res = esp_mqtt_client_publish(s_mqtt, topic, payload, 0, 1, true);
+        if (res >= 0)
+        {
+            *published_flag = true;
+            ESP_LOGI(TAG_MQTT, "Published %s discovery with min=%.3g max=%.3g", name, min, max);
+            return true;
+        }
+        ESP_LOGW(TAG_MQTT, "Failed to publish %s discovery: %d", name, res);
+    }
+    else
+    {
+        ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+    }
+
+    return false;
+}
+
+static void publish_pid_discovery(void)
+{
+    publish_pid_number_discovery("PID P", "pid_p", TOPIC_PIDP_CMD, TOPIC_PIDP_STATE, 0.0f, 100.0f, 0.1f,
+                                 &s_pid_p_discovery_published);
+    publish_pid_number_discovery("PID I", "pid_i", TOPIC_PIDI_CMD, TOPIC_PIDI_STATE, 0.0f, 2.0f, 0.01f,
+                                 &s_pid_i_discovery_published);
+    publish_pid_number_discovery("PID D", "pid_d", TOPIC_PIDD_CMD, TOPIC_PIDD_STATE, 0.0f, 500.0f, 0.5f,
+                                 &s_pid_d_discovery_published);
+    publish_pid_number_discovery("PID Guard", "pid_guard", TOPIC_PIDG_CMD, TOPIC_PIDG_STATE, 0.0f, 100.0f, 0.5f,
+                                 &s_pid_g_discovery_published);
+    publish_pid_number_discovery("PID dTau", "pid_dtau", TOPIC_DTAU_CMD, TOPIC_DTAU_STATE, 0.0f, 2.0f, 0.05f,
+                                 &s_dtau_discovery_published);
+}
+
+static inline void reset_pid_discovery_flags(void)
+{
+    s_pid_p_discovery_published = false;
+    s_pid_i_discovery_published = false;
+    s_pid_d_discovery_published = false;
+    s_pid_g_discovery_published = false;
+    s_dtau_discovery_published = false;
+}
+#else
+static inline void publish_pid_discovery(void) {}
+static inline void reset_pid_discovery_flags(void) {}
+#endif
+
+static void publish_control_state(void)
+{
+    if (!s_mqtt_connected)
+        return;
     publish_bool_topic(TOPIC_HEATER, s_control.heater);
     publish_bool_topic(TOPIC_STEAM, s_control.steam);
     publish_float(TOPIC_BREW_STATE, s_control.brewSetpoint, 1);
@@ -416,32 +560,40 @@ static void publish_control_state(void) {
     publish_float(TOPIC_PIDP_STATE, s_control.pidP, 2);
     publish_float(TOPIC_PIDI_STATE, s_control.pidI, 2);
     publish_float(TOPIC_PIDD_STATE, s_control.pidD, 2);
+    publish_float(TOPIC_PIDG_STATE, s_control.pidGuard, 2);
+    publish_float(TOPIC_DTAU_STATE, s_control.dTau, 2);
     publish_float(TOPIC_PUMP_POWER_STATE, s_control.pumpPower, 1);
     char buf[16];
     snprintf(buf, sizeof buf, "%u", (unsigned)s_control.pumpMode);
     esp_mqtt_client_publish(s_mqtt, TOPIC_PUMP_MODE_STATE, buf, 0, 1, true);
 }
 
-static void handle_control_change(void) {
+static void handle_control_change(void)
+{
     publish_control_state();
     schedule_control_send();
 }
 
-static void log_control_bool(const char *name, bool value) {
+static void log_control_bool(const char *name, bool value)
+{
     ESP_LOGI(TAG_MQTT, "MQTT control %s -> %s", name, value ? "ON" : "OFF");
 }
 
-static void log_control_float(const char *name, float value, uint8_t precision) {
+static void log_control_float(const char *name, float value, uint8_t precision)
+{
     ESP_LOGI(TAG_MQTT, "MQTT control %s -> %.*f", name, precision, (double)value);
 }
 
-static void log_control_u8(const char *name, uint8_t value) {
+static void log_control_u8(const char *name, uint8_t value)
+{
     ESP_LOGI(TAG_MQTT, "MQTT control %s -> %u", name, (unsigned)value);
 }
 
-static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
     esp_mqtt_event_handle_t event = (esp_mqtt_event_handle_t)event_data;
-    switch (event_id) {
+    switch (event_id)
+    {
     case MQTT_EVENT_CONNECTED:
         ESP_LOGI(TAG_MQTT, "Connected");
         s_mqtt_connected = true;
@@ -450,13 +602,15 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 #ifdef MQTT_STATUS
         esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
 #endif
-        publish_control_state();
+        publish_pid_discovery();
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGW(TAG_MQTT, "Disconnected");
         s_mqtt_connected = false;
+        reset_pid_discovery_flags();
         break;
-    case MQTT_EVENT_DATA: {
+    case MQTT_EVENT_DATA:
+    {
         char topic[128];
         char payload[128];
         size_t tlen = (event->topic_len < sizeof(topic) - 1) ? event->topic_len : sizeof(topic) - 1;
@@ -466,160 +620,306 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         memcpy(payload, event->data, plen);
         payload[plen] = '\0';
 
-        if (strcmp(topic, TOPIC_CURTEMP) == 0) {
+        if (strcmp(topic, TOPIC_CURTEMP) == 0)
+        {
             s_current_temp = strtof(payload, NULL);
-        } else if (strcmp(topic, TOPIC_SETTEMP) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_SETTEMP) == 0)
+        {
             s_set_temp = strtof(payload, NULL);
-        } else if (strcmp(topic, TOPIC_PRESSURE) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_PRESSURE) == 0)
+        {
             s_pressure = strtof(payload, NULL);
-        } else if (strcmp(topic, TOPIC_SHOTVOL) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_SHOTVOL) == 0)
+        {
             s_shot_volume = strtof(payload, NULL);
-        } else if (strcmp(topic, TOPIC_SHOT) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_SHOT) == 0)
+        {
             s_shot_time = strtof(payload, NULL);
-        } else if (strcmp(topic, TOPIC_ZC_COUNT_STATE) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_ZC_COUNT_STATE) == 0)
+        {
             s_zc_count = (uint32_t)strtoul(payload, NULL, 10);
-        } else if (strcmp(topic, TOPIC_HEATER) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_HEATER) == 0)
+        {
             bool hv = parse_bool_str(payload);
-            if (control_bootstrap_ignore_bool(CONTROL_BOOT_HEATER, event->retain, hv, s_control.heater)) {
+            if (control_bootstrap_ignore_bool(CONTROL_BOOT_HEATER, event->retain, hv, s_control.heater))
+            {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: heater -> %s", payload);
                 break;
             }
             s_control.heater = hv;
             s_heater = s_control.heater;
-        } else if (strcmp(topic, TOPIC_STEAM) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_STEAM) == 0)
+        {
             bool sv = parse_bool_str(payload);
-            if (control_bootstrap_ignore_bool(CONTROL_BOOT_STEAM, event->retain, sv, s_control.steam)) {
+            if (control_bootstrap_ignore_bool(CONTROL_BOOT_STEAM, event->retain, sv, s_control.steam))
+            {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: steam -> %s", payload);
                 break;
             }
             s_control.steam = sv;
             s_steam = s_control.steam;
-        } else if (strcmp(topic, TOPIC_BREW_STATE) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_BREW_STATE) == 0)
+        {
             float v = strtof(payload, NULL);
-            if (control_bootstrap_ignore_float(CONTROL_BOOT_BREW, event->retain, v, s_control.brewSetpoint, CONTROL_TEMP_TOLERANCE)) {
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_BREW, event->retain, v, s_control.brewSetpoint, CONTROL_TEMP_TOLERANCE))
+            {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: brew_setpoint -> %s", payload);
                 break;
             }
             s_control.brewSetpoint = v;
             s_brew_setpoint = s_control.brewSetpoint;
-        } else if (strcmp(topic, TOPIC_STEAM_STATE) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_STEAM_STATE) == 0)
+        {
             float v = strtof(payload, NULL);
-            if (control_bootstrap_ignore_float(CONTROL_BOOT_STEAM_SET, event->retain, v, s_control.steamSetpoint, CONTROL_TEMP_TOLERANCE)) {
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_STEAM_SET, event->retain, v, s_control.steamSetpoint, CONTROL_TEMP_TOLERANCE))
+            {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: steam_setpoint -> %s", payload);
                 break;
             }
             s_control.steamSetpoint = v;
             s_steam_setpoint = s_control.steamSetpoint;
-        } else if (strcmp(topic, TOPIC_PIDP_STATE) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_PIDP_STATE) == 0)
+        {
             float v = strtof(payload, NULL);
-            if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_P, event->retain, v, s_control.pidP, CONTROL_PID_TOLERANCE)) {
+            if (v < 0.0f)
+                v = 0.0f;
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_P, event->retain, v, s_control.pidP, CONTROL_PID_TOLERANCE))
+            {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_p -> %s", payload);
                 break;
             }
             s_control.pidP = v;
             s_pid_p = s_control.pidP;
-        } else if (strcmp(topic, TOPIC_PIDI_STATE) == 0) {
+            if (event->retain)
+                schedule_control_send();
+        }
+        else if (strcmp(topic, TOPIC_PIDI_STATE) == 0)
+        {
             float v = strtof(payload, NULL);
-            if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_I, event->retain, v, s_control.pidI, CONTROL_PID_TOLERANCE)) {
+            if (v < 0.0f)
+                v = 0.0f;
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_I, event->retain, v, s_control.pidI, CONTROL_PID_TOLERANCE))
+            {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_i -> %s", payload);
                 break;
             }
             s_control.pidI = v;
             s_pid_i = s_control.pidI;
-        } else if (strcmp(topic, TOPIC_PIDD_STATE) == 0) {
+            if (event->retain)
+                schedule_control_send();
+        }
+        else if (strcmp(topic, TOPIC_PIDD_STATE) == 0)
+        {
             float v = strtof(payload, NULL);
-            if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_D, event->retain, v, s_control.pidD, CONTROL_PID_D_TOLERANCE)) {
+            if (v < 0.0f)
+                v = 0.0f;
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_D, event->retain, v, s_control.pidD, CONTROL_PID_TOLERANCE))
+            {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_d -> %s", payload);
                 break;
             }
             s_control.pidD = v;
             s_pid_d = s_control.pidD;
-        } else if (strcmp(topic, TOPIC_PUMP_POWER_STATE) == 0) {
+            if (event->retain)
+                schedule_control_send();
+        }
+        else if (strcmp(topic, TOPIC_PIDG_STATE) == 0)
+        {
             float v = strtof(payload, NULL);
-            if (control_bootstrap_ignore_float(CONTROL_BOOT_PUMP_POWER, event->retain, v, s_control.pumpPower, CONTROL_PUMP_POWER_TOLERANCE)) {
+            if (v < 0.0f)
+                v = 0.0f;
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_GUARD, event->retain, v, s_control.pidGuard,
+                                               CONTROL_PID_TOLERANCE))
+            {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_guard -> %s", payload);
+                break;
+            }
+            s_control.pidGuard = v;
+            s_pid_guard = s_control.pidGuard;
+            if (event->retain)
+                schedule_control_send();
+        }
+        else if (strcmp(topic, TOPIC_DTAU_STATE) == 0)
+        {
+            float v = strtof(payload, NULL);
+            if (v < 0.0f)
+                v = 0.0f;
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_DTAU, event->retain, v, s_control.dTau,
+                                               CONTROL_PID_TOLERANCE))
+            {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_dtau -> %s", payload);
+                break;
+            }
+            s_control.dTau = v;
+            s_dtau = s_control.dTau;
+            if (event->retain)
+                schedule_control_send();
+        }
+        else if (strcmp(topic, TOPIC_PUMP_POWER_STATE) == 0)
+        {
+            float v = strtof(payload, NULL);
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PUMP_POWER, event->retain, v, s_control.pumpPower, CONTROL_PUMP_POWER_TOLERANCE))
+            {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: pump_power -> %s", payload);
                 break;
             }
             s_control.pumpPower = v;
             s_pump_power = s_control.pumpPower;
-        } else if (strcmp(topic, TOPIC_PUMP_MODE_STATE) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_PUMP_MODE_STATE) == 0)
+        {
             uint8_t v = (uint8_t)atoi(payload);
-            if (control_bootstrap_ignore_u8(CONTROL_BOOT_PUMP_MODE, event->retain, v, s_control.pumpMode)) {
+            if (control_bootstrap_ignore_u8(CONTROL_BOOT_PUMP_MODE, event->retain, v, s_control.pumpMode))
+            {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: pump_mode -> %s", payload);
                 break;
             }
             s_control.pumpMode = v;
             s_pump_mode = s_control.pumpMode;
-        } else if (strcmp(topic, TOPIC_HEATER_SET) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_HEATER_SET) == 0)
+        {
             bool hv = parse_bool_str(payload);
             control_bootstrap_complete();
-            if (hv != s_control.heater) {
+            if (hv != s_control.heater)
+            {
                 s_control.heater = hv;
                 s_heater = hv;
                 log_control_bool("heater", hv);
                 handle_control_change();
             }
-        } else if (strcmp(topic, TOPIC_STEAM_SET) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_STEAM_SET) == 0)
+        {
             bool sv = parse_bool_str(payload);
             control_bootstrap_complete();
             uint8_t changed = apply_steam_request(sv);
-            if (changed) {
-                if (changed & HEATER_STATE_CHANGED_FLAG) log_control_bool("heater", true);
-                if (changed & STEAM_STATE_CHANGED_FLAG) log_control_bool("steam", sv);
+            if (changed)
+            {
+                if (changed & HEATER_STATE_CHANGED_FLAG)
+                    log_control_bool("heater", true);
+                if (changed & STEAM_STATE_CHANGED_FLAG)
+                    log_control_bool("steam", sv);
                 handle_control_change();
             }
-        } else if (strcmp(topic, TOPIC_BREW_SET_CMD) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_BREW_SET_CMD) == 0)
+        {
             float v = strtof(payload, NULL);
             control_bootstrap_complete();
-            if (v != s_control.brewSetpoint) {
+            if (!float_equals(v, s_control.brewSetpoint, CONTROL_TEMP_TOLERANCE))
+            {
                 s_control.brewSetpoint = v;
                 log_control_float("brew_setpoint", v, 1);
                 handle_control_change();
             }
-        } else if (strcmp(topic, TOPIC_STEAM_SET_CMD) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_STEAM_SET_CMD) == 0)
+        {
             float v = strtof(payload, NULL);
             control_bootstrap_complete();
-            if (v != s_control.steamSetpoint) {
+            if (!float_equals(v, s_control.steamSetpoint, CONTROL_TEMP_TOLERANCE))
+            {
                 s_control.steamSetpoint = v;
                 log_control_float("steam_setpoint", v, 1);
                 handle_control_change();
             }
-        } else if (strcmp(topic, TOPIC_PIDP_CMD) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_PIDP_CMD) == 0)
+        {
             float v = strtof(payload, NULL);
+            if (v < 0.0f)
+                v = 0.0f;
             control_bootstrap_complete();
-            if (v != s_control.pidP) {
+            if (!float_equals(v, s_control.pidP, CONTROL_PID_TOLERANCE))
+            {
                 s_control.pidP = v;
                 log_control_float("pid_p", v, 2);
                 handle_control_change();
             }
-        } else if (strcmp(topic, TOPIC_PIDI_CMD) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_PIDI_CMD) == 0)
+        {
             float v = strtof(payload, NULL);
+            if (v < 0.0f)
+                v = 0.0f;
             control_bootstrap_complete();
-            if (v != s_control.pidI) {
+            if (!float_equals(v, s_control.pidI, CONTROL_PID_TOLERANCE))
+            {
                 s_control.pidI = v;
                 log_control_float("pid_i", v, 2);
                 handle_control_change();
             }
-        } else if (strcmp(topic, TOPIC_PIDD_CMD) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_PIDD_CMD) == 0)
+        {
             float v = strtof(payload, NULL);
+            if (v < 0.0f)
+                v = 0.0f;
             control_bootstrap_complete();
-            if (v != s_control.pidD) {
+            if (!float_equals(v, s_control.pidD, CONTROL_PID_TOLERANCE))
+            {
                 s_control.pidD = v;
                 log_control_float("pid_d", v, 2);
                 handle_control_change();
             }
-        } else if (strcmp(topic, TOPIC_PUMP_POWER_CMD) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_PIDG_CMD) == 0)
+        {
+            float v = strtof(payload, NULL);
+            if (v < 0.0f)
+                v = 0.0f;
+            control_bootstrap_complete();
+            if (!float_equals(v, s_control.pidGuard, CONTROL_PID_TOLERANCE))
+            {
+                s_control.pidGuard = v;
+                log_control_float("pid_guard", v, 2);
+                handle_control_change();
+            }
+        }
+        else if (strcmp(topic, TOPIC_DTAU_CMD) == 0)
+        {
+            float v = strtof(payload, NULL);
+            if (v < 0.0f)
+                v = 0.0f;
+            else if (v > 2.0f)
+                v = 2.0f;
+            control_bootstrap_complete();
+            if (!float_equals(v, s_control.dTau, CONTROL_PID_TOLERANCE))
+            {
+                s_control.dTau = v;
+                s_dtau = v;
+                log_control_float("pid_dtau", v, 2);
+                handle_control_change();
+            }
+        }
+        else if (strcmp(topic, TOPIC_PUMP_POWER_CMD) == 0)
+        {
             float v = strtof(payload, NULL);
             control_bootstrap_complete();
-            if (v != s_control.pumpPower) {
+            if (!float_equals(v, s_control.pumpPower, CONTROL_PUMP_POWER_TOLERANCE))
+            {
                 s_control.pumpPower = v;
                 log_control_float("pump_power", v, 1);
                 handle_control_change();
             }
-        } else if (strcmp(topic, TOPIC_PUMP_MODE_CMD) == 0) {
+        }
+        else if (strcmp(topic, TOPIC_PUMP_MODE_CMD) == 0)
+        {
             uint8_t v = (uint8_t)atoi(payload);
             control_bootstrap_complete();
-            if (v != s_control.pumpMode) {
+            if (v != s_control.pumpMode)
+            {
                 s_control.pumpMode = v;
                 log_control_u8("pump_mode", v);
                 handle_control_change();
@@ -632,10 +932,13 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     }
 }
 
-void MQTT_Start(void) {
+void MQTT_Start(void)
+{
 #if defined(MQTT_HOST) && defined(MQTT_PORT)
-    if (s_mqtt) return;
-    if (!s_wifi_ready) return;
+    if (s_mqtt)
+        return;
+    if (!s_wifi_ready)
+        return;
 
     build_topics();
 
@@ -657,7 +960,8 @@ void MQTT_Start(void) {
     };
 
     s_mqtt = esp_mqtt_client_init(&cfg);
-    if (!s_mqtt) {
+    if (!s_mqtt)
+    {
         ESP_LOGE(TAG_MQTT, "Init failed");
         return;
     }
@@ -671,27 +975,34 @@ void MQTT_Start(void) {
 
 esp_mqtt_client_handle_t MQTT_GetClient(void) { return s_mqtt; }
 
-int MQTT_Publish(const char *topic, const char *payload, int qos, bool retain) {
-    if (!s_mqtt) return -1;
+int MQTT_Publish(const char *topic, const char *payload, int qos, bool retain)
+{
+    if (!s_mqtt)
+        return -1;
     return esp_mqtt_client_publish(s_mqtt, topic, payload, 0, qos, retain);
 }
 
 // -----------------------------------------------------------------------------
 // ESP-NOW
 // -----------------------------------------------------------------------------
-static void ensure_espnow_started(void) {
-    if (s_espnow_active || !s_sta_channel_valid) return;
+static void ensure_espnow_started(void)
+{
+    if (s_espnow_active || !s_sta_channel_valid)
+        return;
 
-    if (esp_now_init() != ESP_OK) {
+    if (esp_now_init() != ESP_OK)
+    {
         ESP_LOGE(TAG_ESPNOW, "esp_now_init failed");
         return;
     }
 
     esp_now_register_recv_cb(espnow_recv_cb);
 
-    if (s_last_espnow_channel != s_sta_channel) {
+    if (s_last_espnow_channel != s_sta_channel)
+    {
         esp_err_t err = esp_wifi_set_channel(s_sta_channel, WIFI_SECOND_CHAN_NONE);
-        if (err != ESP_OK) {
+        if (err != ESP_OK)
+        {
             ESP_LOGW(TAG_ESPNOW, "Failed to set channel %u: %d", (unsigned)s_sta_channel, err);
         }
         s_last_espnow_channel = s_sta_channel;
@@ -703,35 +1014,46 @@ static void ensure_espnow_started(void) {
     s_broadcast_peer.channel = s_sta_channel;
     s_broadcast_peer.encrypt = false;
 
-    if (esp_now_is_peer_exist(s_broadcast_peer.peer_addr)) {
+    if (esp_now_is_peer_exist(s_broadcast_peer.peer_addr))
+    {
         esp_now_mod_peer(&s_broadcast_peer);
-    } else {
+    }
+    else
+    {
         esp_now_add_peer(&s_broadcast_peer);
     }
 
-    if (!s_espnow_timer) {
+    if (!s_espnow_timer)
+    {
         s_espnow_timer = xTimerCreate("espnow_to", pdMS_TO_TICKS(ESPNOW_TIMEOUT_MS), pdFALSE, NULL, espnow_timeout_cb);
     }
-    if (!s_espnow_ping_timer) {
+    if (!s_espnow_ping_timer)
+    {
         s_espnow_ping_timer = xTimerCreate("espnow_ping", pdMS_TO_TICKS(ESPNOW_PING_PERIOD_MS), pdTRUE, NULL, espnow_ping_cb);
     }
 
-    if (s_espnow_timer) xTimerStart(s_espnow_timer, 0);
-    if (s_espnow_ping_timer) xTimerStart(s_espnow_ping_timer, 0);
+    if (s_espnow_timer)
+        xTimerStart(s_espnow_timer, 0);
+    if (s_espnow_ping_timer)
+        xTimerStart(s_espnow_ping_timer, 0);
 
     s_espnow_active = true;
     s_espnow_handshake = false;
     s_use_espnow = false;
     s_controller_peer_valid = false;
     s_espnow_last_rx = 0;
-    s_espnow_ping_req = true;  // send handshake immediately
+    s_espnow_ping_req = true; // send handshake immediately
     ESP_LOGI(TAG_ESPNOW, "Initialised on channel %u", (unsigned)s_sta_channel);
 }
 
-static void stop_espnow(void) {
-    if (!s_espnow_active) return;
-    if (s_espnow_timer) xTimerStop(s_espnow_timer, 0);
-    if (s_espnow_ping_timer) xTimerStop(s_espnow_ping_timer, 0);
+static void stop_espnow(void)
+{
+    if (!s_espnow_active)
+        return;
+    if (s_espnow_timer)
+        xTimerStop(s_espnow_timer, 0);
+    if (s_espnow_ping_timer)
+        xTimerStop(s_espnow_ping_timer, 0);
     esp_now_deinit();
     s_espnow_active = false;
     s_espnow_handshake = false;
@@ -740,48 +1062,63 @@ static void stop_espnow(void) {
     ESP_LOGW(TAG_ESPNOW, "Stopped");
 }
 
-static void espnow_timeout_cb(TimerHandle_t xTimer) {
+static void espnow_timeout_cb(TimerHandle_t xTimer)
+{
     (void)xTimer;
     s_espnow_timeout_req = true;
 }
 
-static void espnow_ping_cb(TimerHandle_t xTimer) {
+static void espnow_ping_cb(TimerHandle_t xTimer)
+{
     (void)xTimer;
     s_espnow_ping_req = true;
 }
 
-static void update_controller_peer(const uint8_t *addr) {
+static void update_controller_peer(const uint8_t *addr)
+{
     memcpy(s_controller_peer.peer_addr, addr, ESP_NOW_ETH_ALEN);
     s_controller_peer.ifidx = ESP_IF_WIFI_STA;
     s_controller_peer.channel = s_sta_channel;
     s_controller_peer.encrypt = false;
-    if (esp_now_is_peer_exist(s_controller_peer.peer_addr)) {
+    if (esp_now_is_peer_exist(s_controller_peer.peer_addr))
+    {
         esp_now_mod_peer(&s_controller_peer);
-    } else {
+    }
+    else
+    {
         esp_now_add_peer(&s_controller_peer);
     }
     s_controller_peer_valid = true;
 }
 
-static void send_handshake_request(void) {
-    if (!s_espnow_active) return;
+static void send_handshake_request(void)
+{
+    if (!s_espnow_active)
+        return;
     uint8_t payload[2] = {ESPNOW_HANDSHAKE_REQ, s_sta_channel};
     esp_err_t err = esp_now_send(s_broadcast_addr, payload, sizeof(payload));
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGW(TAG_ESPNOW, "Handshake send failed: %d", err);
     }
 }
 
-static void send_sensor_ack(const uint8_t *dest) {
-    if (!s_espnow_active) return;
+static void send_sensor_ack(const uint8_t *dest)
+{
+    if (!s_espnow_active)
+        return;
     uint8_t ack = ESPNOW_SENSOR_ACK;
     esp_now_send(dest, &ack, 1);
 }
 
-static void send_control_packet(void) {
-    if (!s_espnow_active || !s_use_espnow) return;
-    if (!s_controller_peer_valid) return;
-    if (!s_control_dirty) return;
+static void send_control_packet(void)
+{
+    if (!s_espnow_active || !s_use_espnow)
+        return;
+    if (!s_controller_peer_valid)
+        return;
+    if (!s_control_dirty)
+        return;
 
     uint32_t revision = ++s_control_revision;
 
@@ -796,32 +1133,42 @@ static void send_control_packet(void) {
         .pidP = s_control.pidP,
         .pidI = s_control.pidI,
         .pidD = s_control.pidD,
+        .pidGuard = s_control.pidGuard,
+        .dTau = s_control.dTau,
         .pumpPowerPercent = s_control.pumpPower,
     };
-    if (s_control.heater) pkt.flags |= ESPNOW_CONTROL_FLAG_HEATER;
-    if (s_control.steam) pkt.flags |= ESPNOW_CONTROL_FLAG_STEAM;
+    if (s_control.heater)
+        pkt.flags |= ESPNOW_CONTROL_FLAG_HEATER;
+    if (s_control.steam)
+        pkt.flags |= ESPNOW_CONTROL_FLAG_STEAM;
 
     esp_err_t err = esp_now_send(s_controller_peer.peer_addr, (const uint8_t *)&pkt, sizeof(pkt));
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
         ESP_LOGW(TAG_ESPNOW, "Control send failed: %d", err);
-    } else {
+    }
+    else
+    {
         s_control_dirty = false;
         ESP_LOGI(TAG_ESPNOW,
                  "Control sent rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f pidP=%.2f pidI=%.2f "
-                 "pidD=%.2f pump=%.1f mode=%u",
+                 "pidGuard=%.2f pidD=%.2f dTau=%0.2f pump=%.1f mode=%u",
                  (unsigned)revision, s_control.heater, s_control.steam,
                  (double)s_control.brewSetpoint, (double)s_control.steamSetpoint,
-                 (double)s_control.pidP, (double)s_control.pidI, (double)s_control.pidD,
-                 (double)s_control.pumpPower, (unsigned)s_control.pumpMode);
+                 (double)s_control.pidP, (double)s_control.pidI, (double)s_control.pidGuard,
+                 (double)s_control.pidD, (double)s_control.dTau, (double)s_control.pumpPower, (unsigned)s_control.pumpMode);
     }
 }
 
-static void schedule_control_send(void) {
+static void schedule_control_send(void)
+{
     s_control_dirty = true;
 }
 
-static void publish_sensor_to_mqtt(const EspNowPacket *pkt) {
-    if (!s_mqtt_connected) return;
+static void publish_sensor_to_mqtt(const EspNowPacket *pkt)
+{
+    if (!s_mqtt_connected)
+        return;
     publish_float(TOPIC_CURTEMP, pkt->currentTempC, 1);
     publish_float(TOPIC_SETTEMP, pkt->setTempC, 1);
     publish_float(TOPIC_PRESSURE, pkt->pressureBar, 1);
@@ -833,23 +1180,30 @@ static void publish_sensor_to_mqtt(const EspNowPacket *pkt) {
     publish_float(TOPIC_STEAM_STATE, pkt->steamSetpointC, 1);
 }
 
-static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int data_len) {
-    if (data_len <= 0 || !data) return;
-    if (data[0] == ESPNOW_HANDSHAKE_ACK) {
-        if (info) {
+static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int data_len)
+{
+    if (data_len <= 0 || !data)
+        return;
+    if (data[0] == ESPNOW_HANDSHAKE_ACK)
+    {
+        if (info)
+        {
             update_controller_peer(info->src_addr);
         }
         s_use_espnow = true;
         s_espnow_handshake = true;
         s_espnow_last_rx = time(NULL);
-        if (s_espnow_timer) xTimerReset(s_espnow_timer, 0);
-        if (s_control_revision == 0 && !s_control_dirty) {
+        if (s_espnow_timer)
+            xTimerReset(s_espnow_timer, 0);
+        if (s_control_revision == 0 && !s_control_dirty)
+        {
             schedule_control_send();
         }
         return;
     }
 
-    if (data_len == sizeof(EspNowPacket)) {
+    if (data_len == sizeof(EspNowPacket))
+    {
         const EspNowPacket *pkt = (const EspNowPacket *)data;
         s_current_temp = pkt->currentTempC;
         s_set_temp = pkt->setTempC;
@@ -861,49 +1215,61 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
         s_brew_setpoint = pkt->brewSetpointC;
         s_steam_setpoint = pkt->steamSetpointC;
         publish_sensor_to_mqtt(pkt);
-        if (info) {
+        if (info)
+        {
             update_controller_peer(info->src_addr);
             send_sensor_ack(info->src_addr);
         }
         s_use_espnow = true;
         s_espnow_handshake = true;
         s_espnow_last_rx = time(NULL);
-        if (s_espnow_timer) xTimerReset(s_espnow_timer, 0);
+        if (s_espnow_timer)
+            xTimerReset(s_espnow_timer, 0);
         return;
     }
 
-    if (data[0] == ESPNOW_SENSOR_ACK) {
+    if (data[0] == ESPNOW_SENSOR_ACK)
+    {
         // Controller acknowledged telemetry acknowledgement; nothing to do.
         return;
     }
 }
 
-static void Wireless_Task(void *arg) {
+static void Wireless_Task(void *arg)
+{
     (void)arg;
     const TickType_t delay = pdMS_TO_TICKS(50);
-    while (1) {
-        if (s_wifi_ready && !s_mqtt) {
+    while (1)
+    {
+        if (s_wifi_ready && !s_mqtt)
+        {
             MQTT_Start();
         }
 
-        if (s_espnow_timeout_req) {
+        if (s_espnow_timeout_req)
+        {
             s_espnow_timeout_req = false;
             ESP_LOGW(TAG_ESPNOW, "Timeout waiting for packets");
             stop_espnow();
             ensure_espnow_started();
         }
 
-        if (s_espnow_ping_req) {
+        if (s_espnow_ping_req)
+        {
             s_espnow_ping_req = false;
-            if (!s_espnow_handshake) {
+            if (!s_espnow_handshake)
+            {
                 send_handshake_request();
-            } else if (s_controller_peer_valid) {
+            }
+            else if (s_controller_peer_valid)
+            {
                 // send a light keepalive handshake to ensure controller hears us
                 send_handshake_request();
             }
         }
 
-        if (s_use_espnow && s_control_dirty) {
+        if (s_use_espnow && s_control_dirty)
+        {
             send_control_packet();
         }
 
@@ -923,8 +1289,10 @@ float MQTT_GetShotVolume(void) { return s_shot_volume; }
 uint32_t MQTT_GetZcCount(void) { return s_zc_count; }
 bool MQTT_GetHeaterState(void) { return s_heater; }
 
-void MQTT_SetHeaterState(bool heater) {
-    if (s_control.heater == heater) return;
+void MQTT_SetHeaterState(bool heater)
+{
+    if (s_control.heater == heater)
+        return;
     s_control.heater = heater;
     s_heater = heater;
     handle_control_change();
@@ -932,11 +1300,15 @@ void MQTT_SetHeaterState(bool heater) {
 
 bool MQTT_GetSteamState(void) { return s_steam; }
 
-void MQTT_SetSteamState(bool steam) {
+void MQTT_SetSteamState(bool steam)
+{
     uint8_t changed = apply_steam_request(steam);
-    if (!changed) return;
-    if (changed & HEATER_STATE_CHANGED_FLAG) log_control_bool("heater", true);
-    if (changed & STEAM_STATE_CHANGED_FLAG) log_control_bool("steam", steam);
+    if (!changed)
+        return;
+    if (changed & HEATER_STATE_CHANGED_FLAG)
+        log_control_bool("heater", true);
+    if (changed & STEAM_STATE_CHANGED_FLAG)
+        log_control_bool("steam", steam);
     handle_control_change();
 }
 
@@ -944,8 +1316,10 @@ bool Wireless_UsingEspNow(void) { return s_use_espnow; }
 bool Wireless_IsMQTTConnected(void) { return s_mqtt_connected; }
 bool Wireless_IsWiFiConnected(void) { return s_wifi_ready; }
 
-bool Wireless_ControllerStillSendingEspNow(void) {
-    if (!s_espnow_last_rx) return false;
+bool Wireless_ControllerStillSendingEspNow(void)
+{
+    if (!s_espnow_last_rx)
+        return false;
     return (time(NULL) - s_espnow_last_rx) < 5;
 }
 
