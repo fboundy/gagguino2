@@ -562,7 +562,8 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
         "pidD=%.2f pump=%.1f mode=%u",
         static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
         (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
-        pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.pumpPowerPercent, static_cast<unsigned>(pkt.pumpMode));
+        pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.pumpPowerPercent,
+        static_cast<unsigned>(pkt.pumpMode));
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
     if (hv != heaterEnabled) {
@@ -1013,6 +1014,8 @@ void loop() {
         LOG("Pump: ZC Count =%lu", zcCount);
         LOG("Flags: Steam=%d, Shot=%d", steamFlag, shotFlag);
         LOG("AC Count=%d", acCount);
+        LOG("PID: P=%0.1f, I=%0.2f, D=%0.1f, G=%0.1f", pGainTemp, iGainTemp, dGainTemp,
+            windupGuardTemp);
         LOG("");
         lastLogTime = currentTime;
     }
