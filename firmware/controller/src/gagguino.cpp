@@ -101,7 +101,7 @@ constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 // Ki: 0.3-0.5 [out/(degC*s)] -> start at 0.35
 // Kd: 50-70 [out*s/degC] -> start at 60
 // guard: +/-8-+/-12% integral clamp on 0-100% heater
-constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
+constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f, DTAU_TEMP = 0.8f,
                 WINDUP_GUARD_TEMP = 10.0f;
 // Derivative filter time constant (seconds), exposed to HA
 
@@ -183,7 +183,7 @@ float setTemp = brewSetpoint;         // active target (brew or steam)
 float iStateTemp = 0.0f, heatPower = 0.0f;
 // Live-tunable PID parameters (default to constexprs above)
 float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
-      windupGuardTemp = WINDUP_GUARD_TEMP;
+      dTauTemp = DTAU_TEMP, windupGuardTemp = WINDUP_GUARD_TEMP;
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;             // HA switch default ON at boot
@@ -268,10 +268,10 @@ static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
                      float dt,       // seconds (0.5 at 2 Hz)
                      float& pvFilt,  // filtered PV (state)
                      float& iSum,    // ?err dt  (state)
-                     float guard) {  // clamp on iTerm (output units)
-
+                     float guard,    // clamp on iTerm (output units)
+                     float dTau = 0.8f) {
     // 1) Error
-    float dTau = 0.8f;    // derivative LPF time const (s)
+    ;                     // derivative LPF time const (s)
     float outMin = 0.0f;  // actuator limits (for cond. integration)
     float outMax = 100.0f;
 
@@ -362,7 +362,7 @@ static void updateTempPID() {
     setTemp = steamFlag ? steamSetpoint : brewSetpoint;
 
     heatPower = calcPID(pGainTemp, iGainTemp, dGainTemp, setTemp, currentTemp, dt, pvFiltTemp,
-                        iStateTemp, windupGuardTemp);
+                        iStateTemp, windupGuardTemp, dTauTemp);
 
     if (heatPower > 100.0f) heatPower = 100.0f;
     if (heatPower < 0.0f) heatPower = 0.0f;
@@ -562,7 +562,7 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
         "pidD=%.2f pump=%.1f mode=%u",
         static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
         (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
-        pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.pumpPowerPercent,
+        pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.dTau, pkt.pumpPowerPercent,
         static_cast<unsigned>(pkt.pumpMode));
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
@@ -601,6 +601,8 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     float newI = clampf(pkt.pidI, 0.0f, 2.0f);
     float newGuard = clampf(pkt.pidGuard, 0.0f, 100.0f);
     float newD = clampf(pkt.pidD, 0.0f, 500.0f);
+    float newDTau = clampf(pkt.dTau, 0.0f, 2.0f);
+
     if (fabsf(newP - pGainTemp) > 0.01f) {
         pGainTemp = newP;
     }
@@ -612,6 +614,9 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     }
     if (fabsf(newD - dGainTemp) > 0.1f) {
         dGainTemp = newD;
+    }
+    if (fabs(newDTau - dTauTemp) > 0.01f) {
+        dTauTemp = newDTau;
     }
 
     float newPump = clampf(pkt.pumpPowerPercent, 0.0f, 100.0f);

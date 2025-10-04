@@ -22,11 +22,12 @@
 
 // Bit flags embedded in EspNowControlPacket::flags.
 #define ESPNOW_CONTROL_FLAG_HEATER 0x01
-#define ESPNOW_CONTROL_FLAG_STEAM  0x02
+#define ESPNOW_CONTROL_FLAG_STEAM 0x02
 
 // Pump operating modes understood by the controller. The display always sends
 // one of these values in EspNowControlPacket::pumpMode.
-typedef enum {
+typedef enum
+{
     ESPNOW_PUMP_MODE_NORMAL = 0,
     ESPNOW_PUMP_MODE_PREINFUSE = 1,
     ESPNOW_PUMP_MODE_MANUAL = 2,
@@ -35,33 +36,35 @@ typedef enum {
 // Packet describing brew/steam state for ESP-NOW transport. This struct must
 // remain byte-for-byte compatible with the legacy implementation so that both
 // ends can cast the payload directly.
-typedef struct __attribute__((packed)) EspNowPacket {
-    uint8_t shotFlag;        //!< 1 if a shot is in progress
-    uint8_t steamFlag;       //!< 1 if the machine is in steam mode
-    uint8_t heaterSwitch;    //!< Heater switch state (1=on)
-    uint32_t shotTimeMs;     //!< Shot duration in milliseconds
-    float shotVolumeMl;      //!< Volume pulled in milliliters
-    float setTempC;          //!< Currently configured temperature setpoint
-    float currentTempC;      //!< Current sensed temperature in °C
-    float pressureBar;       //!< Brew pressure in bar
-    float steamSetpointC;    //!< Steam temperature setpoint in °C
-    float brewSetpointC;     //!< Brew temperature setpoint in °C
+typedef struct __attribute__((packed)) EspNowPacket
+{
+    uint8_t shotFlag;     //!< 1 if a shot is in progress
+    uint8_t steamFlag;    //!< 1 if the machine is in steam mode
+    uint8_t heaterSwitch; //!< Heater switch state (1=on)
+    uint32_t shotTimeMs;  //!< Shot duration in milliseconds
+    float shotVolumeMl;   //!< Volume pulled in milliliters
+    float setTempC;       //!< Currently configured temperature setpoint
+    float currentTempC;   //!< Current sensed temperature in °C
+    float pressureBar;    //!< Brew pressure in bar
+    float steamSetpointC; //!< Steam temperature setpoint in °C
+    float brewSetpointC;  //!< Brew temperature setpoint in °C
 } EspNowPacket;
 
 // Control payload mirrored between Home Assistant, the display and the
 // controller. The first byte must always be ESPNOW_CONTROL_PACKET.
-typedef struct __attribute__((packed)) EspNowControlPacket {
-    uint8_t type;       //!< Constant ESPNOW_CONTROL_PACKET
-    uint8_t flags;      //!< Bitmask of ESPNOW_CONTROL_FLAG_*
-    uint8_t pumpMode;   //!< EspNowPumpMode value
-    uint8_t reserved;   //!< Reserved for future use / alignment
-    uint32_t revision;  //!< Monotonic revision to detect stale commands
+typedef struct __attribute__((packed)) EspNowControlPacket
+{
+    uint8_t type;      //!< Constant ESPNOW_CONTROL_PACKET
+    uint8_t flags;     //!< Bitmask of ESPNOW_CONTROL_FLAG_*
+    uint8_t pumpMode;  //!< EspNowPumpMode value
+    uint8_t reserved;  //!< Reserved for future use / alignment
+    uint32_t revision; //!< Monotonic revision to detect stale commands
     float brewSetpointC;
     float steamSetpointC;
     float pidP;
     float pidI;
     float pidD;
     float pidGuard;
+    float dTau;
     float pumpPowerPercent;
 } EspNowControlPacket;
-
