@@ -100,9 +100,9 @@ constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 // Kp: 15-16 [out/degC]
 // Ki: 0.3-0.5 [out/(degC*s)] -> start at 0.35
 // Kd: 50-70 [out*s/degC] -> start at 60
-// guard: +/-8-+/-12% integral clamp on 0-100% heater
+// guard: clamp integral term on 0-100% heater output (anti-windup)
 constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f,
-                WINDUP_GUARD_TEMP = 10.0f;
+                WINDUP_GUARD_TEMP = 100.0f;
 // Derivative filter time constant (seconds), exposed to HA
 
 dimmerLamp pumpDimmer(PUMP_PIN, ZC_PIN);
