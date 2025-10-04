@@ -75,7 +75,6 @@ static void standby_timer_cb(lv_timer_t *t);
 static void exit_standby_event_cb(lv_event_t *e);
 static void update_standby_clock(void);
 static void switch_to_screen(lv_obj_t *screen);
-static void switch_to_screen_async_cb(void *user_data);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -112,8 +111,6 @@ static lv_obj_t *standby_time_label;
 static lv_timer_t *standby_timer;
 static lv_obj_t *last_non_standby_screen;
 static bool standby_active;
-
-static lv_obj_t *pending_screen_switch;
 
 static lv_obj_t *current_temp_arc;
 static lv_obj_t *set_temp_arc;
@@ -233,7 +230,6 @@ void Lvgl_Example1(void)
   standby_time_label = NULL;
   standby_active = false;
   last_non_standby_screen = NULL;
-  pending_screen_switch = NULL;
 
   Brew_screen_create();
   Menu_screen_create();
@@ -305,7 +301,6 @@ void Lvgl_Example1_close(void)
   standby_screen = NULL;
   active_template = NULL;
   last_non_standby_screen = NULL;
-  pending_screen_switch = NULL;
 
   lv_style_reset(&style_text_muted);
   lv_style_reset(&style_title);
@@ -768,20 +763,6 @@ void LVGL_Exit_Standby(void)
 
 bool LVGL_Is_Standby_Active(void) { return standby_active; }
 
-static void switch_to_screen_async_cb(void *user_data)
-{
-  lv_obj_t *screen = (lv_obj_t *)user_data;
-  pending_screen_switch = NULL;
-
-  if (!screen)
-    return;
-
-  if (lv_scr_act() == screen)
-    return;
-
-  lv_scr_load(screen);
-}
-
 static void switch_to_screen(lv_obj_t *screen)
 {
   if (!screen)
@@ -790,11 +771,7 @@ static void switch_to_screen(lv_obj_t *screen)
   if (lv_scr_act() == screen)
     return;
 
-  if (pending_screen_switch == screen)
-    return;
-
-  pending_screen_switch = screen;
-  lv_async_call(switch_to_screen_async_cb, screen);
+  lv_scr_load(screen);
 }
 
 static void draw_ticks_cb(lv_event_t *e)
