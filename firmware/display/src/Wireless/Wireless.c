@@ -13,6 +13,7 @@
 #include "secrets.h"
 #include "mqtt_topics.h"
 #include "espnow_protocol.h"
+#include "version.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -169,6 +170,7 @@ static uint8_t apply_steam_request(bool steam);
 
 static bool s_mqtt_connected = false;
 static esp_mqtt_client_handle_t s_mqtt = NULL;
+static bool s_pid_d_discovery_published = false;
 
 static bool s_wifi_ready = false;
 static uint8_t s_sta_channel = 0;
@@ -418,6 +420,45 @@ static void publish_bool_topic(const char *topic, bool value) {
     esp_mqtt_client_publish(s_mqtt, topic, value ? "ON" : "OFF", 0, 1, true);
 }
 
+#if defined(MQTT_STATUS) && defined(GAGGIA_ID)
+static void publish_pid_d_discovery(void) {
+    if (!s_mqtt || s_pid_d_discovery_published) return;
+
+    char dev_id[64];
+    snprintf(dev_id, sizeof dev_id, "%s-%s", GAG_TOPIC_ROOT, GAGGIA_ID);
+
+    char topic[128];
+    snprintf(topic, sizeof topic, "homeassistant/number/%s_pid_d/config", dev_id);
+
+    const char *availability = MQTT_STATUS;
+    const char *version = VERSION;
+
+    char payload[512];
+    int written = snprintf(payload, sizeof payload,
+                           "{\"name\":\"PID D\",\"uniq_id\":\"%s_pid_d\","
+                           "\"cmd_t\":\"%s\",\"stat_t\":\"%s\",\"min\":0,\"max\":500,"
+                           "\"step\":0.5,\"mode\":\"auto\",\"avty_t\":\"%s\","
+                           "\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\","
+                           "\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\","
+                           "\"manufacturer\":\"Custom\",\"model\":\"Gagguino\",\"sw_version\":\"%s\"}}",
+                           dev_id, TOPIC_PIDD_CMD, TOPIC_PIDD_STATE, availability, dev_id, version);
+
+    if (written > 0 && written < (int)sizeof(payload)) {
+        int res = esp_mqtt_client_publish(s_mqtt, topic, payload, 0, 1, true);
+        if (res >= 0) {
+            s_pid_d_discovery_published = true;
+            ESP_LOGI(TAG_MQTT, "Published PID D discovery with min=0");
+        } else {
+            ESP_LOGW(TAG_MQTT, "Failed to publish PID D discovery: %d", res);
+        }
+    } else {
+        ESP_LOGW(TAG_MQTT, "PID D discovery payload truncated");
+    }
+}
+#else
+static inline void publish_pid_d_discovery(void) {}
+#endif
+
 static void publish_control_state(void) {
     if (!s_mqtt_connected) return;
     publish_bool_topic(TOPIC_HEATER, s_control.heater);
@@ -462,10 +503,12 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 #ifdef MQTT_STATUS
         esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
 #endif
+        publish_pid_d_discovery();
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGW(TAG_MQTT, "Disconnected");
         s_mqtt_connected = false;
+        s_pid_d_discovery_published = false;
         break;
     case MQTT_EVENT_DATA: {
         char topic[128];
