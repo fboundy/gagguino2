@@ -41,7 +41,7 @@ Getting Started
 Tuning & Behavior
 -----------------
 - Brew setpoint limits: 90–99 °C. Steam setpoint limits: 145–155 °C (default 152 °C).
-- PID defaults (overridable via display/ESP-NOW controls): `P=20.0`, `I=1.0`, `D=100.0`, `Guard=20.0`.
+- PID defaults (overridable via display/ESP-NOW controls): `P=20.0`, `I=1.0`, `D=100.0`, `Guard=100.0`.
 - Pressure: analog read with linear conversion; intercept is auto‑zeroed at boot if near 0 bar.
 - Heater: time‑proportioning window (`PWM_CYCLE`) with dynamic ON time from PID result.
 
