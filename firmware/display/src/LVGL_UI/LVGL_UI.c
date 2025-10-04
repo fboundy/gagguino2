@@ -71,7 +71,6 @@ static void menu_steam_event_cb(lv_event_t *e);
 static void menu_profiles_event_cb(lv_event_t *e);
 static void menu_settings_event_cb(lv_event_t *e);
 static void back_to_menu_event_cb(lv_event_t *e);
-static void back_to_brew_event_cb(lv_event_t *e);
 static void standby_timer_cb(lv_timer_t *t);
 static void exit_standby_event_cb(lv_event_t *e);
 static void update_standby_clock(void);
@@ -111,7 +110,6 @@ static lv_obj_t *standby_time_label;
 static lv_timer_t *standby_timer;
 static lv_obj_t *last_non_standby_screen;
 static bool standby_active;
-static lv_coord_t tab_h_global;
 
 static lv_obj_t *current_temp_arc;
 static lv_obj_t *set_temp_arc;
@@ -212,8 +210,6 @@ void Lvgl_Example1(void)
                 "Using LV_FONT_DEFAULT instead.");
 #endif
   }
-  tab_h_global = 0;
-
   // 设置字体
 
   lv_style_init(&style_text_muted);
@@ -241,7 +237,7 @@ void Lvgl_Example1(void)
   Settings_screen_create();
   Standby_screen_create();
 
-  lv_scr_load(brew_screen);
+  lv_scr_load(menu_screen);
 }
 
 void Lvgl_Example1_close(void)
@@ -445,21 +441,22 @@ static void Brew_screen_create(void)
   brew_screen = brew_template.screen;
   template_set_back_handler(&brew_template, back_to_menu_event_cb, NULL);
 
-  lv_obj_t *parent = brew_template.screen;
+  lv_obj_t *parent = brew_template.content_area ? brew_template.content_area : brew_template.screen;
   lv_obj_set_style_border_width(parent, 0, 0);
 
   const lv_coord_t current_arc_width = 20;
   lv_coord_t disp_w = lv_disp_get_hor_res(NULL);
   lv_coord_t disp_h = lv_disp_get_ver_res(NULL);
-  lv_coord_t meter_base = LV_MIN(disp_w, disp_h - 160);
-  if (meter_base <= 0)
-    meter_base = LV_MIN(disp_w, disp_h);
-  meter_base -= tab_h_global;
-  lv_coord_t meter_size = meter_base;
+  lv_coord_t meter_size = LV_MIN(disp_w, disp_h);
+  if (meter_size > 20)
+    meter_size -= 20;
+  if (meter_size <= 0)
+    meter_size = LV_MIN(disp_w, disp_h);
+  lv_coord_t meter_radius = meter_size / 2;
 
   set_temp_arc = lv_arc_create(parent);
   lv_obj_set_size(set_temp_arc, meter_size, meter_size);
-  lv_obj_align(set_temp_arc, LV_ALIGN_CENTER, 0, tab_h_global / 2 - 30);
+  lv_obj_align(set_temp_arc, LV_ALIGN_CENTER, 0, 0);
   lv_arc_set_range(set_temp_arc, TEMP_ARC_MIN, TEMP_ARC_MAX);
   lv_arc_set_rotation(set_temp_arc, TEMP_ARC_START);
   lv_arc_set_bg_angles(set_temp_arc, 0, TEMP_ARC_SIZE);
@@ -475,7 +472,7 @@ static void Brew_screen_create(void)
 
   current_temp_arc = lv_arc_create(parent);
   lv_obj_set_size(current_temp_arc, meter_size, meter_size);
-  lv_obj_align(current_temp_arc, LV_ALIGN_CENTER, 0, tab_h_global / 2 - 30);
+  lv_obj_align(current_temp_arc, LV_ALIGN_CENTER, 0, 0);
   lv_arc_set_range(current_temp_arc, TEMP_ARC_MIN, TEMP_ARC_MAX);
   lv_arc_set_rotation(current_temp_arc, TEMP_ARC_START);
   lv_arc_set_bg_angles(current_temp_arc, 0, TEMP_ARC_SIZE);
@@ -491,7 +488,7 @@ static void Brew_screen_create(void)
 
   current_pressure_arc = lv_arc_create(parent);
   lv_obj_set_size(current_pressure_arc, meter_size, meter_size);
-  lv_obj_align(current_pressure_arc, LV_ALIGN_CENTER, 0, tab_h_global / 2 - 30);
+  lv_obj_align(current_pressure_arc, LV_ALIGN_CENTER, 0, 0);
   lv_arc_set_range(current_pressure_arc, PRESSURE_ARC_MIN, PRESSURE_ARC_MAX);
   lv_arc_set_rotation(current_pressure_arc, PRESSURE_ARC_START);
   lv_arc_set_bg_angles(current_pressure_arc, 0, PRESSURE_ARC_SIZE);
@@ -507,7 +504,8 @@ static void Brew_screen_create(void)
   lv_arc_set_value(current_pressure_arc, 50);
 
   tick_layer = lv_obj_create(parent);
-  lv_obj_set_size(tick_layer, LV_PCT(100), LV_PCT(100));
+  lv_obj_set_size(tick_layer, meter_size, meter_size);
+  lv_obj_align(tick_layer, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_style_bg_opa(tick_layer, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(tick_layer, 0, 0);
   lv_obj_add_event_cb(tick_layer, draw_ticks_cb, LV_EVENT_DRAW_POST, NULL);
@@ -548,15 +546,25 @@ static void Brew_screen_create(void)
     lv_obj_set_grid_cell(OUT_UNITS, LV_GRID_ALIGN_START, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);   \
   } while (0)
 
-  const lv_coord_t H = lv_disp_get_ver_res(NULL);
+  lv_coord_t row_width = meter_size - 60;
+  if (row_width <= 0)
+    row_width = meter_size;
+  if (row_width <= 0)
+    row_width = LV_MIN(disp_w, disp_h);
+  lv_coord_t top_margin = LV_MAX(current_arc_width, 60);
+  if (top_margin > meter_radius)
+    top_margin = meter_radius;
+  lv_coord_t bottom_margin = LV_MAX(current_arc_width + 20, 110);
+  if (bottom_margin > meter_radius)
+    bottom_margin = meter_radius;
 
   lv_obj_t *row_bottom = lv_obj_create(parent);
   lv_obj_set_style_bg_opa(row_bottom, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(row_bottom, 0, 0);
   lv_obj_clear_flag(row_bottom, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_grid_dsc_array(row_bottom, row_cols, row_rows);
-  lv_obj_set_width(row_bottom, LV_PCT(92));
-  lv_obj_align(row_bottom, LV_ALIGN_CENTER, 0, (H * 5) / 100 - 20);
+  lv_obj_set_width(row_bottom, row_width);
+  lv_obj_align(row_bottom, LV_ALIGN_CENTER, 0, meter_radius - bottom_margin);
 
   MAKE_FIELD(row_bottom, 0, MDI_CLOCK, shot_time_icon, shot_time_label,
              shot_time_units_label, "0.0", "s");
@@ -568,8 +576,8 @@ static void Brew_screen_create(void)
   lv_obj_set_style_border_width(row_top, 0, 0);
   lv_obj_clear_flag(row_top, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_grid_dsc_array(row_top, row_cols, row_rows);
-  lv_obj_set_width(row_top, LV_PCT(92));
-  lv_obj_align(row_top, LV_ALIGN_CENTER, 0, -(H * 10) / 100 - 20);
+  lv_obj_set_width(row_top, row_width);
+  lv_obj_align(row_top, LV_ALIGN_CENTER, 0, -meter_radius + top_margin);
 
   MAKE_FIELD(row_top, 0, MDI_THERMOMETER, temp_icon, temp_label, temp_units_label,
              "0.0", "°C");
@@ -603,7 +611,7 @@ static void Menu_screen_create(void)
 {
   template_init(&menu_template);
   menu_screen = menu_template.screen;
-  template_set_back_handler(&menu_template, back_to_brew_event_cb, NULL);
+  template_set_back_handler(&menu_template, NULL, NULL);
 
   lv_obj_t *content = menu_template.content_area;
   lv_obj_set_style_pad_top(content, 120, 0);
@@ -690,12 +698,6 @@ static void back_to_menu_event_cb(lv_event_t *e)
 {
   (void)e;
   lv_scr_load(menu_screen);
-}
-
-static void back_to_brew_event_cb(lv_event_t *e)
-{
-  (void)e;
-  lv_scr_load(brew_screen);
 }
 
 static void exit_standby_event_cb(lv_event_t *e)
