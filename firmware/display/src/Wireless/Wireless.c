@@ -52,6 +52,8 @@ static char TOPIC_PIDI_STATE[128];
 static char TOPIC_PIDI_CMD[128];
 static char TOPIC_PIDD_STATE[128];
 static char TOPIC_PIDD_CMD[128];
+static char TOPIC_PIDG_STATE[128];
+static char TOPIC_PIDG_CMD[128];
 static char TOPIC_PUMP_POWER_STATE[128];
 static char TOPIC_PUMP_POWER_CMD[128];
 static char TOPIC_PUMP_MODE_STATE[128];
@@ -78,6 +80,8 @@ static inline void build_topics(void) {
     snprintf(TOPIC_PIDI_CMD, sizeof TOPIC_PIDI_CMD, "%s/%s/pid_i/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PIDD_STATE, sizeof TOPIC_PIDD_STATE, "%s/%s/pid_d/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PIDD_CMD, sizeof TOPIC_PIDD_CMD, "%s/%s/pid_d/set", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PIDG_STATE, sizeof TOPIC_PIDG_STATE, "%s/%s/pid_guard/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PIDG_CMD, sizeof TOPIC_PIDG_CMD, "%s/%s/pid_guard/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_STATE, sizeof TOPIC_PUMP_POWER_STATE, "%s/%s/pump_power/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_CMD, sizeof TOPIC_PUMP_POWER_CMD, "%s/%s/pump_power/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_MODE_STATE, sizeof TOPIC_PUMP_MODE_STATE, "%s/%s/pump_mode/state", GAG_TOPIC_ROOT, GAGGIA_ID);
@@ -100,6 +104,7 @@ typedef struct {
     float pidP;
     float pidI;
     float pidD;
+    float pidGuard;
     float pumpPower;
     uint8_t pumpMode;
 } ControlState;
@@ -112,6 +117,7 @@ static const ControlState CONTROL_DEFAULTS = {
     .pidP = 15.0f,
     .pidI = 0.35f,
     .pidD = 60.0f,
+    .pidGuard = 10.0f,
     .pumpPower = 95.0f,
     .pumpMode = ESPNOW_PUMP_MODE_NORMAL,
 };
@@ -129,6 +135,7 @@ static float s_steam_setpoint = NAN;
 static float s_pid_p = NAN;
 static float s_pid_i = NAN;
 static float s_pid_d = NAN;
+static float s_pid_guard = NAN;
 static float s_pump_power = NAN;
 static uint8_t s_pump_mode = ESPNOW_PUMP_MODE_NORMAL;
 static bool s_heater = false;
@@ -142,9 +149,10 @@ typedef enum {
     CONTROL_BOOT_PID_P = 1u << 4,
     CONTROL_BOOT_PID_I = 1u << 5,
     CONTROL_BOOT_PID_D = 1u << 6,
-    CONTROL_BOOT_PUMP_POWER = 1u << 7,
-    CONTROL_BOOT_PUMP_MODE = 1u << 8,
-    CONTROL_BOOT_ALL = (1u << 9) - 1,
+    CONTROL_BOOT_PID_GUARD = 1u << 7,
+    CONTROL_BOOT_PUMP_POWER = 1u << 8,
+    CONTROL_BOOT_PUMP_MODE = 1u << 9,
+    CONTROL_BOOT_ALL = (1u << 10) - 1,
 } ControlBootstrapBit;
 
 static bool s_control_bootstrap_active = false;
@@ -205,6 +213,7 @@ static void control_apply_defaults(void) {
     s_pid_p = s_control.pidP;
     s_pid_i = s_control.pidI;
     s_pid_d = s_control.pidD;
+    s_pid_guard = s_control.pidGuard;
     s_pump_power = s_control.pumpPower;
     s_pump_mode = s_control.pumpMode;
     s_set_temp = s_control.brewSetpoint;
@@ -380,6 +389,7 @@ static void mqtt_subscribe_all(void) {
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDP_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDI_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDD_CMD, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDG_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_POWER_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_MODE_CMD, 1);
     // State mirrors for retained bootstrap
@@ -391,6 +401,7 @@ static void mqtt_subscribe_all(void) {
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDP_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDI_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDD_STATE, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDG_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_POWER_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_MODE_STATE, 1);
 }
@@ -416,6 +427,7 @@ static void publish_control_state(void) {
     publish_float(TOPIC_PIDP_STATE, s_control.pidP, 2);
     publish_float(TOPIC_PIDI_STATE, s_control.pidI, 2);
     publish_float(TOPIC_PIDD_STATE, s_control.pidD, 2);
+    publish_float(TOPIC_PIDG_STATE, s_control.pidGuard, 2);
     publish_float(TOPIC_PUMP_POWER_STATE, s_control.pumpPower, 1);
     char buf[16];
     snprintf(buf, sizeof buf, "%u", (unsigned)s_control.pumpMode);
@@ -450,7 +462,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 #ifdef MQTT_STATUS
         esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
 #endif
-        publish_control_state();
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGW(TAG_MQTT, "Disconnected");
@@ -512,28 +523,45 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             s_steam_setpoint = s_control.steamSetpoint;
         } else if (strcmp(topic, TOPIC_PIDP_STATE) == 0) {
             float v = strtof(payload, NULL);
+            if (v < 0.0f) v = 0.0f;
             if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_P, event->retain, v, s_control.pidP, CONTROL_PID_TOLERANCE)) {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_p -> %s", payload);
                 break;
             }
             s_control.pidP = v;
             s_pid_p = s_control.pidP;
+            if (event->retain) schedule_control_send();
         } else if (strcmp(topic, TOPIC_PIDI_STATE) == 0) {
             float v = strtof(payload, NULL);
+            if (v < 0.0f) v = 0.0f;
             if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_I, event->retain, v, s_control.pidI, CONTROL_PID_TOLERANCE)) {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_i -> %s", payload);
                 break;
             }
             s_control.pidI = v;
             s_pid_i = s_control.pidI;
+            if (event->retain) schedule_control_send();
         } else if (strcmp(topic, TOPIC_PIDD_STATE) == 0) {
             float v = strtof(payload, NULL);
+            if (v < 0.0f) v = 0.0f;
             if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_D, event->retain, v, s_control.pidD, CONTROL_PID_D_TOLERANCE)) {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_d -> %s", payload);
                 break;
             }
             s_control.pidD = v;
             s_pid_d = s_control.pidD;
+            if (event->retain) schedule_control_send();
+        } else if (strcmp(topic, TOPIC_PIDG_STATE) == 0) {
+            float v = strtof(payload, NULL);
+            if (v < 0.0f) v = 0.0f;
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PID_GUARD, event->retain, v, s_control.pidGuard,
+                                               CONTROL_PID_TOLERANCE)) {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pid_guard -> %s", payload);
+                break;
+            }
+            s_control.pidGuard = v;
+            s_pid_guard = s_control.pidGuard;
+            if (event->retain) schedule_control_send();
         } else if (strcmp(topic, TOPIC_PUMP_POWER_STATE) == 0) {
             float v = strtof(payload, NULL);
             if (control_bootstrap_ignore_float(CONTROL_BOOT_PUMP_POWER, event->retain, v, s_control.pumpPower, CONTROL_PUMP_POWER_TOLERANCE)) {
@@ -586,6 +614,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
         } else if (strcmp(topic, TOPIC_PIDP_CMD) == 0) {
             float v = strtof(payload, NULL);
+            if (v < 0.0f) v = 0.0f;
             control_bootstrap_complete();
             if (v != s_control.pidP) {
                 s_control.pidP = v;
@@ -594,6 +623,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
         } else if (strcmp(topic, TOPIC_PIDI_CMD) == 0) {
             float v = strtof(payload, NULL);
+            if (v < 0.0f) v = 0.0f;
             control_bootstrap_complete();
             if (v != s_control.pidI) {
                 s_control.pidI = v;
@@ -602,10 +632,20 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
         } else if (strcmp(topic, TOPIC_PIDD_CMD) == 0) {
             float v = strtof(payload, NULL);
+            if (v < 0.0f) v = 0.0f;
             control_bootstrap_complete();
             if (v != s_control.pidD) {
                 s_control.pidD = v;
                 log_control_float("pid_d", v, 2);
+                handle_control_change();
+            }
+        } else if (strcmp(topic, TOPIC_PIDG_CMD) == 0) {
+            float v = strtof(payload, NULL);
+            if (v < 0.0f) v = 0.0f;
+            control_bootstrap_complete();
+            if (v != s_control.pidGuard) {
+                s_control.pidGuard = v;
+                log_control_float("pid_guard", v, 2);
                 handle_control_change();
             }
         } else if (strcmp(topic, TOPIC_PUMP_POWER_CMD) == 0) {
@@ -796,6 +836,7 @@ static void send_control_packet(void) {
         .pidP = s_control.pidP,
         .pidI = s_control.pidI,
         .pidD = s_control.pidD,
+        .pidGuard = s_control.pidGuard,
         .pumpPowerPercent = s_control.pumpPower,
     };
     if (s_control.heater) pkt.flags |= ESPNOW_CONTROL_FLAG_HEATER;
@@ -808,11 +849,11 @@ static void send_control_packet(void) {
         s_control_dirty = false;
         ESP_LOGI(TAG_ESPNOW,
                  "Control sent rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f pidP=%.2f pidI=%.2f "
-                 "pidD=%.2f pump=%.1f mode=%u",
+                 "pidGuard=%.2f pidD=%.2f pump=%.1f mode=%u",
                  (unsigned)revision, s_control.heater, s_control.steam,
                  (double)s_control.brewSetpoint, (double)s_control.steamSetpoint,
-                 (double)s_control.pidP, (double)s_control.pidI, (double)s_control.pidD,
-                 (double)s_control.pumpPower, (unsigned)s_control.pumpMode);
+                 (double)s_control.pidP, (double)s_control.pidI, (double)s_control.pidGuard,
+                 (double)s_control.pidD, (double)s_control.pumpPower, (unsigned)s_control.pumpMode);
     }
 }
 

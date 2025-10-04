@@ -558,11 +558,11 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     g_lastControlRevision = pkt.revision;
 
     LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f "
-        "pidP=%.2f pidI=%.2f "
+        "pidP=%.2f pidI=%.2f pidGuard=%.2f "
         "pidD=%.2f pump=%.1f mode=%u",
         static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
         (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
-        pkt.pidP, pkt.pidI, pkt.pidD, pkt.pumpPowerPercent, static_cast<unsigned>(pkt.pumpMode));
+        pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.pumpPowerPercent, static_cast<unsigned>(pkt.pumpMode));
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
     if (hv != heaterEnabled) {
@@ -598,12 +598,16 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
 
     float newP = clampf(pkt.pidP, 0.0f, 200.0f);
     float newI = clampf(pkt.pidI, 0.0f, 10.0f);
+    float newGuard = clampf(pkt.pidGuard, 0.0f, 100.0f);
     float newD = clampf(pkt.pidD, 0.0f, 500.0f);
     if (fabsf(newP - pGainTemp) > 0.01f) {
         pGainTemp = newP;
     }
     if (fabsf(newI - iGainTemp) > 0.01f) {
         iGainTemp = newI;
+    }
+    if (fabsf(newGuard - windupGuardTemp) > 0.01f) {
+        windupGuardTemp = newGuard;
     }
     if (fabsf(newD - dGainTemp) > 0.1f) {
         dGainTemp = newD;
