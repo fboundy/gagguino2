@@ -77,6 +77,7 @@ static void exit_standby_event_cb(lv_event_t *e);
 static void update_standby_clock(void);
 static void switch_to_screen(lv_obj_t *screen);
 static void perform_screen_switch(lv_obj_t *screen);
+static void screen_switch_async_cb(void *param);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -111,8 +112,8 @@ static lv_obj_t *standby_time_label;
 static lv_timer_t *standby_timer;
 static lv_obj_t *last_non_standby_screen;
 static bool standby_active;
-static lv_obj_t *volatile requested_screen;
-static volatile bool screen_switch_pending;
+static lv_obj_t *requested_screen;
+static bool screen_switch_pending;
 
 static lv_obj_t *current_temp_arc;
 static lv_obj_t *set_temp_arc;
@@ -791,7 +792,11 @@ static void switch_to_screen(lv_obj_t *screen)
     return;
 
   requested_screen = screen;
+  if (screen_switch_pending)
+    return;
+
   screen_switch_pending = true;
+  lv_async_call(screen_switch_async_cb, NULL);
 }
 
 static void perform_screen_switch(lv_obj_t *screen)
@@ -804,6 +809,15 @@ static void perform_screen_switch(lv_obj_t *screen)
 
   screen_template_t *tmpl = find_template_for_screen(screen);
   apply_template(tmpl);
+}
+
+static void screen_switch_async_cb(void *param)
+{
+  (void)param;
+
+  lv_obj_t *target = requested_screen;
+  screen_switch_pending = false;
+  perform_screen_switch(target);
 }
 
 static void draw_ticks_cb(lv_event_t *e)
@@ -909,13 +923,6 @@ static void draw_ticks_cb(lv_event_t *e)
 
 void example1_increase_lvgl_tick(lv_timer_t *t)
 {
-  if (screen_switch_pending)
-  {
-    lv_obj_t *target = requested_screen;
-    screen_switch_pending = false;
-    perform_screen_switch(target);
-  }
-
   float current = MQTT_GetCurrentTemp();
   float set = MQTT_GetSetTemp();
   float current_p = MQTT_GetCurrentPressure();
