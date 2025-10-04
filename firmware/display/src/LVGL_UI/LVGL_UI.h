@@ -30,3 +30,6 @@ void Backlight_adjustment_event_cb(lv_event_t *e);
 
 void Lvgl_Example1(void);
 void LVGL_Backlight_adjustment(uint8_t Backlight);
+void LVGL_Show_Standby(void);
+void LVGL_Exit_Standby(void);
+bool LVGL_Is_Standby_Active(void);
