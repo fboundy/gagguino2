@@ -74,6 +74,7 @@ static void back_to_menu_event_cb(lv_event_t *e);
 static void standby_timer_cb(lv_timer_t *t);
 static void exit_standby_event_cb(lv_event_t *e);
 static void update_standby_clock(void);
+static void switch_to_screen(lv_obj_t *screen);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -237,7 +238,7 @@ void Lvgl_Example1(void)
   Settings_screen_create();
   Standby_screen_create();
 
-  lv_scr_load(menu_screen);
+  switch_to_screen(menu_screen);
 }
 
 void Lvgl_Example1_close(void)
@@ -406,7 +407,7 @@ static void template_set_back_handler(screen_template_t *tmpl, lv_event_cb_t cb,
   if (cb)
   {
     lv_obj_clear_flag(tmpl->back_btn, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(tmpl->back_btn, cb, LV_EVENT_CLICKED, user_data);
+    lv_obj_add_event_cb(tmpl->back_btn, cb, LV_EVENT_RELEASED, user_data);
   }
   else
   {
@@ -599,7 +600,7 @@ static lv_obj_t *create_menu_button(lv_obj_t *parent, const char *text,
   lv_obj_set_height(btn, 54);
   lv_obj_set_style_border_width(btn, 0, 0);
   lv_obj_set_style_bg_color(btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_RELEASED, NULL);
 
   lv_obj_t *label = lv_label_create(btn);
   lv_label_set_text(label, text);
@@ -673,31 +674,31 @@ static void Standby_screen_create(void)
 static void menu_brew_event_cb(lv_event_t *e)
 {
   (void)e;
-  lv_scr_load(brew_screen);
+  switch_to_screen(brew_screen);
 }
 
 static void menu_steam_event_cb(lv_event_t *e)
 {
   (void)e;
-  lv_scr_load(steam_screen);
+  switch_to_screen(steam_screen);
 }
 
 static void menu_profiles_event_cb(lv_event_t *e)
 {
   (void)e;
-  lv_scr_load(profiles_screen);
+  switch_to_screen(profiles_screen);
 }
 
 static void menu_settings_event_cb(lv_event_t *e)
 {
   (void)e;
-  lv_scr_load(settings_screen);
+  switch_to_screen(settings_screen);
 }
 
 static void back_to_menu_event_cb(lv_event_t *e)
 {
   (void)e;
-  lv_scr_load(menu_screen);
+  switch_to_screen(menu_screen);
 }
 
 static void exit_standby_event_cb(lv_event_t *e)
@@ -741,8 +742,7 @@ void LVGL_Show_Standby(void)
     lv_timer_resume(standby_timer);
 
   update_standby_clock();
-  if (standby_screen)
-    lv_scr_load(standby_screen);
+  switch_to_screen(standby_screen);
 }
 
 void LVGL_Exit_Standby(void)
@@ -757,11 +757,21 @@ void LVGL_Exit_Standby(void)
   lv_obj_t *target = last_non_standby_screen ? last_non_standby_screen : brew_screen;
   if (!target)
     target = brew_screen;
-  if (target)
-    lv_scr_load(target);
+  switch_to_screen(target);
 }
 
 bool LVGL_Is_Standby_Active(void) { return standby_active; }
+
+static void switch_to_screen(lv_obj_t *screen)
+{
+  if (!screen)
+    return;
+
+  if (lv_scr_act() == screen)
+    return;
+
+  lv_scr_load(screen);
+}
 
 static void draw_ticks_cb(lv_event_t *e)
 {
