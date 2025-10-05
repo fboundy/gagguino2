@@ -51,9 +51,10 @@ volatile TickType_t g_last_touch_tick = 0;
 static TickType_t last_heater_on_tick = 0;
 static TickType_t last_zc_change_tick = 0;
 static uint32_t last_zc_count = 0;
-static bool lcd_backlight_off = false;
+static bool standby_mode = false;
 
 #define LCD_INACTIVITY_TIMEOUT  pdMS_TO_TICKS(300000)  /* 5 min inactivity window */
+#define LCD_STANDBY_BACKLIGHT_LEVEL 5
 
 /**
  * @brief Initialize peripheral drivers and start background tasks.
@@ -126,16 +127,18 @@ void app_main(void)
         bool heater_inactive = !heater_on && (now - last_heater_on_tick) >= LCD_INACTIVITY_TIMEOUT;
         bool zc_inactive = (now - last_zc_change_tick) >= LCD_INACTIVITY_TIMEOUT;
 
-        if (!lcd_backlight_off) {
+        if (!standby_mode) {
             if (touch_inactive && (heater_inactive || zc_inactive)) {
-                Set_Backlight(0);
-                lcd_backlight_off = true;
+                LVGL_EnterStandby();
+                Set_Backlight(LCD_STANDBY_BACKLIGHT_LEVEL);
+                standby_mode = true;
             }
         } else {
             bool touch_recent = !touch_inactive;
             if (heater_on || zc_changed || touch_recent) {
+                LVGL_ExitStandby();
                 Set_Backlight(LCD_Backlight);
-                lcd_backlight_off = false;
+                standby_mode = false;
             }
         }
     }
