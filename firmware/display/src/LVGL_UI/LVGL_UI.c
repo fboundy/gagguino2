@@ -334,13 +334,13 @@ static void Menu_create(void)
   lv_obj_set_style_bg_opa(menu_screen, LV_OPA_COVER, 0);
   lv_obj_set_style_text_color(menu_screen, lv_color_white(), 0);
 
-  (void)create_comm_status_row(menu_screen, -30);
+  (void)create_comm_status_row(menu_screen, -45);
 
   lv_obj_t *title = lv_label_create(menu_screen);
-  lv_label_set_text(title, "Menu");
+  lv_label_set_text(title, "Gaggia Classic");
   lv_obj_add_style(title, &style_title, 0);
   lv_obj_set_style_text_color(title, lv_color_white(), 0);
-  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
 
   lv_obj_t *button_grid = lv_obj_create(menu_screen);
   lv_obj_remove_style_all(button_grid);
@@ -559,7 +559,7 @@ static void Status_create(lv_obj_t *parent)
 {
   lv_obj_set_style_border_width(parent, 0, 0);
 
-  comm_status_container = create_comm_status_row(parent, -30);
+  comm_status_container = create_comm_status_row(parent, -45);
 
   const lv_coord_t current_arc_width = 20;
   lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
@@ -717,7 +717,7 @@ static void Status_create(lv_obj_t *parent)
   battery_bar = lv_bar_create(parent);
   /* Make it shorter and thicker */
   lv_obj_set_size(battery_bar, lv_obj_get_width(parent) / 3, 18);
-  lv_obj_align(battery_bar, LV_ALIGN_BOTTOM_MID, 0, -20);
+  lv_obj_align(battery_bar, LV_ALIGN_BOTTOM_MID, 0, -45);
   lv_bar_set_range(battery_bar, 0, 100);
   int batt_init = Battery_GetPercentage();
   lv_bar_set_value(battery_bar, batt_init, LV_ANIM_OFF);
@@ -791,8 +791,8 @@ static void draw_ticks_cb(lv_event_t *e)
         else if (v > TEMP_ARC_MAX)
           v = TEMP_ARC_MAX;
         float angle = TEMP_ARC_START + (v - TEMP_ARC_MIN) *
-                                        TEMP_ARC_SIZE /
-                                        (float)(TEMP_ARC_MAX - TEMP_ARC_MIN);
+                                           TEMP_ARC_SIZE /
+                                           (float)(TEMP_ARC_MAX - TEMP_ARC_MIN);
         float rad = angle * 3.14159265f / 180.0f;
         lv_coord_t len = 20;
         lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
@@ -1086,7 +1086,6 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
       s_syncing_backlight = false;
     }
   }
-
 }
 
 void Backlight_adjustment_event_cb(lv_event_t *e)
@@ -1183,7 +1182,7 @@ void LVGL_EnterStandby(void)
     lv_obj_set_style_text_color(standby_screen, lv_color_white(), 0);
     lv_obj_set_style_pad_all(standby_screen, 0, 0);
 
-    (void)create_comm_status_row(standby_screen, -30);
+    (void)create_comm_status_row(standby_screen, -45);
 
     lv_obj_t *title = lv_label_create(standby_screen);
     lv_label_set_text(title, "Standby");

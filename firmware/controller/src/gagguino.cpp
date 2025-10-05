@@ -101,8 +101,8 @@ constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 // Ki: 0.3-0.5 [out/(degC*s)] -> start at 0.35
 // Kd: 50-70 [out*s/degC] -> start at 60
 // guard: +/-8-+/-12% integral clamp on 0-100% heater
-constexpr float P_GAIN_TEMP = 15.0f, I_GAIN_TEMP = 0.35f, D_GAIN_TEMP = 60.0f, DTAU_TEMP = 0.8f,
-                WINDUP_GUARD_TEMP = 10.0f;
+constexpr float P_GAIN_TEMP = 8.0f, I_GAIN_TEMP = 0.60f, D_GAIN_TEMP = 10.5f, DTAU_TEMP = 0.8f,
+                WINDUP_GUARD_TEMP = 25.0f;
 
 // Derivative filter time constant (seconds), exposed to HA
 
