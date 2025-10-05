@@ -123,6 +123,7 @@ constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 60000;
 constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
 constexpr float PUMP_POWER_DEFAULT = 95.0f;
+constexpr float PRESSURE_SETPOINT_DEFAULT = 0.0f;
 
 const bool debugPrint = true;
 }  // namespace
@@ -189,6 +190,7 @@ int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;             // HA switch default ON at boot
 float pumpPower = PUMP_POWER_DEFAULT;  // Default pump power (%), overridden by display
+float pressureSetpoint = PRESSURE_SETPOINT_DEFAULT;
 
 // Pressure
 int rawPress = 0;
@@ -560,11 +562,11 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
 
     LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f "
         "pidP=%.2f pidI=%.2f pidGuard=%.2f "
-        "pidD=%.2f pump=%.1f mode=%u",
+        "pidD=%.2f pump=%.1f pressure=%.1f mode=%u",
         static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
         (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
         pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.dTau, pkt.pumpPowerPercent,
-        static_cast<unsigned>(pkt.pumpMode));
+        pkt.pressureSetpoint, static_cast<unsigned>(pkt.pumpMode));
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
     if (hv != heaterEnabled) {
@@ -624,6 +626,11 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     if (fabsf(newPump - pumpPower) > 0.1f) {
         pumpPower = newPump;
         applyPumpPower();
+    }
+
+    float newPressureSetpoint = clampf(pkt.pressureSetpoint, 0.0f, 15.0f);
+    if (fabsf(newPressureSetpoint - pressureSetpoint) > 0.1f) {
+        pressureSetpoint = newPressureSetpoint;
     }
 
     pumpMode = static_cast<EspNowPumpMode>(pkt.pumpMode);

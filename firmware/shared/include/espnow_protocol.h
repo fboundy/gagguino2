@@ -67,4 +67,5 @@ typedef struct __attribute__((packed)) EspNowControlPacket
     float pidGuard;
     float dTau;
     float pumpPowerPercent;
+    float pressureSetpoint;
 } EspNowControlPacket;
