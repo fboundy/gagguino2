@@ -62,6 +62,11 @@ static int roller_get_int_value(lv_obj_t *roller);
 static void load_screen(lv_obj_t *screen);
 static void update_standby_time(void);
 static void standby_timer_cb(lv_timer_t *t);
+static bool uk_is_bst_active(const struct tm *utc_tm);
+static bool is_leap_year(int year);
+static int days_in_month(int year, int month);
+static int day_of_week(int year, int month, int day);
+static int last_sunday_of_month(int year, int month);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -329,25 +334,15 @@ static void Menu_create(void)
   lv_obj_set_style_bg_opa(menu_screen, LV_OPA_COVER, 0);
   lv_obj_set_style_text_color(menu_screen, lv_color_white(), 0);
 
-  (void)create_comm_status_row(menu_screen, 10);
+  (void)create_comm_status_row(menu_screen, -30);
 
-  lv_obj_t *container = lv_obj_create(menu_screen);
-  lv_obj_remove_style_all(container);
-  lv_obj_set_size(container, LV_PCT(80), LV_SIZE_CONTENT);
-  lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(container, 0, 0);
-  lv_obj_set_style_pad_row(container, 24, 0);
-  lv_obj_set_flex_flow(container, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
-  lv_obj_align(container, LV_ALIGN_CENTER, 0, 40);
-
-  lv_obj_t *title = lv_label_create(container);
+  lv_obj_t *title = lv_label_create(menu_screen);
   lv_label_set_text(title, "Menu");
   lv_obj_add_style(title, &style_title, 0);
   lv_obj_set_style_text_color(title, lv_color_white(), 0);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
 
-  lv_obj_t *button_grid = lv_obj_create(container);
+  lv_obj_t *button_grid = lv_obj_create(menu_screen);
   lv_obj_remove_style_all(button_grid);
   lv_obj_set_style_bg_opa(button_grid, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(button_grid, 0, 0);
@@ -359,6 +354,7 @@ static void Menu_create(void)
                                    LV_GRID_TEMPLATE_LAST};
   lv_obj_set_grid_dsc_array(button_grid, grid_cols, grid_rows);
   lv_obj_set_size(button_grid, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_align(button_grid, LV_ALIGN_CENTER, 0, 0);
 
   lv_obj_t *brew_btn = create_menu_button(button_grid, 0, 0, MDI_COFFEE, "Brew");
   lv_obj_add_event_cb(brew_btn, open_screen_event_cb, LV_EVENT_CLICKED, brew_screen);
@@ -406,11 +402,17 @@ static void update_standby_time(void)
     return;
 
   time_t now = time(NULL);
-  struct tm tm_info;
-  localtime_r(&now, &tm_info);
+  struct tm utc_tm;
+  gmtime_r(&now, &utc_tm);
+
+  bool in_bst = uk_is_bst_active(&utc_tm);
+  time_t uk_epoch = now + (in_bst ? 3600 : 0);
+
+  struct tm uk_tm;
+  gmtime_r(&uk_epoch, &uk_tm);
 
   char buf[16];
-  strftime(buf, sizeof(buf), "%H:%M", &tm_info);
+  strftime(buf, sizeof(buf), "%H:%M", &uk_tm);
   lv_label_set_text(standby_time_label, buf);
 }
 
@@ -418,6 +420,70 @@ static void standby_timer_cb(lv_timer_t *t)
 {
   (void)t;
   update_standby_time();
+}
+
+static bool uk_is_bst_active(const struct tm *utc_tm)
+{
+  if (!utc_tm)
+    return false;
+
+  int year = utc_tm->tm_year + 1900;
+  int month = utc_tm->tm_mon + 1;
+  int day = utc_tm->tm_mday;
+  int hour = utc_tm->tm_hour;
+
+  if (month < 3 || month > 10)
+    return false;
+  if (month > 3 && month < 10)
+    return true;
+
+  int last_sunday = last_sunday_of_month(year, month);
+
+  if (month == 3)
+  {
+    if (day > last_sunday)
+      return true;
+    if (day < last_sunday)
+      return false;
+    return hour >= 1;
+  }
+
+  /* month == 10 */
+  if (day < last_sunday)
+    return true;
+  if (day > last_sunday)
+    return false;
+  return hour < 1;
+}
+
+static bool is_leap_year(int year)
+{
+  return ((year % 4 == 0) && (year % 100 != 0)) || (year % 400 == 0);
+}
+
+static int days_in_month(int year, int month)
+{
+  static const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (month == 2 && is_leap_year(year))
+    return 29;
+  if (month < 1 || month > 12)
+    return 30;
+  return days[month - 1];
+}
+
+static int day_of_week(int year, int month, int day)
+{
+  static const int offsets[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  if (month < 3)
+    year -= 1;
+  return (year + year / 4 - year / 100 + year / 400 + offsets[month - 1] + day) % 7;
+}
+
+static int last_sunday_of_month(int year, int month)
+{
+  int dim = days_in_month(year, month);
+  int dow = day_of_week(year, month, dim);
+  return dim - dow;
 }
 
 void Lvgl_Example1_close(void)
@@ -1115,18 +1181,22 @@ void LVGL_EnterStandby(void)
     lv_obj_set_style_bg_opa(standby_screen, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(standby_screen, 0, 0);
     lv_obj_set_style_text_color(standby_screen, lv_color_white(), 0);
-    lv_obj_set_style_pad_all(standby_screen, 24, 0);
+    lv_obj_set_style_pad_all(standby_screen, 0, 0);
+
+    (void)create_comm_status_row(standby_screen, -30);
 
     lv_obj_t *title = lv_label_create(standby_screen);
     lv_label_set_text(title, "Standby");
     lv_obj_add_style(title, &style_title, 0);
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
 
     standby_time_label = lv_label_create(standby_screen);
     lv_obj_add_style(standby_time_label, &style_title, 0);
-    lv_obj_set_style_text_font(standby_time_label, font_large, 0);
+    lv_obj_set_style_text_font(standby_time_label, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(standby_time_label, lv_color_white(), 0);
+    const uint16_t zoom = (uint16_t)((80 * LV_IMG_ZOOM_NONE + 24) / 48);
+    lv_obj_set_style_transform_zoom(standby_time_label, zoom, 0);
     lv_obj_align(standby_time_label, LV_ALIGN_CENTER, 0, 0);
   }
 
@@ -1140,6 +1210,7 @@ void LVGL_EnterStandby(void)
 
   standby_active = true;
   update_standby_time();
+  Set_Backlight(5);
   lv_scr_load(standby_screen);
   current_screen = standby_screen;
 }
@@ -1233,7 +1304,7 @@ static lv_obj_t *create_menu_button(lv_obj_t *grid, uint8_t col, uint8_t row,
                                     const char *icon, const char *label)
 {
   lv_obj_t *btn = lv_btn_create(grid);
-  lv_obj_set_size(btn, 150, 150);
+  lv_obj_set_size(btn, 135, 135);
   lv_obj_set_style_border_width(btn, 0, 0);
   lv_obj_set_style_bg_color(btn, lv_palette_main(LV_PALETTE_GREY), 0);
   lv_obj_set_style_radius(btn, 12, 0);
