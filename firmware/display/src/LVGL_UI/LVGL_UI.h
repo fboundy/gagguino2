@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "lvgl.h"
+#include <stdbool.h>
 // #include "demos/lv_demos.h"
 
 #include "LVGL_Driver.h"
@@ -30,3 +31,6 @@ void Backlight_adjustment_event_cb(lv_event_t *e);
 
 void Lvgl_Example1(void);
 void LVGL_Backlight_adjustment(uint8_t Backlight);
+void LVGL_EnterStandby(void);
+void LVGL_ExitStandby(void);
+bool LVGL_IsStandbyActive(void);
