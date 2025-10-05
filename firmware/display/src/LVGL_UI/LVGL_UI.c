@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include "esp_log.h"
 #include "esp_system.h"
@@ -50,9 +51,9 @@ static void open_settings_event_cb(lv_event_t *e);
 static void open_screen_event_cb(lv_event_t *e);
 static void open_menu_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
-static void heater_event_cb(lv_event_t *e);
-static void steam_event_cb(lv_event_t *e);
-static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols);
+static lv_obj_t *create_comm_status_row(lv_obj_t *parent, lv_coord_t y_offset);
+static lv_obj_t *create_menu_button(lv_obj_t *grid, uint8_t col, uint8_t row,
+                                    const char *icon, const char *label);
 static void add_version_label(lv_obj_t *parent);
 static void shot_def_dd_event_cb(lv_event_t *e);
 static void beep_on_shot_btn_event_cb(lv_event_t *e);
@@ -87,9 +88,6 @@ static lv_obj_t *settings_scr;
 static lv_obj_t *steam_screen;
 static lv_obj_t *profiles_screen;
 static lv_obj_t *standby_screen;
-static lv_obj_t *heater_btn;
-static lv_obj_t *steam_btn;
-static lv_obj_t *settings_btn;
 static lv_coord_t tab_h_global;
 
 static lv_obj_t *current_screen;
@@ -124,9 +122,17 @@ static lv_obj_t *shot_duration_roller;
 static lv_obj_t *shot_volume_label;
 static lv_obj_t *shot_volume_roller;
 static lv_obj_t *comm_status_container;
-static lv_obj_t *wifi_status_icon;
-static lv_obj_t *mqtt_status_icon;
-static lv_obj_t *espnow_status_icon;
+typedef struct
+{
+  lv_obj_t *screen;
+  lv_obj_t *wifi;
+  lv_obj_t *mqtt;
+  lv_obj_t *espnow;
+} comm_status_set_t;
+
+#define COMM_STATUS_MAX_SETS 4
+static comm_status_set_t comm_status_sets[COMM_STATUS_MAX_SETS];
+static size_t comm_status_set_count;
 static lv_obj_t *battery_bar;
 static lv_obj_t *battery_label;
 static int last_wifi_state = -1;
@@ -237,6 +243,8 @@ void Lvgl_Example1(void)
   standby_active = false;
   current_screen = NULL;
   last_active_screen = NULL;
+  comm_status_set_count = 0;
+  memset(comm_status_sets, 0, sizeof(comm_status_sets));
 
   lv_obj_set_style_text_font(lv_scr_act(), font_normal, 0);
 
@@ -251,18 +259,6 @@ void Lvgl_Example1(void)
   profiles_screen = create_placeholder_screen("Profiles");
   Menu_create();
   load_screen(menu_screen);
-}
-
-static void heater_event_cb(lv_event_t *e)
-{
-  bool heater = MQTT_GetHeaterState();
-  MQTT_SetHeaterState(!heater);
-}
-
-static void steam_event_cb(lv_event_t *e)
-{
-  bool steam = MQTT_GetSteamState();
-  MQTT_SetSteamState(!steam);
 }
 
 static void open_settings_event_cb(lv_event_t *e)
@@ -333,6 +329,8 @@ static void Menu_create(void)
   lv_obj_set_style_bg_opa(menu_screen, LV_OPA_COVER, 0);
   lv_obj_set_style_text_color(menu_screen, lv_color_white(), 0);
 
+  (void)create_comm_status_row(menu_screen, 10);
+
   lv_obj_t *container = lv_obj_create(menu_screen);
   lv_obj_remove_style_all(container);
   lv_obj_set_size(container, LV_PCT(80), LV_SIZE_CONTENT);
@@ -342,37 +340,37 @@ static void Menu_create(void)
   lv_obj_set_flex_flow(container, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
-  lv_obj_align(container, LV_ALIGN_CENTER, 0, -20);
+  lv_obj_align(container, LV_ALIGN_CENTER, 0, 40);
 
   lv_obj_t *title = lv_label_create(container);
   lv_label_set_text(title, "Menu");
   lv_obj_add_style(title, &style_title, 0);
   lv_obj_set_style_text_color(title, lv_color_white(), 0);
 
-  struct menu_item
-  {
-    const char *label;
-    lv_obj_t *screen;
-  };
+  lv_obj_t *button_grid = lv_obj_create(container);
+  lv_obj_remove_style_all(button_grid);
+  lv_obj_set_style_bg_opa(button_grid, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(button_grid, 0, 0);
+  lv_obj_set_style_pad_row(button_grid, 24, 0);
+  lv_obj_set_style_pad_column(button_grid, 24, 0);
+  static lv_coord_t grid_cols[] = {LV_GRID_CONTENT, LV_GRID_CONTENT,
+                                   LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t grid_rows[] = {LV_GRID_CONTENT, LV_GRID_CONTENT,
+                                   LV_GRID_TEMPLATE_LAST};
+  lv_obj_set_grid_dsc_array(button_grid, grid_cols, grid_rows);
+  lv_obj_set_size(button_grid, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
 
-  const struct menu_item items[] = {{"Brew", brew_screen},
-                                    {"Steam", steam_screen},
-                                    {"Profiles", profiles_screen},
-                                    {"Settings", settings_scr}};
+  lv_obj_t *brew_btn = create_menu_button(button_grid, 0, 0, MDI_COFFEE, "Brew");
+  lv_obj_add_event_cb(brew_btn, open_screen_event_cb, LV_EVENT_CLICKED, brew_screen);
 
-  for (size_t i = 0; i < sizeof(items) / sizeof(items[0]); ++i)
-  {
-    lv_obj_t *btn = lv_btn_create(container);
-    lv_obj_set_size(btn, LV_PCT(100), 70);
-    lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_set_style_bg_color(btn, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_add_event_cb(btn, open_screen_event_cb, LV_EVENT_CLICKED,
-                        items[i].screen);
+  lv_obj_t *steam_btn = create_menu_button(button_grid, 1, 0, MDI_STEAM, "Steam");
+  lv_obj_add_event_cb(steam_btn, open_screen_event_cb, LV_EVENT_CLICKED, steam_screen);
 
-    lv_obj_t *label = lv_label_create(btn);
-    lv_label_set_text(label, items[i].label);
-    lv_obj_center(label);
-  }
+  lv_obj_t *profiles_btn = create_menu_button(button_grid, 0, 1, MDI_MENU, "Profiles");
+  lv_obj_add_event_cb(profiles_btn, open_screen_event_cb, LV_EVENT_CLICKED, profiles_screen);
+
+  lv_obj_t *settings_btn = create_menu_button(button_grid, 1, 1, MDI_COG, "Settings");
+  lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED, NULL);
 
   add_version_label(menu_screen);
 }
@@ -449,9 +447,8 @@ void Lvgl_Example1_close(void)
   shot_time_units_label = NULL;
   shot_volume_units_label = NULL;
   comm_status_container = NULL;
-  wifi_status_icon = NULL;
-  mqtt_status_icon = NULL;
-  espnow_status_icon = NULL;
+  comm_status_set_count = 0;
+  memset(comm_status_sets, 0, sizeof(comm_status_sets));
   last_wifi_state = -1;
   last_mqtt_state = -1;
   last_esp_state = -1;
@@ -496,31 +493,7 @@ static void Status_create(lv_obj_t *parent)
 {
   lv_obj_set_style_border_width(parent, 0, 0);
 
-  comm_status_container = lv_obj_create(parent);
-  lv_obj_remove_style_all(comm_status_container);
-  lv_obj_set_style_bg_opa(comm_status_container, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_pad_all(comm_status_container, 0, 0);
-  lv_obj_set_style_pad_gap(comm_status_container, 12, 0);
-  lv_obj_set_style_border_width(comm_status_container, 0, 0);
-  lv_obj_set_flex_flow(comm_status_container, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(comm_status_container, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_align(comm_status_container, LV_ALIGN_TOP_MID, 0, -30);
-
-  wifi_status_icon = lv_label_create(comm_status_container);
-  lv_obj_set_style_text_font(wifi_status_icon, &mdi_icons_24, 0);
-  lv_label_set_text(wifi_status_icon, MDI_WIFI_OFF);
-  lv_obj_set_style_text_color(wifi_status_icon, lv_palette_main(LV_PALETTE_RED), 0);
-
-  mqtt_status_icon = lv_label_create(comm_status_container);
-  lv_obj_set_style_text_font(mqtt_status_icon, &mdi_icons_24, 0);
-  lv_label_set_text(mqtt_status_icon, MDI_MQTT_OFF);
-  lv_obj_set_style_text_color(mqtt_status_icon, lv_palette_main(LV_PALETTE_RED), 0);
-
-  espnow_status_icon = lv_label_create(comm_status_container);
-  lv_obj_set_style_text_font(espnow_status_icon, &mdi_icons_24, 0);
-  lv_label_set_text(espnow_status_icon, MDI_ESP_NOW_OFF);
-  lv_obj_set_style_text_color(espnow_status_icon, lv_palette_main(LV_PALETTE_RED), 0);
+  comm_status_container = create_comm_status_row(parent, -30);
 
   const lv_coord_t current_arc_width = 20;
   lv_coord_t meter_base = LV_MIN(lv_obj_get_content_width(parent),
@@ -659,73 +632,18 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_move_foreground(row_bottom);
   lv_obj_move_foreground(row_top);
 
-  /* ----------------- Buttons @ 70% with 1% spacing ----------------- */
-  lv_obj_t *ctrl_container = create_aligned_button_container(parent, /*cols=*/4);
-
-  lv_obj_t *menu_btn = lv_btn_create(ctrl_container);
+  /* ----------------- Home button above battery ----------------- */
+  lv_obj_t *menu_btn = lv_btn_create(parent);
   lv_obj_set_size(menu_btn, 80, 80);
   lv_obj_set_style_border_width(menu_btn, 0, 0);
   lv_obj_set_style_bg_color(menu_btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_set_grid_cell(menu_btn, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+  lv_obj_add_flag(menu_btn, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_align(menu_btn, LV_ALIGN_BOTTOM_MID, 0, -70);
+  lv_obj_add_event_cb(menu_btn, open_menu_event_cb, LV_EVENT_CLICKED, NULL);
+
   lv_obj_t *menu_label = lv_label_create(menu_btn);
   lv_label_set_text(menu_label, LV_SYMBOL_HOME);
   lv_obj_center(menu_label);
-  lv_obj_add_event_cb(menu_btn, open_menu_event_cb, LV_EVENT_CLICKED, NULL);
-
-  lv_obj_t *menu_text = lv_label_create(ctrl_container);
-  lv_label_set_text(menu_text, "Menu");
-  lv_obj_set_style_text_color(menu_text, lv_color_white(), 0);
-  lv_obj_set_grid_cell(menu_text, LV_GRID_ALIGN_CENTER, 0, 1, LV_GRID_ALIGN_START, 1, 1);
-
-  heater_btn = lv_btn_create(ctrl_container);
-  lv_obj_set_size(heater_btn, 80, 80);
-  lv_obj_set_style_border_width(heater_btn, 0, 0);
-  lv_obj_set_style_bg_color(heater_btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_set_grid_cell(heater_btn, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);
-  lv_obj_t *heater_label = lv_label_create(heater_btn);
-  lv_obj_set_style_text_font(heater_label, &mdi_icons_40, 0);
-  lv_label_set_text(heater_label, MDI_POWER);
-  lv_obj_center(heater_label);
-  lv_obj_add_event_cb(heater_btn, heater_event_cb, LV_EVENT_CLICKED, NULL);
-
-  lv_obj_t *heater_text = lv_label_create(ctrl_container);
-  lv_label_set_text(heater_text, "Heat");
-  lv_obj_set_style_text_color(heater_text, lv_color_white(), 0);
-  lv_obj_set_grid_cell(heater_text, LV_GRID_ALIGN_CENTER, 1, 1, LV_GRID_ALIGN_START, 1, 1);
-
-  steam_btn = lv_btn_create(ctrl_container);
-  lv_obj_set_size(steam_btn, 80, 80);
-  lv_obj_set_style_border_width(steam_btn, 0, 0);
-  lv_obj_set_style_bg_color(steam_btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_set_grid_cell(steam_btn, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_CENTER, 0, 1);
-  lv_obj_t *steam_label = lv_label_create(steam_btn);
-  lv_obj_set_style_text_font(steam_label, &mdi_icons_40, 0);
-  lv_label_set_text(steam_label, MDI_STEAM);
-  lv_obj_center(steam_label);
-  lv_obj_add_event_cb(steam_btn, steam_event_cb, LV_EVENT_CLICKED, NULL);
-
-  lv_obj_t *steam_text = lv_label_create(ctrl_container);
-  lv_label_set_text(steam_text, "Steam");
-  lv_obj_set_style_text_color(steam_text, lv_color_white(), 0);
-  lv_obj_set_grid_cell(steam_text, LV_GRID_ALIGN_CENTER, 2, 1, LV_GRID_ALIGN_START, 1, 1);
-
-  settings_btn = lv_btn_create(ctrl_container);
-  lv_obj_set_size(settings_btn, 80, 80);
-  lv_obj_set_style_border_width(settings_btn, 0, 0);
-  lv_obj_set_style_bg_color(settings_btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_set_grid_cell(settings_btn, LV_GRID_ALIGN_CENTER, 3, 1, LV_GRID_ALIGN_CENTER, 0, 1);
-  lv_obj_t *settings_label = lv_label_create(settings_btn);
-  lv_obj_set_style_text_font(settings_label, &mdi_icons_40, 0);
-  lv_label_set_text(settings_label, MDI_COG);
-  lv_obj_center(settings_label);
-  lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED, NULL);
-
-  lv_obj_t *settings_text = lv_label_create(ctrl_container);
-  lv_label_set_text(settings_text, "Settings");
-  lv_obj_set_style_text_color(settings_text, lv_color_white(), 0);
-  lv_obj_set_grid_cell(settings_text, LV_GRID_ALIGN_CENTER, 3, 1, LV_GRID_ALIGN_START, 1, 1);
-
-  lv_obj_move_foreground(ctrl_container);
 
   add_version_label(parent);
 
@@ -859,7 +777,6 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   float shot_time = MQTT_GetShotTime();
   float shot_vol = MQTT_GetShotVolume();
   bool heater = MQTT_GetHeaterState();
-  bool steam = MQTT_GetSteamState();
   char buf[32];
 
   set_temp_val = set;
@@ -874,41 +791,55 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   bool espnow_link = Wireless_UsingEspNow();
   int esp_state = espnow_link ? 2 : (espnow_active ? 1 : 0);
 
-  if (wifi_status_icon && wifi_ok != last_wifi_state)
+  if (wifi_ok != last_wifi_state)
   {
-    lv_label_set_text(wifi_status_icon, wifi_ok ? MDI_WIFI_ON : MDI_WIFI_OFF);
-    lv_color_t colour =
-        lv_palette_main(wifi_ok ? LV_PALETTE_GREEN : LV_PALETTE_RED);
-    lv_obj_set_style_text_color(wifi_status_icon, colour, 0);
+    lv_color_t colour = lv_palette_main(wifi_ok ? LV_PALETTE_GREEN : LV_PALETTE_RED);
+    const char *icon_txt = wifi_ok ? MDI_WIFI_ON : MDI_WIFI_OFF;
+    for (size_t i = 0; i < comm_status_set_count; ++i)
+    {
+      if (!comm_status_sets[i].wifi)
+        continue;
+      lv_label_set_text(comm_status_sets[i].wifi, icon_txt);
+      lv_obj_set_style_text_color(comm_status_sets[i].wifi, colour, 0);
+    }
     last_wifi_state = wifi_ok;
   }
 
-  if (mqtt_status_icon && mqtt_ok != last_mqtt_state)
+  if (mqtt_ok != last_mqtt_state)
   {
-    lv_label_set_text(mqtt_status_icon,
-                      mqtt_ok ? MDI_MQTT_ON : MDI_MQTT_OFF);
-    lv_color_t colour =
-        lv_palette_main(mqtt_ok ? LV_PALETTE_GREEN : LV_PALETTE_RED);
-    lv_obj_set_style_text_color(mqtt_status_icon, colour, 0);
+    lv_color_t colour = lv_palette_main(mqtt_ok ? LV_PALETTE_GREEN : LV_PALETTE_RED);
+    const char *icon_txt = mqtt_ok ? MDI_MQTT_ON : MDI_MQTT_OFF;
+    for (size_t i = 0; i < comm_status_set_count; ++i)
+    {
+      if (!comm_status_sets[i].mqtt)
+        continue;
+      lv_label_set_text(comm_status_sets[i].mqtt, icon_txt);
+      lv_obj_set_style_text_color(comm_status_sets[i].mqtt, colour, 0);
+    }
     last_mqtt_state = mqtt_ok;
   }
 
-  if (espnow_status_icon && esp_state != last_esp_state)
+  if (esp_state != last_esp_state)
   {
-    const char *icon = MDI_ESP_NOW_OFF;
+    const char *icon_txt = MDI_ESP_NOW_OFF;
     lv_color_t colour = lv_palette_main(LV_PALETTE_RED);
     if (esp_state == 1)
     {
-      icon = MDI_ESP_NOW_PAIR;
+      icon_txt = MDI_ESP_NOW_PAIR;
       colour = lv_palette_main(LV_PALETTE_YELLOW);
     }
     else if (esp_state == 2)
     {
-      icon = MDI_ESP_NOW_ON;
+      icon_txt = MDI_ESP_NOW_ON;
       colour = lv_palette_main(LV_PALETTE_GREEN);
     }
-    lv_label_set_text(espnow_status_icon, icon);
-    lv_obj_set_style_text_color(espnow_status_icon, colour, 0);
+    for (size_t i = 0; i < comm_status_set_count; ++i)
+    {
+      if (!comm_status_sets[i].espnow)
+        continue;
+      lv_label_set_text(comm_status_sets[i].espnow, icon_txt);
+      lv_obj_set_style_text_color(comm_status_sets[i].espnow, colour, 0);
+    }
     last_esp_state = esp_state;
   }
 
@@ -1090,15 +1021,6 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
     }
   }
 
-  /* buttons */
-  lv_color_t off = lv_palette_main(LV_PALETTE_GREY);
-  lv_color_t on = lv_palette_main(LV_PALETTE_YELLOW);
-  if (heater_btn)
-    lv_obj_set_style_bg_color(heater_btn, heater ? on : off, 0);
-  if (steam_btn)
-    lv_obj_set_style_bg_color(steam_btn, steam ? on : off, 0);
-  if (settings_btn)
-    lv_obj_set_style_bg_color(settings_btn, off, 0);
 }
 
 void Backlight_adjustment_event_cb(lv_event_t *e)
@@ -1248,50 +1170,87 @@ static void add_version_label(lv_obj_t *parent)
   lv_obj_set_style_text_color(ver, lv_color_white(), 0);
   lv_obj_align(ver, LV_ALIGN_BOTTOM_MID, 0, 0);
 }
-/* Create a button container aligned like the main page control row
- * - Centered horizontally
- * - Positioned at ~70% screen height (20% below center)
- * - Grid with given number of columns and 2 rows (icon row + label row)
- * - Ignores parent layout so it works inside grid-based screens
- */
-static lv_obj_t *create_aligned_button_container(lv_obj_t *parent, uint8_t cols)
+static void register_comm_status_icons(lv_obj_t *screen, lv_obj_t *wifi, lv_obj_t *mqtt,
+                                       lv_obj_t *espnow)
 {
-  const lv_coord_t H = lv_disp_get_ver_res(NULL);
-  const lv_coord_t W = lv_disp_get_hor_res(NULL);
+  if (!screen)
+    return;
 
-  lv_obj_t *ctrl_container = lv_obj_create(parent);
-  lv_obj_set_style_bg_opa(ctrl_container, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_border_width(ctrl_container, 0, 0);
-  lv_obj_clear_flag(ctrl_container, LV_OBJ_FLAG_SCROLLABLE);
-  /* Ensure parent layouts (e.g., grid) don't override our alignment */
-  lv_obj_add_flag(ctrl_container, LV_OBJ_FLAG_IGNORE_LAYOUT);
-  lv_obj_set_size(ctrl_container, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-
-  /* Build grid descriptor based on requested column count */
-  static lv_coord_t btn_rows[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t btn_cols_1[] = {LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t btn_cols_2[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t btn_cols_3[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  static lv_coord_t btn_cols_4[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
-  lv_coord_t *cols_dsc = btn_cols_3;
-  switch (cols)
+  for (size_t i = 0; i < comm_status_set_count; ++i)
   {
-  case 1:
-    cols_dsc = btn_cols_1;
-    break;
-  case 2:
-    cols_dsc = btn_cols_2;
-    break;
-  case 4:
-    cols_dsc = btn_cols_4;
-    break;
-  default:
-    cols_dsc = btn_cols_3;
-    break;
+    if (comm_status_sets[i].screen == screen)
+    {
+      comm_status_sets[i].wifi = wifi;
+      comm_status_sets[i].mqtt = mqtt;
+      comm_status_sets[i].espnow = espnow;
+      return;
+    }
   }
-  lv_obj_set_grid_dsc_array(ctrl_container, cols_dsc, btn_rows);
-  lv_obj_set_style_pad_column(ctrl_container, W / 100, 0); /* 1% spacing */
-  lv_obj_set_style_pad_row(ctrl_container, 5, 0);
-  lv_obj_align(ctrl_container, LV_ALIGN_CENTER, 0, (H * 20) / 100); /* ~70% */
-  return ctrl_container;
+
+  if (comm_status_set_count >= COMM_STATUS_MAX_SETS)
+    return;
+
+  comm_status_sets[comm_status_set_count].screen = screen;
+  comm_status_sets[comm_status_set_count].wifi = wifi;
+  comm_status_sets[comm_status_set_count].mqtt = mqtt;
+  comm_status_sets[comm_status_set_count].espnow = espnow;
+  comm_status_set_count++;
+}
+
+static lv_obj_t *create_comm_status_row(lv_obj_t *parent, lv_coord_t y_offset)
+{
+  lv_obj_t *container = lv_obj_create(parent);
+  lv_obj_remove_style_all(container);
+  lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_pad_all(container, 0, 0);
+  lv_obj_set_style_pad_gap(container, 12, 0);
+  lv_obj_set_style_border_width(container, 0, 0);
+  lv_obj_set_flex_flow(container, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(container, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+  lv_obj_align(container, LV_ALIGN_TOP_MID, 0, y_offset);
+
+  lv_obj_t *wifi = lv_label_create(container);
+  lv_obj_set_style_text_font(wifi, &mdi_icons_24, 0);
+  lv_label_set_text(wifi, MDI_WIFI_OFF);
+  lv_obj_set_style_text_color(wifi, lv_palette_main(LV_PALETTE_RED), 0);
+
+  lv_obj_t *mqtt = lv_label_create(container);
+  lv_obj_set_style_text_font(mqtt, &mdi_icons_24, 0);
+  lv_label_set_text(mqtt, MDI_MQTT_OFF);
+  lv_obj_set_style_text_color(mqtt, lv_palette_main(LV_PALETTE_RED), 0);
+
+  lv_obj_t *espnow = lv_label_create(container);
+  lv_obj_set_style_text_font(espnow, &mdi_icons_24, 0);
+  lv_label_set_text(espnow, MDI_ESP_NOW_OFF);
+  lv_obj_set_style_text_color(espnow, lv_palette_main(LV_PALETTE_RED), 0);
+
+  register_comm_status_icons(lv_obj_get_screen(parent), wifi, mqtt, espnow);
+  return container;
+}
+
+static lv_obj_t *create_menu_button(lv_obj_t *grid, uint8_t col, uint8_t row,
+                                    const char *icon, const char *label)
+{
+  lv_obj_t *btn = lv_btn_create(grid);
+  lv_obj_set_size(btn, 150, 150);
+  lv_obj_set_style_border_width(btn, 0, 0);
+  lv_obj_set_style_bg_color(btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_set_style_radius(btn, 12, 0);
+  lv_obj_set_style_pad_all(btn, 12, 0);
+  lv_obj_set_grid_cell(btn, LV_GRID_ALIGN_STRETCH, col, 1, LV_GRID_ALIGN_STRETCH, row, 1);
+  lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t *icon_label = lv_label_create(btn);
+  lv_obj_set_style_text_font(icon_label, &mdi_icons_80, 0);
+  lv_label_set_text(icon_label, icon);
+  lv_obj_set_style_text_color(icon_label, lv_color_white(), 0);
+
+  lv_obj_t *text_label = lv_label_create(btn);
+  lv_label_set_text(text_label, label);
+  lv_obj_set_style_text_color(text_label, lv_color_white(), 0);
+
+  return btn;
 }
