@@ -134,8 +134,7 @@ void app_main(void)
                 standby_mode = true;
             }
         } else {
-            bool touch_recent = !touch_inactive;
-            if (heater_on || zc_changed || touch_recent) {
+            if (!touch_inactive) {
                 LVGL_ExitStandby();
                 Set_Backlight(LCD_Backlight);
                 standby_mode = false;
