@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "lvgl.h"
+#include <stdbool.h>
 // #include "demos/lv_demos.h"
 
 #include "LVGL_Driver.h"
@@ -10,6 +11,7 @@
 #include "ST7701S.h"
 #include "fonts/mdi_icons_24.h"
 #include "fonts/mdi_icons_40.h"
+#include "fonts/mdi_icons_80.h"
 
 #define EXAMPLE1_LVGL_TICK_PERIOD_MS 1000
 #define TEMP_ARC_START 120
@@ -30,3 +32,6 @@ void Backlight_adjustment_event_cb(lv_event_t *e);
 
 void Lvgl_Example1(void);
 void LVGL_Backlight_adjustment(uint8_t Backlight);
+void LVGL_EnterStandby(void);
+void LVGL_ExitStandby(void);
+bool LVGL_IsStandbyActive(void);
