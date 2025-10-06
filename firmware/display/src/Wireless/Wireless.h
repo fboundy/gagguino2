@@ -16,12 +16,14 @@ void Wireless_Init(void);
 void WIFI_Init(void *arg);
 // MQTT
 void MQTT_Start(void);
+void MQTT_Stop(void);
 esp_mqtt_client_handle_t MQTT_GetClient(void);
 int MQTT_Publish(const char *topic, const char *payload, int qos, bool retain);
 float MQTT_GetCurrentTemp(void);
 float MQTT_GetSetTemp(void);
 float MQTT_GetCurrentPressure(void);
 float MQTT_GetSetPressure(void);
+bool MQTT_GetPumpPressureMode(void);
 float MQTT_GetShotTime(void);
 float MQTT_GetShotVolume(void);
 uint32_t MQTT_GetZcCount(void);
@@ -29,6 +31,8 @@ bool MQTT_GetHeaterState(void);
 void MQTT_SetHeaterState(bool state);
 bool MQTT_GetSteamState(void);
 void MQTT_SetSteamState(bool state);
+
+void Wireless_SetStandbyMode(bool standby);
 
 bool Wireless_UsingEspNow(void);
 bool Wireless_IsMQTTConnected(void);

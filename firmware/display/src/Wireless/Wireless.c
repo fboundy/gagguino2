@@ -64,6 +64,10 @@ static char TOPIC_PRESSURE_SETPOINT_STATE[128];
 static char TOPIC_PRESSURE_SETPOINT_CMD[128];
 static char TOPIC_PUMP_MODE_STATE[128];
 static char TOPIC_PUMP_MODE_CMD[128];
+static char TOPIC_PRESSURE_SETPOINT_STATE[128];
+static char TOPIC_PRESSURE_SETPOINT_CMD[128];
+static char TOPIC_PUMP_PRESSURE_MODE_STATE[128];
+static char TOPIC_PUMP_PRESSURE_MODE_CMD[128];
 
 static inline void build_topics(void)
 {
@@ -95,6 +99,14 @@ static inline void build_topics(void)
     snprintf(TOPIC_PUMP_POWER_CMD, sizeof TOPIC_PUMP_POWER_CMD, "%s/%s/pump_power/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_MODE_STATE, sizeof TOPIC_PUMP_MODE_STATE, "%s/%s/pump_mode/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_MODE_CMD, sizeof TOPIC_PUMP_MODE_CMD, "%s/%s/pump_mode/set", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PRESSURE_SETPOINT_STATE, sizeof TOPIC_PRESSURE_SETPOINT_STATE, "%s/%s/pressure_setpoint/state", GAG_TOPIC_ROOT,
+             GAGGIA_ID);
+    snprintf(TOPIC_PRESSURE_SETPOINT_CMD, sizeof TOPIC_PRESSURE_SETPOINT_CMD, "%s/%s/pressure_setpoint/set", GAG_TOPIC_ROOT,
+             GAGGIA_ID);
+    snprintf(TOPIC_PUMP_PRESSURE_MODE_STATE, sizeof TOPIC_PUMP_PRESSURE_MODE_STATE,
+             "%s/%s/pump_pressure_mode/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PUMP_PRESSURE_MODE_CMD, sizeof TOPIC_PUMP_PRESSURE_MODE_CMD, "%s/%s/pump_pressure_mode/set", GAG_TOPIC_ROOT,
+             GAGGIA_ID);
 }
 
 static inline bool parse_bool_str(const char *s)
@@ -120,6 +132,8 @@ typedef struct
     float pumpPower;
     float pressureSetpoint;
     uint8_t pumpMode;
+    float pressureSetpoint;
+    bool pumpPressureMode;
 } ControlState;
 
 static const ControlState CONTROL_DEFAULTS = {
@@ -135,6 +149,8 @@ static const ControlState CONTROL_DEFAULTS = {
     .pumpPower = 95.0f,
     .pressureSetpoint = 0.0f,
     .pumpMode = ESPNOW_PUMP_MODE_NORMAL,
+    .pressureSetpoint = 9.0f,
+    .pumpPressureMode = false,
 };
 
 static ControlState s_control;
@@ -154,6 +170,8 @@ static float s_pid_guard = NAN;
 static float s_dtau = NAN;
 static float s_pump_power = NAN;
 static uint8_t s_pump_mode = ESPNOW_PUMP_MODE_NORMAL;
+static float s_pressure_setpoint = NAN;
+static bool s_pump_pressure_mode = false;
 static bool s_heater = false;
 static bool s_steam = false;
 
@@ -169,9 +187,10 @@ typedef enum
     CONTROL_BOOT_PID_GUARD = 1u << 7,
     CONTROL_BOOT_DTAU = 1u << 8,
     CONTROL_BOOT_PUMP_POWER = 1u << 9,
-    CONTROL_BOOT_PRESSURE_SETPOINT = 1u << 10,
-    CONTROL_BOOT_PUMP_MODE = 1u << 11,
-    CONTROL_BOOT_ALL = (1u << 12) - 1,
+    CONTROL_BOOT_PUMP_MODE = 1u << 10,
+    CONTROL_BOOT_PRESSURE_SETPOINT = 1u << 11,
+    CONTROL_BOOT_PUMP_PRESSURE_MODE = 1u << 12,
+    CONTROL_BOOT_ALL = (1u << 13) - 1,
 } ControlBootstrapBit;
 
 static bool s_control_bootstrap_active = false;
@@ -188,6 +207,9 @@ static uint8_t apply_steam_request(bool steam);
 
 static bool s_mqtt_connected = false;
 static esp_mqtt_client_handle_t s_mqtt = NULL;
+static bool s_mqtt_enabled = true;
+static bool s_standby_suppressed = false;
+static bool s_restore_heater_on_exit = false;
 
 static bool s_wifi_ready = false;
 static uint8_t s_sta_channel = 0;
@@ -215,7 +237,9 @@ static const uint8_t s_broadcast_addr[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xF
 #define CONTROL_TEMP_TOLERANCE 0.05f
 #define CONTROL_PID_TOLERANCE 0.005f
 #define CONTROL_PUMP_POWER_TOLERANCE 0.05f
-#define CONTROL_PRESSURE_SETPOINT_TOLERANCE 0.1f
+#define CONTROL_PRESSURE_TOLERANCE 0.05f
+#define CONTROL_PRESSURE_MIN 0.0f
+#define CONTROL_PRESSURE_MAX 12.0f
 #define STEAM_STATE_CHANGED_FLAG 0x01u
 #define HEATER_STATE_CHANGED_FLAG 0x02u
 
@@ -238,6 +262,8 @@ static void control_apply_defaults(void)
     s_dtau = s_control.dTau,
     s_pump_power = s_control.pumpPower;
     s_pump_mode = s_control.pumpMode;
+    s_pressure_setpoint = s_control.pressureSetpoint;
+    s_pump_pressure_mode = s_control.pumpPressureMode;
     s_set_temp = s_control.brewSetpoint;
     s_control_bootstrap_active = false;
     s_control_bootstrap_mask = 0;
@@ -446,6 +472,8 @@ static void mqtt_subscribe_all(void)
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_POWER_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_MODE_CMD, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_CMD, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_PRESSURE_MODE_CMD, 1);
     // State mirrors for retained bootstrap
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_HEATER, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_STEAM, 1);
@@ -460,6 +488,8 @@ static void mqtt_subscribe_all(void)
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_POWER_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_MODE_STATE, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_STATE, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_PRESSURE_MODE_STATE, 1);
 }
 
 static void publish_float(const char *topic, float value, uint8_t decimals)
@@ -484,6 +514,8 @@ static bool s_pid_i_discovery_published = false;
 static bool s_pid_d_discovery_published = false;
 static bool s_pid_g_discovery_published = false;
 static bool s_dtau_discovery_published = false;
+static bool s_pressure_setpoint_discovery_published = false;
+static bool s_pump_pressure_mode_discovery_published = false;
 
 static bool publish_pid_number_discovery(const char *name, const char *suffix, const char *cmd_topic,
                                          const char *state_topic, float min, float max, float step,
@@ -530,6 +562,48 @@ static bool publish_pid_number_discovery(const char *name, const char *suffix, c
     return false;
 }
 
+static bool publish_switch_discovery(const char *name, const char *suffix, const char *cmd_topic,
+                                     const char *state_topic, bool *published_flag)
+{
+    if (!s_mqtt || *published_flag)
+        return false;
+
+    char dev_id[64];
+    snprintf(dev_id, sizeof dev_id, "%s-%s", GAG_TOPIC_ROOT, GAGGIA_ID);
+
+    char topic[128];
+    snprintf(topic, sizeof topic, "homeassistant/switch/%s_%s/config", dev_id, suffix);
+
+    const char *availability = MQTT_STATUS;
+    const char *version = VERSION;
+
+    char payload[512];
+    int written = snprintf(payload, sizeof payload,
+                           "{\"name\":\"%s\",\"uniq_id\":\"%s_%s\",\"cmd_t\":\"%s\",\"stat_t\":\"%s\","
+                           "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"%s\",\"pl_avail\":\"online\","
+                           "\"pl_not_avail\":\"offline\",\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\","
+                           "\"manufacturer\":\"Custom\",\"model\":\"Gagguino\",\"sw_version\":\"%s\"}}",
+                           name, dev_id, suffix, cmd_topic, state_topic, availability, dev_id, version);
+
+    if (written > 0 && written < (int)sizeof(payload))
+    {
+        int res = esp_mqtt_client_publish(s_mqtt, topic, payload, 0, 1, true);
+        if (res >= 0)
+        {
+            *published_flag = true;
+            ESP_LOGI(TAG_MQTT, "Published %s discovery", name);
+            return true;
+        }
+        ESP_LOGW(TAG_MQTT, "Failed to publish %s discovery: %d", name, res);
+    }
+    else
+    {
+        ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+    }
+
+    return false;
+}
+
 static void publish_pid_discovery(void)
 {
     publish_pid_number_discovery("PID P", "pid_p", TOPIC_PIDP_CMD, TOPIC_PIDP_STATE, 0.0f, 100.0f, 0.1f,
@@ -542,6 +616,11 @@ static void publish_pid_discovery(void)
                                  &s_pid_g_discovery_published);
     publish_pid_number_discovery("PID dTau", "pid_dtau", TOPIC_DTAU_CMD, TOPIC_DTAU_STATE, 0.0f, 2.0f, 0.05f,
                                  &s_dtau_discovery_published);
+    publish_pid_number_discovery("Pressure Setpoint", "pressure_setpoint", TOPIC_PRESSURE_SETPOINT_CMD,
+                                 TOPIC_PRESSURE_SETPOINT_STATE, CONTROL_PRESSURE_MIN, CONTROL_PRESSURE_MAX, 0.1f,
+                                 &s_pressure_setpoint_discovery_published);
+    publish_switch_discovery("Pump Pressure Mode", "pump_pressure_mode", TOPIC_PUMP_PRESSURE_MODE_CMD,
+                             TOPIC_PUMP_PRESSURE_MODE_STATE, &s_pump_pressure_mode_discovery_published);
 }
 
 static inline void reset_pid_discovery_flags(void)
@@ -551,6 +630,8 @@ static inline void reset_pid_discovery_flags(void)
     s_pid_d_discovery_published = false;
     s_pid_g_discovery_published = false;
     s_dtau_discovery_published = false;
+    s_pressure_setpoint_discovery_published = false;
+    s_pump_pressure_mode_discovery_published = false;
 }
 #else
 static inline void publish_pid_discovery(void) {}
@@ -575,6 +656,8 @@ static void publish_control_state(void)
     char buf[16];
     snprintf(buf, sizeof buf, "%u", (unsigned)s_control.pumpMode);
     esp_mqtt_client_publish(s_mqtt, TOPIC_PUMP_MODE_STATE, buf, 0, 1, true);
+    publish_float(TOPIC_PRESSURE_SETPOINT_STATE, s_control.pressureSetpoint, 1);
+    publish_bool_topic(TOPIC_PUMP_PRESSURE_MODE_STATE, s_control.pumpPressureMode);
 }
 
 static void handle_control_change(void)
@@ -807,6 +890,34 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             s_control.pumpMode = v;
             s_pump_mode = s_control.pumpMode;
         }
+        else if (strcmp(topic, TOPIC_PRESSURE_SETPOINT_STATE) == 0)
+        {
+            float v = strtof(payload, NULL);
+            if (v < CONTROL_PRESSURE_MIN)
+                v = CONTROL_PRESSURE_MIN;
+            if (v > CONTROL_PRESSURE_MAX)
+                v = CONTROL_PRESSURE_MAX;
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PRESSURE_SETPOINT, event->retain, v, s_control.pressureSetpoint,
+                                               CONTROL_PRESSURE_TOLERANCE))
+            {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pressure_setpoint -> %s", payload);
+                break;
+            }
+            s_control.pressureSetpoint = v;
+            s_pressure_setpoint = s_control.pressureSetpoint;
+        }
+        else if (strcmp(topic, TOPIC_PUMP_PRESSURE_MODE_STATE) == 0)
+        {
+            bool v = parse_bool_str(payload);
+            if (control_bootstrap_ignore_bool(CONTROL_BOOT_PUMP_PRESSURE_MODE, event->retain, v,
+                                              s_control.pumpPressureMode))
+            {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pump_pressure_mode -> %s", payload);
+                break;
+            }
+            s_control.pumpPressureMode = v;
+            s_pump_pressure_mode = s_control.pumpPressureMode;
+        }
         else if (strcmp(topic, TOPIC_HEATER_SET) == 0)
         {
             bool hv = parse_bool_str(payload);
@@ -956,6 +1067,34 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 handle_control_change();
             }
         }
+        else if (strcmp(topic, TOPIC_PRESSURE_SETPOINT_CMD) == 0)
+        {
+            float v = strtof(payload, NULL);
+            if (v < CONTROL_PRESSURE_MIN)
+                v = CONTROL_PRESSURE_MIN;
+            else if (v > CONTROL_PRESSURE_MAX)
+                v = CONTROL_PRESSURE_MAX;
+            control_bootstrap_complete();
+            if (!float_equals(v, s_control.pressureSetpoint, CONTROL_PRESSURE_TOLERANCE))
+            {
+                s_control.pressureSetpoint = v;
+                s_pressure_setpoint = v;
+                log_control_float("pressure_setpoint", v, 1);
+                handle_control_change();
+            }
+        }
+        else if (strcmp(topic, TOPIC_PUMP_PRESSURE_MODE_CMD) == 0)
+        {
+            bool v = parse_bool_str(payload);
+            control_bootstrap_complete();
+            if (v != s_control.pumpPressureMode)
+            {
+                s_control.pumpPressureMode = v;
+                s_pump_pressure_mode = v;
+                log_control_bool("pump_pressure_mode", v);
+                handle_control_change();
+            }
+        }
         break;
     }
     default:
@@ -1001,6 +1140,19 @@ void MQTT_Start(void)
 #else
     (void)s_wifi_ready;
     ESP_LOGW(TAG_MQTT, "MQTT disabled (host/port missing)");
+#endif
+}
+
+void MQTT_Stop(void)
+{
+#if defined(MQTT_HOST) && defined(MQTT_PORT)
+    if (!s_mqtt)
+        return;
+    esp_mqtt_client_stop(s_mqtt);
+    esp_mqtt_client_destroy(s_mqtt);
+    s_mqtt = NULL;
+    s_mqtt_connected = false;
+    reset_pid_discovery_flags();
 #endif
 }
 
@@ -1167,12 +1319,14 @@ static void send_control_packet(void)
         .pidGuard = s_control.pidGuard,
         .dTau = s_control.dTau,
         .pumpPowerPercent = s_control.pumpPower,
-        .pressureSetpoint = s_control.pressureSetpoint,
+        .pressureSetpointBar = s_control.pressureSetpoint,
     };
     if (s_control.heater)
         pkt.flags |= ESPNOW_CONTROL_FLAG_HEATER;
     if (s_control.steam)
         pkt.flags |= ESPNOW_CONTROL_FLAG_STEAM;
+    if (s_control.pumpPressureMode)
+        pkt.flags |= ESPNOW_CONTROL_FLAG_PUMP_PRESSURE;
 
     esp_err_t err = esp_now_send(s_controller_peer.peer_addr, (const uint8_t *)&pkt, sizeof(pkt));
     if (err != ESP_OK)
@@ -1184,12 +1338,13 @@ static void send_control_packet(void)
         s_control_dirty = false;
         ESP_LOGI(TAG_ESPNOW,
                  "Control sent rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f pidP=%.2f pidI=%.2f "
-                 "pidGuard=%.2f pidD=%.2f dTau=%0.2f pump=%.1f mode=%u",
+                 "pidGuard=%.2f pidD=%.2f dTau=%0.2f pump=%.1f mode=%u pressSet=%.1f pressMode=%d",
                  (unsigned)revision, s_control.heater, s_control.steam,
                  (double)s_control.brewSetpoint, (double)s_control.steamSetpoint,
                  (double)s_control.pidP, (double)s_control.pidI, (double)s_control.pidGuard,
                  (double)s_control.pidD, (double)s_control.dTau, (double)s_control.pumpPower,
-                 (double)s_control.pressureSetpoint, (unsigned)s_control.pumpMode);
+                 (unsigned)s_control.pumpMode, (double)s_control.pressureSetpoint,
+                 s_control.pumpPressureMode ? 1 : 0);
     }
 }
 
@@ -1211,6 +1366,8 @@ static void publish_sensor_to_mqtt(const EspNowPacket *pkt)
     publish_bool_topic(TOPIC_STEAM, pkt->steamFlag != 0);
     publish_float(TOPIC_BREW_STATE, pkt->brewSetpointC, 1);
     publish_float(TOPIC_STEAM_STATE, pkt->steamSetpointC, 1);
+    publish_float(TOPIC_PRESSURE_SETPOINT_STATE, pkt->pressureSetpointBar, 1);
+    publish_bool_topic(TOPIC_PUMP_PRESSURE_MODE_STATE, pkt->pumpPressureMode != 0);
 }
 
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int data_len)
@@ -1247,6 +1404,8 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
         s_steam = pkt->steamFlag != 0;
         s_brew_setpoint = pkt->brewSetpointC;
         s_steam_setpoint = pkt->steamSetpointC;
+        s_pressure_setpoint = pkt->pressureSetpointBar;
+        s_pump_pressure_mode = pkt->pumpPressureMode != 0;
         publish_sensor_to_mqtt(pkt);
         if (info)
         {
@@ -1274,7 +1433,7 @@ static void Wireless_Task(void *arg)
     const TickType_t delay = pdMS_TO_TICKS(50);
     while (1)
     {
-        if (s_wifi_ready && !s_mqtt)
+        if (s_wifi_ready && !s_mqtt && s_mqtt_enabled)
         {
             MQTT_Start();
         }
@@ -1310,13 +1469,45 @@ static void Wireless_Task(void *arg)
     }
 }
 
+void Wireless_SetStandbyMode(bool standby)
+{
+    if (standby)
+    {
+        if (s_standby_suppressed)
+            return;
+        s_standby_suppressed = true;
+        s_mqtt_enabled = false;
+        s_restore_heater_on_exit = s_control.heater;
+        if (s_control.heater)
+        {
+            MQTT_SetHeaterState(false);
+        }
+        MQTT_Stop();
+        return;
+    }
+
+    if (!s_standby_suppressed)
+        return;
+
+    s_standby_suppressed = false;
+    s_mqtt_enabled = true;
+    bool restore = s_restore_heater_on_exit;
+    s_restore_heater_on_exit = false;
+    if (restore)
+    {
+        MQTT_SetHeaterState(true);
+    }
+    MQTT_Start();
+}
+
 // -----------------------------------------------------------------------------
 // Public getters/setters used by the UI layer
 // -----------------------------------------------------------------------------
 float MQTT_GetCurrentTemp(void) { return s_current_temp; }
 float MQTT_GetSetTemp(void) { return s_set_temp; }
 float MQTT_GetCurrentPressure(void) { return s_pressure; }
-float MQTT_GetSetPressure(void) { return s_pressure; }
+float MQTT_GetSetPressure(void) { return s_pressure_setpoint; }
+bool MQTT_GetPumpPressureMode(void) { return s_pump_pressure_mode; }
 float MQTT_GetShotTime(void) { return s_shot_time; }
 float MQTT_GetShotVolume(void) { return s_shot_volume; }
 uint32_t MQTT_GetZcCount(void) { return s_zc_count; }
