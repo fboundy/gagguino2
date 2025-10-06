@@ -130,12 +130,14 @@ void app_main(void)
         if (!standby_mode) {
             if (touch_inactive && (heater_inactive || zc_inactive)) {
                 LVGL_EnterStandby();
+                Wireless_SetStandbyMode(true);
                 Set_Backlight(LCD_STANDBY_BACKLIGHT_LEVEL);
                 standby_mode = true;
             }
         } else {
             if (!touch_inactive) {
                 LVGL_ExitStandby();
+                Wireless_SetStandbyMode(false);
                 Set_Backlight(LCD_Backlight);
                 standby_mode = false;
             }

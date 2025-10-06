@@ -123,6 +123,10 @@ constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 60000;
 constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
 constexpr float PUMP_POWER_DEFAULT = 95.0f;
+constexpr float PRESSURE_SETPOINT_DEFAULT = 9.0f;
+constexpr float PRESSURE_SETPOINT_MIN = 0.0f;
+constexpr float PRESSURE_SETPOINT_MAX = 12.0f;
+constexpr float PRESSURE_LIMIT_TOL = 0.1f;
 
 const bool debugPrint = true;
 }  // namespace
@@ -189,6 +193,8 @@ int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;             // HA switch default ON at boot
 float pumpPower = PUMP_POWER_DEFAULT;  // Default pump power (%), overridden by display
+float pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;  // Target brew pressure in bar
+bool pumpPressureModeEnabled = false;  // When true limit pump power to pressure setpoint
 
 // Pressure
 int rawPress = 0;
@@ -403,8 +409,26 @@ static inline float clampf(float v, float lo, float hi) {
  * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
  */
 static void applyPumpPower() {
-    float clamped = clampf(pumpPower, 0.0f, 100.0f);
-    int percent = static_cast<int>(lroundf(clamped));
+    float requested = clampf(pumpPower, 0.0f, 100.0f);
+    float applied = requested;
+
+    if (pumpPressureModeEnabled) {
+        float limit = clampf(pressureSetpointBar, PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX);
+        float sensed = lastPress;
+        if (limit <= 0.0f) {
+            applied = 0.0f;
+        } else if (sensed > (limit + PRESSURE_LIMIT_TOL)) {
+            if (sensed > 0.1f) {
+                float ratio = (limit + PRESSURE_LIMIT_TOL) / sensed;
+                ratio = clampf(ratio, 0.0f, 1.0f);
+                applied = requested * ratio;
+            } else {
+                applied = 0.0f;
+            }
+        }
+    }
+
+    int percent = static_cast<int>(lroundf(applied));
     pumpDimmer.setPower(percent);
     pumpDimmer.setState(percent > 0 ? ON : OFF);
 }
@@ -422,6 +446,10 @@ static void updatePressure() {
     pressBuffIdx++;
     if (pressBuffIdx >= PRESS_BUFF_SIZE) pressBuffIdx = 0;
     lastPress = pressSum / PRESS_BUFF_SIZE;
+
+    if (pumpPressureModeEnabled) {
+        applyPumpPower();
+    }
 }
 
 /**
@@ -526,6 +554,8 @@ static void revertToSafeDefaults() {
         LOG("ESP-NOW: Heater default -> ON");
     }
     pumpPower = PUMP_POWER_DEFAULT;
+    pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;
+    pumpPressureModeEnabled = false;
     applyPumpPower();
     pumpMode = ESPNOW_PUMP_MODE_NORMAL;
     steamDispFlag = false;
@@ -546,6 +576,8 @@ static void sendEspNowPacket() {
     pkt.pressureBar = pressNow;
     pkt.steamSetpointC = steamSetpoint;
     pkt.brewSetpointC = brewSetpoint;
+    pkt.pressureSetpointBar = pressureSetpointBar;
+    pkt.pumpPressureMode = pumpPressureModeEnabled ? 1 : 0;
     const uint8_t* dest = g_haveDisplayPeer ? g_displayMac : nullptr;
     esp_err_t err = esp_now_send(dest, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
     if (err != ESP_OK) {
@@ -560,11 +592,12 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
 
     LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f "
         "pidP=%.2f pidI=%.2f pidGuard=%.2f "
-        "pidD=%.2f pump=%.1f mode=%u",
+        "pidD=%.2f pump=%.1f mode=%u pressSet=%.1f pressMode=%d",
         static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
         (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
         pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.dTau, pkt.pumpPowerPercent,
-        static_cast<unsigned>(pkt.pumpMode));
+        static_cast<unsigned>(pkt.pumpMode), pkt.pressureSetpointBar,
+        (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_PRESSURE) ? 1 : 0);
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
     if (hv != heaterEnabled) {
@@ -627,6 +660,20 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     }
 
     pumpMode = static_cast<EspNowPumpMode>(pkt.pumpMode);
+
+    float newPressureSet = clampf(pkt.pressureSetpointBar, PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX);
+    if (fabsf(newPressureSet - pressureSetpointBar) > 0.01f) {
+        pressureSetpointBar = newPressureSet;
+        LOG("ESP-NOW: Pressure setpoint -> %.1f bar", pressureSetpointBar);
+        if (pumpPressureModeEnabled) applyPumpPower();
+    }
+
+    bool newPressureMode = (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_PRESSURE) != 0;
+    if (newPressureMode != pumpPressureModeEnabled) {
+        pumpPressureModeEnabled = newPressureMode;
+        LOG("ESP-NOW: Pump pressure mode -> %s", pumpPressureModeEnabled ? "ON" : "OFF");
+        applyPumpPower();
+    }
 
     if (mac) {
         memcpy(g_displayMac, mac, ESP_NOW_ETH_ALEN);
