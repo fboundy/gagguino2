@@ -23,6 +23,7 @@
 // Bit flags embedded in EspNowControlPacket::flags.
 #define ESPNOW_CONTROL_FLAG_HEATER 0x01
 #define ESPNOW_CONTROL_FLAG_STEAM 0x02
+#define ESPNOW_CONTROL_FLAG_PUMP_PRESSURE 0x04
 
 // Pump operating modes understood by the controller. The display always sends
 // one of these values in EspNowControlPacket::pumpMode.
@@ -48,6 +49,9 @@ typedef struct __attribute__((packed)) EspNowPacket
     float pressureBar;    //!< Brew pressure in bar
     float steamSetpointC; //!< Steam temperature setpoint in °C
     float brewSetpointC;  //!< Brew temperature setpoint in °C
+    float pressureSetpointBar; //!< Target brew pressure in bar
+    uint8_t pumpPressureMode;  //!< 1 if pressure limiting mode is active
+    uint8_t reserved[3];       //!< Reserved for future use / alignment
 } EspNowPacket;
 
 // Control payload mirrored between Home Assistant, the display and the
@@ -67,4 +71,5 @@ typedef struct __attribute__((packed)) EspNowControlPacket
     float pidGuard;
     float dTau;
     float pumpPowerPercent;
+    float pressureSetpointBar;
 } EspNowControlPacket;

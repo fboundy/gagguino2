@@ -30,6 +30,8 @@ MQTT topic hierarchy.  All topics are rooted at:
 | `brew_setpoint/set` & `.../state` | cmd/state | Brew temperature setpoint |
 | `steam_setpoint/set` & `.../state` | cmd/state | Steam temperature setpoint |
 | `pid_p`, `pid_i`, `pid_d`, `pid_guard`, `pid_d_tau` | cmd/state | PID tuning parameters (`pid_guard` range 0–100) |
+| `pressure_setpoint/set` & `.../state` | cmd/state | Brew pressure setpoint in bar |
+| `pump_pressure_mode/set` & `.../state` | cmd/state | Enable pump pressure limiting mode |
 | `status` | pub by controller & display | Availability ("online"/"offline") |
 | `error` | pub by controller | Aggregated error log |
 
