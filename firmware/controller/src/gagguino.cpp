@@ -209,17 +209,14 @@ unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, last
 // microsecond timestamps for ISR debounce
 volatile int64_t lastPulseTime = 0;
 unsigned long shotStart = 0, startTime = 0;
-float shotTime = 0;                   //
-unsigned long shotAccumulatedMs = 0;  //!< total pump?active time of completed segments
-unsigned long shotTimeMs = 0;         //!< current shot time including active segment
-bool pumpPrevActive = false;          //!< tracks pump activity transitions
+float shotTime = 0;  //
 
 // Flow / flags
 volatile unsigned long pulseCount = 0;
 volatile unsigned long zcCount = 0;
+volatile unsigned long lastZcCount = 0;
 volatile int64_t lastZcTime = 0;  // microsecond timestamp
-float vol = 0, preFlowVol = 0, shotVol = 0;
-float lastVol = 0;
+int vol = 0, preFlowVol = 0, shotVol = 0;
 bool prevSteamFlag = false, ac = false;
 int acCount = 0;
 bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
@@ -326,9 +323,6 @@ static void checkShotStartStop() {
         ((currentTime - startTime) > ZC_WAIT)) {
         shotStart = currentTime;
         shotTime = 0;
-        shotTimeMs = 0;
-        shotAccumulatedMs = 0;
-        pumpPrevActive = true;
         shotFlag = true;
         pulseCount = 0;
         preFlow = true;
@@ -338,12 +332,8 @@ static void checkShotStartStop() {
     if ((steamFlag && !prevSteamFlag) ||
         (currentTime - lastZcTimeMs >= SHOT_RESET && shotFlag && currentTime > lastZcTimeMs)) {
         pulseCount = 0;
-        lastVol = 0;
         shotVol = 0;
         shotTime = 0;
-        shotTimeMs = 0;
-        shotAccumulatedMs = 0;
-        pumpPrevActive = false;
         lastPulseTime = esp_timer_get_time();
         shotFlag = false;
         preFlow = false;
@@ -492,35 +482,9 @@ static void updatePreFlow() {
  * @brief Convert pulse counts to volumes and maintain shot volume.
  */
 static void updateVols() {
-    vol = pulseCount * FLOW_CAL;
-    lastVol = vol;
+    unsigned long pulses = pulseCount;
+    vol = static_cast<int>(pulses * FLOW_CAL);
     shotVol = (preFlow || !shotFlag) ? 0.0f : (vol - preFlowVol);
-}
-
-/**
- * @brief Update shot timer, pausing when pump zero-crosses cease.
- */
-static void updateShotTime() {
-    if (!shotFlag) return;
-
-    unsigned long lastZcTimeMs = lastZcTime / 1000;
-    bool pumpActive = (currentTime - lastZcTimeMs) <= ZC_OFF;
-
-    if (pumpActive) {
-        if (!pumpPrevActive) {
-            shotStart = currentTime;
-            pumpPrevActive = true;
-        }
-        shotTimeMs = shotAccumulatedMs + (currentTime - shotStart);
-    } else {
-        if (pumpPrevActive) {
-            shotAccumulatedMs += currentTime - shotStart;
-            pumpPrevActive = false;
-        }
-        shotTimeMs = shotAccumulatedMs;
-    }
-
-    shotTime = shotTimeMs / 1000.0f;
 }
 
 // ISRs
@@ -569,7 +533,7 @@ static void sendEspNowPacket() {
     pkt.shotFlag = shotFlag ? 1 : 0;
     pkt.steamFlag = steamFlag ? 1 : 0;
     pkt.heaterSwitch = heaterEnabled ? 1 : 0;
-    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(shotTimeMs) : 0;
+    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(shotTime * 1000.0f) : 0;
     pkt.shotVolumeMl = static_cast<float>(shotVol);
     pkt.setTempC = setTemp;
     pkt.currentTempC = currentTemp;
@@ -659,9 +623,9 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
         applyPumpPower();
     }
 
-    float newPressureSetpoint = clampf(pkt.pressureSetpoint, 0.0f, 15.0f);
-    if (fabsf(newPressureSetpoint - pressureSetpoint) > 0.1f) {
-        pressureSetpoint = newPressureSetpoint;
+    float newPressureSetpoint = clampf(pkt.pressureSetpointBar, 0.0f, 15.0f);
+    if (fabsf(newPressureSetpoint - pressureSetpointBar) > 0.1f) {
+        pressureSetpointBar = newPressureSetpoint;
     }
 
     pumpMode = static_cast<EspNowPumpMode>(pkt.pumpMode);
@@ -1055,10 +1019,14 @@ void loop() {
     updatePreFlow();
     updateVols();
     updateSteamFlag();
-    updateShotTime();
 
     syncClockFromWifi();
     maybeHopEspNowChannel();
+    // Update shot time continuously while shot is active (seconds)
+    if (shotFlag && (zcCount > lastZcCount)) {
+        shotTime = (currentTime - shotStart) / 1000.0f;
+    }
+    lastZcCount = zcCount;
 
     if (g_espnowHandshake && (currentTime - lastEspNowTime) >= ESP_CYCLE) {
         sendEspNowPacket();
