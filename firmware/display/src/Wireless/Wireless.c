@@ -132,7 +132,6 @@ typedef struct
     float pumpPower;
     float pressureSetpoint;
     uint8_t pumpMode;
-    float pressureSetpoint;
     bool pumpPressureMode;
 } ControlState;
 
@@ -147,9 +146,8 @@ static const ControlState CONTROL_DEFAULTS = {
     .pidGuard = 25.0f,
     .dTau = 0.8f,
     .pumpPower = 95.0f,
-    .pressureSetpoint = 0.0f,
-    .pumpMode = ESPNOW_PUMP_MODE_NORMAL,
     .pressureSetpoint = 9.0f,
+    .pumpMode = ESPNOW_PUMP_MODE_NORMAL,
     .pumpPressureMode = false,
 };
 
@@ -871,7 +869,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         else if (strcmp(topic, TOPIC_PRESSURE_SETPOINT_STATE) == 0)
         {
             float v = strtof(payload, NULL);
-            if (control_bootstrap_ignore_float(CONTROL_BOOT_PRESSURE_SETPOINT, event->retain, v, s_control.pressureSetpoint, CONTROL_PRESSURE_SETPOINT_TOLERANCE))
+            if (control_bootstrap_ignore_float(CONTROL_BOOT_PRESSURE_SETPOINT, event->retain, v, s_control.pressureSetpoint, CONTROL_PRESSURE_TOLERANCE))
             {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: pressure_setpoint -> %s", payload);
                 break;
@@ -1049,7 +1047,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         {
             float v = strtof(payload, NULL);
             control_bootstrap_complete();
-            if (!float_equals(v, s_control.pressureSetpoint, CONTROL_PRESSURE_SETPOINT_TOLERANCE))
+            if (!float_equals(v, s_control.pressureSetpoint, CONTROL_PRESSURE_TOLERANCE))
             {
                 s_control.pressureSetpoint = v;
                 log_control_float("pressure_setpoint", v, 1);
