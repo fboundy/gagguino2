@@ -207,6 +207,7 @@ static bool s_mqtt_connected = false;
 static esp_mqtt_client_handle_t s_mqtt = NULL;
 static bool s_mqtt_enabled = true;
 static bool s_standby_suppressed = false;
+static bool s_restore_heater_on_exit = false;
 
 static bool s_wifi_ready = false;
 static uint8_t s_sta_channel = 0;
@@ -736,11 +737,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         else if (strcmp(topic, TOPIC_HEATER) == 0)
         {
             bool hv = parse_bool_str(payload);
-            if (!hv && !s_standby_suppressed)
-            {
-                ESP_LOGI(TAG_MQTT, "Ignoring heater off state while not in standby");
-                break;
-            }
             if (control_bootstrap_ignore_bool(CONTROL_BOOT_HEATER, event->retain, hv, s_control.heater))
             {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: heater -> %s", payload);
@@ -924,11 +920,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         {
             bool hv = parse_bool_str(payload);
             control_bootstrap_complete();
-            if (!hv && !s_standby_suppressed)
-            {
-                ESP_LOGI(TAG_MQTT, "Ignoring heater off request while not in standby");
-                break;
-            }
             if (hv != s_control.heater)
             {
                 s_control.heater = hv;
@@ -1484,7 +1475,11 @@ void Wireless_SetStandbyMode(bool standby)
             return;
         s_standby_suppressed = true;
         s_mqtt_enabled = false;
-        MQTT_SetHeaterState(false);
+        s_restore_heater_on_exit = s_control.heater;
+        if (s_control.heater)
+        {
+            MQTT_SetHeaterState(false);
+        }
         MQTT_Stop();
         return;
     }
@@ -1494,7 +1489,12 @@ void Wireless_SetStandbyMode(bool standby)
 
     s_standby_suppressed = false;
     s_mqtt_enabled = true;
-    MQTT_SetHeaterState(true);
+    bool restore = s_restore_heater_on_exit;
+    s_restore_heater_on_exit = false;
+    if (restore)
+    {
+        MQTT_SetHeaterState(true);
+    }
     MQTT_Start();
 }
 
@@ -1513,8 +1513,6 @@ bool MQTT_GetHeaterState(void) { return s_heater; }
 
 void MQTT_SetHeaterState(bool heater)
 {
-    if (!heater && !s_standby_suppressed)
-        return;
     if (s_control.heater == heater)
         return;
     s_control.heater = heater;
