@@ -45,15 +45,14 @@ static int log_vprintf(const char *fmt, va_list args)
 
 // Track interaction and machine activity for LCD backlight control.
 // g_last_touch_tick is updated by the touch driver whenever the screen is
-// touched.  last_heater_on_tick records when the heater was most recently on,
-// and last_zc_change_tick tracks the last observed zero-cross count change.
+// touched. last_zc_change_tick tracks the last observed zero-cross count
+// change.
 volatile TickType_t g_last_touch_tick = 0;
-static TickType_t last_heater_on_tick = 0;
 static TickType_t last_zc_change_tick = 0;
 static uint32_t last_zc_count = 0;
 static bool standby_mode = false;
 
-#define LCD_INACTIVITY_TIMEOUT  pdMS_TO_TICKS(300000)  /* 5 min inactivity window */
+#define LCD_INACTIVITY_TIMEOUT  pdMS_TO_TICKS(600000)  /* 10 min inactivity window */
 #define LCD_STANDBY_BACKLIGHT_LEVEL 5
 
 /**
@@ -101,7 +100,6 @@ void app_main(void)
     g_last_touch_tick = xTaskGetTickCount();
 
     TickType_t start_tick = g_last_touch_tick;
-    last_heater_on_tick = start_tick;
     last_zc_change_tick = start_tick;
     last_zc_count = MQTT_GetZcCount();
 
@@ -111,11 +109,6 @@ void app_main(void)
         lv_timer_handler();
 
         TickType_t now = xTaskGetTickCount();
-        bool heater_on = MQTT_GetHeaterState();
-        if (heater_on) {
-            last_heater_on_tick = now;
-        }
-
         uint32_t current_zc = MQTT_GetZcCount();
         bool zc_changed = (current_zc != last_zc_count);
         if (zc_changed) {
@@ -123,19 +116,26 @@ void app_main(void)
             last_zc_change_tick = now;
         }
 
-        bool touch_inactive = (now - g_last_touch_tick) >= LCD_INACTIVITY_TIMEOUT;
-        bool heater_inactive = !heater_on && (now - last_heater_on_tick) >= LCD_INACTIVITY_TIMEOUT;
-        bool zc_inactive = (now - last_zc_change_tick) >= LCD_INACTIVITY_TIMEOUT;
+        TickType_t control_tick = Wireless_GetLastControlChangeTick();
+        TickType_t last_activity = g_last_touch_tick;
+        if (last_zc_change_tick > last_activity) {
+            last_activity = last_zc_change_tick;
+        }
+        if (control_tick > last_activity) {
+            last_activity = control_tick;
+        }
+
+        bool inactive = (now - last_activity) >= LCD_INACTIVITY_TIMEOUT;
 
         if (!standby_mode) {
-            if (touch_inactive && (heater_inactive || zc_inactive)) {
+            if (inactive) {
                 LVGL_EnterStandby();
                 Wireless_SetStandbyMode(true);
                 Set_Backlight(LCD_STANDBY_BACKLIGHT_LEVEL);
                 standby_mode = true;
             }
         } else {
-            if (!touch_inactive) {
+            if (!inactive) {
                 LVGL_ExitStandby();
                 Wireless_SetStandbyMode(false);
                 Set_Backlight(LCD_Backlight);

@@ -11,6 +11,23 @@
 #include "version.h"
 #include "Battery.h"
 
+#define BREW_SETPOINT_MIN 87.0f
+#define BREW_SETPOINT_MAX 97.0f
+#define BREW_SETPOINT_STEP 0.5f
+#define BREW_SETPOINT_DEFAULT 92.0f
+#define STEAM_SETPOINT_MIN 145.0f
+#define STEAM_SETPOINT_MAX 155.0f
+#define STEAM_SETPOINT_STEP 1.0f
+#define STEAM_SETPOINT_DEFAULT 152.0f
+#define PRESSURE_SETPOINT_MIN 0.0f
+#define PRESSURE_SETPOINT_MAX 12.0f
+#define PRESSURE_SETPOINT_STEP 0.1f
+#define PRESSURE_SETPOINT_DEFAULT 9.0f
+#define PUMP_POWER_MIN 0.0f
+#define PUMP_POWER_MAX 100.0f
+#define PUMP_POWER_STEP 1.0f
+#define PUMP_POWER_DEFAULT 95.0f
+
 /* Fallback symbol definitions for environments where newer LVGL symbols are
  * not provided. These values correspond to Font Awesome code points and allow
  * the project to compile even with older LVGL releases. */
@@ -59,6 +76,7 @@ static void shot_def_dd_event_cb(lv_event_t *e);
 static void beep_on_shot_btn_event_cb(lv_event_t *e);
 static void buzzer_timer_cb(lv_timer_t *t);
 static int roller_get_int_value(lv_obj_t *roller);
+static float roller_get_float_value(lv_obj_t *roller);
 static void load_screen(lv_obj_t *screen);
 static void update_standby_time(void);
 static void standby_timer_cb(lv_timer_t *t);
@@ -67,6 +85,20 @@ static bool is_leap_year(int year);
 static int days_in_month(int year, int month);
 static int day_of_week(int year, int month, int day);
 static int last_sunday_of_month(int year, int month);
+static lv_obj_t *create_settings_row(lv_obj_t *parent, const char *label);
+static void build_roller_options(char *buf, size_t buf_size, float min, float max, float step,
+                                 uint8_t decimals);
+static void set_switch_state(lv_obj_t *sw, bool enabled);
+static void set_roller_value(lv_obj_t *roller, float value, float min, float max, float step);
+static void settings_sync_from_state(void);
+static void settings_update_pump_controls(bool pressure_mode);
+static void heater_switch_event_cb(lv_event_t *e);
+static void steam_switch_event_cb(lv_event_t *e);
+static void brew_setpoint_event_cb(lv_event_t *e);
+static void steam_setpoint_event_cb(lv_event_t *e);
+static void pump_pressure_mode_event_cb(lv_event_t *e);
+static void pressure_setpoint_event_cb(lv_event_t *e);
+static void pump_power_event_cb(lv_event_t *e);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -127,6 +159,20 @@ static lv_obj_t *shot_duration_roller;
 static lv_obj_t *shot_volume_label;
 static lv_obj_t *shot_volume_roller;
 static lv_obj_t *comm_status_container;
+static lv_obj_t *heater_switch;
+static lv_obj_t *steam_switch;
+static lv_obj_t *brew_setpoint_roller;
+static lv_obj_t *steam_setpoint_roller;
+static lv_obj_t *pump_pressure_switch;
+static lv_obj_t *pressure_setpoint_roller;
+static lv_obj_t *pump_power_roller;
+static lv_obj_t *pressure_row;
+static lv_obj_t *pump_power_row;
+static bool s_syncing_settings_controls;
+static char brew_setpoint_options[256];
+static char steam_setpoint_options[256];
+static char pressure_setpoint_options[1024];
+static char pump_power_options[512];
 typedef struct
 {
   lv_obj_t *screen;
@@ -273,12 +319,360 @@ static void open_settings_event_cb(lv_event_t *e)
   load_screen(settings_scr);
 }
 
+static lv_obj_t *create_settings_row(lv_obj_t *parent, const char *label)
+{
+  if (!parent || !label)
+    return NULL;
+
+  lv_obj_t *row = lv_obj_create(parent);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_width(row, LV_PCT(100));
+  lv_obj_set_height(row, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(row, 0, 0);
+  lv_obj_set_style_pad_all(row, 0, 0);
+  lv_obj_set_style_pad_column(row, 24, 0);
+  lv_obj_set_style_text_color(row, lv_color_white(), 0);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t *lbl = lv_label_create(row);
+  lv_label_set_text(lbl, label);
+  lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+  lv_obj_set_style_text_font(lbl, font_normal, 0);
+  lv_obj_set_flex_grow(lbl, 1);
+
+  return row;
+}
+
+static void build_roller_options(char *buf, size_t buf_size, float min, float max,
+                                 float step, uint8_t decimals)
+{
+  if (!buf || buf_size == 0 || step <= 0.0f)
+    return;
+
+  size_t offset = 0;
+  int steps = (int)roundf((max - min) / step);
+  if (steps < 0)
+    steps = 0;
+
+  for (int i = 0; i <= steps; ++i)
+  {
+    double value = (double)min + (double)step * (double)i;
+    if (value > (double)max)
+      value = (double)max;
+    int written = lv_snprintf(buf + offset, buf_size - offset,
+                              (i == steps) ? "%.*f" : "%.*f\n", decimals,
+                              value);
+    if (written < 0 || (size_t)written >= buf_size - offset)
+    {
+      buf[buf_size - 1] = '\0';
+      break;
+    }
+    offset += (size_t)written;
+  }
+}
+
+static void set_switch_state(lv_obj_t *sw, bool enabled)
+{
+  if (!sw)
+    return;
+  if (enabled)
+    lv_obj_add_state(sw, LV_STATE_CHECKED);
+  else
+    lv_obj_clear_state(sw, LV_STATE_CHECKED);
+}
+
+static void set_roller_value(lv_obj_t *roller, float value, float min, float max,
+                             float step)
+{
+  if (!roller || step <= 0.0f)
+    return;
+  if (value < min)
+    value = min;
+  else if (value > max)
+    value = max;
+  int max_index = (int)roundf((max - min) / step);
+  int index = (int)roundf((value - min) / step);
+  if (index < 0)
+    index = 0;
+  if (index > max_index)
+    index = max_index;
+  lv_roller_set_selected(roller, index, LV_ANIM_OFF);
+}
+
+static float roller_get_float_value(lv_obj_t *roller)
+{
+  if (!roller)
+    return NAN;
+  char buf[16];
+  lv_roller_get_selected_str(roller, buf, sizeof buf);
+  return strtof(buf, NULL);
+}
+
+static void settings_update_pump_controls(bool pressure_mode)
+{
+  if (!pressure_row || !pump_power_row)
+    return;
+  if (pressure_mode)
+  {
+    lv_obj_clear_flag(pressure_row, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(pump_power_row, LV_OBJ_FLAG_HIDDEN);
+  }
+  else
+  {
+    lv_obj_clear_flag(pump_power_row, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(pressure_row, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+static void settings_sync_from_state(void)
+{
+  if (!settings_scr)
+    return;
+
+  bool heater = MQTT_GetHeaterState();
+  bool steam = MQTT_GetSteamState();
+  bool pump_pressure_mode = MQTT_GetPumpPressureMode();
+  float brew = MQTT_GetBrewSetpoint();
+  float steam_set = MQTT_GetSteamSetpoint();
+  float pressure = MQTT_GetSetPressure();
+  float pump_power = MQTT_GetPumpPower();
+
+  if (isnan(brew))
+    brew = BREW_SETPOINT_DEFAULT;
+  if (isnan(steam_set))
+    steam_set = STEAM_SETPOINT_DEFAULT;
+  if (isnan(pressure))
+    pressure = PRESSURE_SETPOINT_DEFAULT;
+  if (isnan(pump_power))
+    pump_power = PUMP_POWER_DEFAULT;
+
+  s_syncing_settings_controls = true;
+
+  set_switch_state(heater_switch, heater);
+  set_switch_state(steam_switch, steam);
+  set_switch_state(pump_pressure_switch, pump_pressure_mode);
+
+  set_roller_value(brew_setpoint_roller, brew, BREW_SETPOINT_MIN,
+                   BREW_SETPOINT_MAX, BREW_SETPOINT_STEP);
+  set_roller_value(steam_setpoint_roller, steam_set, STEAM_SETPOINT_MIN,
+                   STEAM_SETPOINT_MAX, STEAM_SETPOINT_STEP);
+  set_roller_value(pressure_setpoint_roller, pressure, PRESSURE_SETPOINT_MIN,
+                   PRESSURE_SETPOINT_MAX, PRESSURE_SETPOINT_STEP);
+  set_roller_value(pump_power_roller, pump_power, PUMP_POWER_MIN,
+                   PUMP_POWER_MAX, PUMP_POWER_STEP);
+
+  settings_update_pump_controls(pump_pressure_mode);
+
+  s_syncing_settings_controls = false;
+}
+
+static void heater_switch_event_cb(lv_event_t *e)
+{
+  if (s_syncing_settings_controls)
+    return;
+  lv_obj_t *sw = lv_event_get_target(e);
+  bool enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  MQTT_SetHeaterState(enabled);
+  settings_sync_from_state();
+}
+
+static void steam_switch_event_cb(lv_event_t *e)
+{
+  if (s_syncing_settings_controls)
+    return;
+  lv_obj_t *sw = lv_event_get_target(e);
+  bool enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  MQTT_SetSteamState(enabled);
+  settings_sync_from_state();
+}
+
+static void brew_setpoint_event_cb(lv_event_t *e)
+{
+  if (s_syncing_settings_controls)
+    return;
+  float value = roller_get_float_value(lv_event_get_target(e));
+  if (!isnan(value))
+  {
+    MQTT_SetBrewSetpoint(value);
+    settings_sync_from_state();
+  }
+}
+
+static void steam_setpoint_event_cb(lv_event_t *e)
+{
+  if (s_syncing_settings_controls)
+    return;
+  float value = roller_get_float_value(lv_event_get_target(e));
+  if (!isnan(value))
+  {
+    MQTT_SetSteamSetpoint(value);
+    settings_sync_from_state();
+  }
+}
+
+static void pump_pressure_mode_event_cb(lv_event_t *e)
+{
+  if (s_syncing_settings_controls)
+    return;
+  lv_obj_t *sw = lv_event_get_target(e);
+  bool enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  MQTT_SetPumpPressureMode(enabled);
+  settings_update_pump_controls(enabled);
+  settings_sync_from_state();
+}
+
+static void pressure_setpoint_event_cb(lv_event_t *e)
+{
+  if (s_syncing_settings_controls)
+    return;
+  float value = roller_get_float_value(lv_event_get_target(e));
+  if (!isnan(value))
+  {
+    MQTT_SetPressureSetpoint(value);
+    settings_sync_from_state();
+  }
+}
+
+static void pump_power_event_cb(lv_event_t *e)
+{
+  if (s_syncing_settings_controls)
+    return;
+  float value = roller_get_float_value(lv_event_get_target(e));
+  if (!isnan(value))
+  {
+    MQTT_SetPumpPower(value);
+    settings_sync_from_state();
+  }
+}
+
 static void Settings_create(void)
 {
   if (settings_scr)
     return;
 
-  settings_scr = create_placeholder_screen("Settings");
+  settings_scr = lv_obj_create(NULL);
+  lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(settings_scr, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(settings_scr, 0, 0);
+  lv_obj_set_style_text_color(settings_scr, lv_color_white(), 0);
+  lv_obj_set_style_pad_all(settings_scr, 24, 0);
+  lv_obj_set_style_pad_row(settings_scr, 24, 0);
+  lv_obj_set_flex_flow(settings_scr, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(settings_scr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t *title_label = lv_label_create(settings_scr);
+  lv_label_set_text(title_label, "Settings");
+  lv_obj_add_style(title_label, &style_title, 0);
+  lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
+
+  lv_obj_t *content = lv_obj_create(settings_scr);
+  lv_obj_remove_style_all(content);
+  lv_obj_set_width(content, LV_PCT(100));
+  lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(content, 0, 0);
+  lv_obj_set_style_pad_all(content, 0, 0);
+  lv_obj_set_style_pad_row(content, 24, 0);
+  lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t *heater_row = create_settings_row(content, "Heater");
+  heater_switch = lv_switch_create(heater_row);
+  lv_obj_add_event_cb(heater_switch, heater_switch_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+
+  lv_obj_t *steam_row = create_settings_row(content, "Steam");
+  steam_switch = lv_switch_create(steam_row);
+  lv_obj_add_event_cb(steam_switch, steam_switch_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+
+  build_roller_options(brew_setpoint_options, sizeof brew_setpoint_options,
+                       BREW_SETPOINT_MIN, BREW_SETPOINT_MAX,
+                       BREW_SETPOINT_STEP, 1);
+  lv_obj_t *brew_row = create_settings_row(content, "Brew setpoint (°C)");
+  brew_setpoint_roller = lv_roller_create(brew_row);
+  lv_roller_set_options(brew_setpoint_roller, brew_setpoint_options,
+                        LV_ROLLER_MODE_NORMAL);
+  lv_roller_set_visible_row_count(brew_setpoint_roller, 3);
+  lv_obj_set_width(brew_setpoint_roller, 120);
+  lv_obj_set_style_bg_opa(brew_setpoint_roller, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_text_color(brew_setpoint_roller, lv_color_white(),
+                              LV_PART_MAIN);
+  lv_obj_set_style_text_color(brew_setpoint_roller, lv_color_white(),
+                              LV_PART_SELECTED);
+  lv_obj_add_event_cb(brew_setpoint_roller, brew_setpoint_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+
+  build_roller_options(steam_setpoint_options, sizeof steam_setpoint_options,
+                       STEAM_SETPOINT_MIN, STEAM_SETPOINT_MAX,
+                       STEAM_SETPOINT_STEP, 0);
+  lv_obj_t *steam_set_row = create_settings_row(content, "Steam setpoint (°C)");
+  steam_setpoint_roller = lv_roller_create(steam_set_row);
+  lv_roller_set_options(steam_setpoint_roller, steam_setpoint_options,
+                        LV_ROLLER_MODE_NORMAL);
+  lv_roller_set_visible_row_count(steam_setpoint_roller, 3);
+  lv_obj_set_width(steam_setpoint_roller, 120);
+  lv_obj_set_style_bg_opa(steam_setpoint_roller, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_text_color(steam_setpoint_roller, lv_color_white(),
+                              LV_PART_MAIN);
+  lv_obj_set_style_text_color(steam_setpoint_roller, lv_color_white(),
+                              LV_PART_SELECTED);
+  lv_obj_add_event_cb(steam_setpoint_roller, steam_setpoint_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+
+  lv_obj_t *pump_mode_row = create_settings_row(content, "Pump pressure mode");
+  pump_pressure_switch = lv_switch_create(pump_mode_row);
+  lv_obj_add_event_cb(pump_pressure_switch, pump_pressure_mode_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+
+  build_roller_options(pressure_setpoint_options, sizeof pressure_setpoint_options,
+                       PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX,
+                       PRESSURE_SETPOINT_STEP, 1);
+  pressure_row = create_settings_row(content, "Pressure setpoint (bar)");
+  pressure_setpoint_roller = lv_roller_create(pressure_row);
+  lv_roller_set_options(pressure_setpoint_roller, pressure_setpoint_options,
+                        LV_ROLLER_MODE_NORMAL);
+  lv_roller_set_visible_row_count(pressure_setpoint_roller, 3);
+  lv_obj_set_width(pressure_setpoint_roller, 120);
+  lv_obj_set_style_bg_opa(pressure_setpoint_roller, LV_OPA_TRANSP,
+                          LV_PART_MAIN);
+  lv_obj_set_style_text_color(pressure_setpoint_roller, lv_color_white(),
+                              LV_PART_MAIN);
+  lv_obj_set_style_text_color(pressure_setpoint_roller, lv_color_white(),
+                              LV_PART_SELECTED);
+  lv_obj_add_event_cb(pressure_setpoint_roller, pressure_setpoint_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+
+  build_roller_options(pump_power_options, sizeof pump_power_options,
+                       PUMP_POWER_MIN, PUMP_POWER_MAX, PUMP_POWER_STEP, 0);
+  pump_power_row = create_settings_row(content, "Pump power (%)");
+  pump_power_roller = lv_roller_create(pump_power_row);
+  lv_roller_set_options(pump_power_roller, pump_power_options,
+                        LV_ROLLER_MODE_NORMAL);
+  lv_roller_set_visible_row_count(pump_power_roller, 3);
+  lv_obj_set_width(pump_power_roller, 120);
+  lv_obj_set_style_bg_opa(pump_power_roller, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_text_color(pump_power_roller, lv_color_white(),
+                              LV_PART_MAIN);
+  lv_obj_set_style_text_color(pump_power_roller, lv_color_white(),
+                              LV_PART_SELECTED);
+  lv_obj_add_event_cb(pump_power_roller, pump_power_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+
+  lv_obj_t *back_btn = lv_btn_create(settings_scr);
+  lv_obj_set_size(back_btn, 160, 70);
+  lv_obj_set_style_border_width(back_btn, 0, 0);
+  lv_obj_set_style_bg_color(back_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_add_event_cb(back_btn, open_menu_event_cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *back_label = lv_label_create(back_btn);
+  lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
+  lv_obj_center(back_label);
+
   Backlight_slider = NULL;
   beep_on_shot_btn = NULL;
   beep_on_shot_label = NULL;
@@ -287,6 +681,8 @@ static void Settings_create(void)
   shot_duration_roller = NULL;
   shot_volume_label = NULL;
   shot_volume_roller = NULL;
+
+  settings_sync_from_state();
 }
 
 static lv_obj_t *create_placeholder_screen(const char *title)
@@ -526,6 +922,16 @@ void Lvgl_Example1_close(void)
   shot_duration_roller = NULL;
   shot_volume_label = NULL;
   shot_volume_roller = NULL;
+  heater_switch = NULL;
+  steam_switch = NULL;
+  brew_setpoint_roller = NULL;
+  steam_setpoint_roller = NULL;
+  pump_pressure_switch = NULL;
+  pressure_setpoint_roller = NULL;
+  pump_power_roller = NULL;
+  pressure_row = NULL;
+  pump_power_row = NULL;
+  s_syncing_settings_controls = false;
   set_temp_val = 0.0f;
   heater_on = false;
 
@@ -1070,6 +1476,8 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
       shot_target_reached = false;
     }
   }
+
+  settings_sync_from_state();
 
   /* backlight
    * Keep the slider UI in sync, but avoid forcing the backlight every cycle.
