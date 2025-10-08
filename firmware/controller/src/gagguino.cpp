@@ -127,6 +127,8 @@ constexpr float PRESSURE_SETPOINT_DEFAULT = 9.0f;
 constexpr float PRESSURE_SETPOINT_MIN = 0.0f;
 constexpr float PRESSURE_SETPOINT_MAX = 12.0f;
 constexpr float PRESSURE_LIMIT_TOL = 0.1f;
+constexpr float PUMP_PRESSURE_RAMP_RATE = 50.0f;    // % per second when ramping up in pressure mode
+constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;    // Max dt (s) considered for ramp calculations
 
 const bool debugPrint = true;
 }  // namespace
@@ -195,6 +197,8 @@ bool heaterEnabled = true;             // HA switch default ON at boot
 float pumpPower = PUMP_POWER_DEFAULT;  // Default pump power (%), overridden by display
 float pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;  // Target brew pressure in bar
 bool pumpPressureModeEnabled = false;  // When true limit pump power to pressure setpoint
+float lastPumpApplied = 0.0f;          // Actual power sent to dimmer after ramp/limits
+unsigned long lastPumpApplyMs = 0;     // Timestamp of last pump power application
 
 // Pressure
 int rawPress = 0;
@@ -417,6 +421,27 @@ static void applyPumpPower() {
             }
         }
     }
+
+    unsigned long nowMs = millis();
+    if (pumpPressureModeEnabled) {
+        float dt = 0.0f;
+        if (lastPumpApplyMs == 0) {
+            dt = PRESS_CYCLE / 1000.0f;  // assume at least one pressure cycle
+        } else {
+            dt = (nowMs - lastPumpApplyMs) / 1000.0f;
+        }
+        dt = clampf(dt, 0.0f, PUMP_PRESSURE_RAMP_MAX_DT);
+        float maxIncrease = PUMP_PRESSURE_RAMP_RATE * dt;
+        float allowed = lastPumpApplied + maxIncrease;
+        if (applied > allowed) {
+            applied = allowed;
+        }
+    }
+
+    applied = clampf(applied, 0.0f, 100.0f);
+
+    lastPumpApplyMs = nowMs;
+    lastPumpApplied = applied;
 
     int percent = static_cast<int>(lroundf(applied));
     pumpDimmer.setPower(percent);
