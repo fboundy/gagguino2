@@ -571,7 +571,7 @@ static void Settings_create(void)
 
   lv_obj_t *content = lv_obj_create(settings_scr);
   lv_obj_remove_style_all(content);
-  lv_obj_set_width(content, LV_PCT(100));
+  lv_obj_set_width(content, LV_PCT(80));
   lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(content, 0, 0);
   lv_obj_set_style_pad_all(content, 0, 0);
@@ -664,9 +664,11 @@ static void Settings_create(void)
                       LV_EVENT_VALUE_CHANGED, NULL);
 
   lv_obj_t *back_btn = lv_btn_create(settings_scr);
-  lv_obj_set_size(back_btn, 160, 70);
+  lv_obj_set_size(back_btn, 80, 80);
   lv_obj_set_style_border_width(back_btn, 0, 0);
   lv_obj_set_style_bg_color(back_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_add_flag(back_btn, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -70);
   lv_obj_add_event_cb(back_btn, open_menu_event_cb, LV_EVENT_CLICKED, NULL);
 
   lv_obj_t *back_label = lv_label_create(back_btn);
