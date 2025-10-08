@@ -172,6 +172,7 @@ static float s_pressure_setpoint = NAN;
 static bool s_pump_pressure_mode = false;
 static bool s_heater = false;
 static bool s_steam = false;
+static TickType_t s_last_control_change_tick = 0;
 
 typedef enum
 {
@@ -238,12 +239,27 @@ static const uint8_t s_broadcast_addr[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xF
 #define CONTROL_PRESSURE_TOLERANCE 0.05f
 #define CONTROL_PRESSURE_MIN 0.0f
 #define CONTROL_PRESSURE_MAX 12.0f
+#define CONTROL_PRESSURE_DEFAULT 9.0f
+#define CONTROL_BREW_MIN 87.0f
+#define CONTROL_BREW_MAX 97.0f
+#define CONTROL_BREW_DEFAULT 92.0f
+#define CONTROL_STEAM_MIN 145.0f
+#define CONTROL_STEAM_MAX 155.0f
+#define CONTROL_STEAM_DEFAULT 152.0f
+#define CONTROL_PUMP_POWER_MIN 0.0f
+#define CONTROL_PUMP_POWER_MAX 100.0f
+#define CONTROL_PUMP_POWER_DEFAULT 95.0f
 #define STEAM_STATE_CHANGED_FLAG 0x01u
 #define HEATER_STATE_CHANGED_FLAG 0x02u
 
 static inline bool float_equals(float a, float b, float tolerance)
 {
     return fabsf(a - b) <= tolerance;
+}
+
+static inline void note_control_activity(void)
+{
+    s_last_control_change_tick = xTaskGetTickCount();
 }
 
 static void control_apply_defaults(void)
@@ -265,6 +281,7 @@ static void control_apply_defaults(void)
     s_set_temp = s_control.brewSetpoint;
     s_control_bootstrap_active = false;
     s_control_bootstrap_mask = 0;
+    s_last_control_change_tick = xTaskGetTickCount();
 }
 
 static void control_bootstrap_reset(void)
@@ -660,6 +677,7 @@ static void publish_control_state(void)
 
 static void handle_control_change(void)
 {
+    note_control_activity();
     publish_control_state();
     schedule_control_send();
 }
@@ -744,6 +762,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
             s_control.heater = hv;
             s_heater = s_control.heater;
+            note_control_activity();
         }
         else if (strcmp(topic, TOPIC_STEAM) == 0)
         {
@@ -755,6 +774,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
             s_control.steam = sv;
             s_steam = s_control.steam;
+            note_control_activity();
         }
         else if (strcmp(topic, TOPIC_BREW_STATE) == 0)
         {
@@ -766,6 +786,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
             s_control.brewSetpoint = v;
             s_brew_setpoint = s_control.brewSetpoint;
+            note_control_activity();
         }
         else if (strcmp(topic, TOPIC_STEAM_STATE) == 0)
         {
@@ -777,6 +798,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
             s_control.steamSetpoint = v;
             s_steam_setpoint = s_control.steamSetpoint;
+            note_control_activity();
         }
         else if (strcmp(topic, TOPIC_PIDP_STATE) == 0)
         {
@@ -865,6 +887,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
             s_control.pumpPower = v;
             s_pump_power = s_control.pumpPower;
+            note_control_activity();
         }
         else if (strcmp(topic, TOPIC_PRESSURE_SETPOINT_STATE) == 0)
         {
@@ -875,7 +898,8 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 break;
             }
             s_control.pressureSetpoint = v;
-            s_pump_power = s_control.pressureSetpoint;
+            s_pressure_setpoint = s_control.pressureSetpoint;
+            note_control_activity();
         }
         else if (strcmp(topic, TOPIC_PUMP_MODE_STATE) == 0)
         {
@@ -903,6 +927,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
             s_control.pressureSetpoint = v;
             s_pressure_setpoint = s_control.pressureSetpoint;
+            note_control_activity();
         }
         else if (strcmp(topic, TOPIC_PUMP_PRESSURE_MODE_STATE) == 0)
         {
@@ -915,6 +940,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
             s_control.pumpPressureMode = v;
             s_pump_pressure_mode = s_control.pumpPressureMode;
+            note_control_activity();
         }
         else if (strcmp(topic, TOPIC_HEATER_SET) == 0)
         {
@@ -1475,8 +1501,8 @@ void Wireless_SetStandbyMode(bool standby)
             return;
         s_standby_suppressed = true;
         s_mqtt_enabled = false;
-        s_restore_heater_on_exit = s_control.heater;
-        if (s_control.heater)
+        s_restore_heater_on_exit = s_heater;
+        if (s_heater)
         {
             MQTT_SetHeaterState(false);
         }
@@ -1498,6 +1524,11 @@ void Wireless_SetStandbyMode(bool standby)
     MQTT_Start();
 }
 
+TickType_t Wireless_GetLastControlChangeTick(void)
+{
+    return s_last_control_change_tick;
+}
+
 // -----------------------------------------------------------------------------
 // Public getters/setters used by the UI layer
 // -----------------------------------------------------------------------------
@@ -1506,6 +1537,9 @@ float MQTT_GetSetTemp(void) { return s_set_temp; }
 float MQTT_GetCurrentPressure(void) { return s_pressure; }
 float MQTT_GetSetPressure(void) { return s_pressure_setpoint; }
 bool MQTT_GetPumpPressureMode(void) { return s_pump_pressure_mode; }
+float MQTT_GetBrewSetpoint(void) { return s_brew_setpoint; }
+float MQTT_GetSteamSetpoint(void) { return s_steam_setpoint; }
+float MQTT_GetPumpPower(void) { return s_pump_power; }
 float MQTT_GetShotTime(void) { return s_shot_time; }
 float MQTT_GetShotVolume(void) { return s_shot_volume; }
 uint32_t MQTT_GetZcCount(void) { return s_zc_count; }
@@ -1517,6 +1551,76 @@ void MQTT_SetHeaterState(bool heater)
         return;
     s_control.heater = heater;
     s_heater = heater;
+    handle_control_change();
+}
+
+void MQTT_SetBrewSetpoint(float temp_c)
+{
+    float v = temp_c;
+    if (v < CONTROL_BREW_MIN)
+        v = CONTROL_BREW_MIN;
+    else if (v > CONTROL_BREW_MAX)
+        v = CONTROL_BREW_MAX;
+    if (float_equals(v, s_control.brewSetpoint, CONTROL_TEMP_TOLERANCE))
+        return;
+    s_control.brewSetpoint = v;
+    s_brew_setpoint = v;
+    log_control_float("brew_setpoint", v, 1);
+    handle_control_change();
+}
+
+void MQTT_SetSteamSetpoint(float temp_c)
+{
+    float v = temp_c;
+    if (v < CONTROL_STEAM_MIN)
+        v = CONTROL_STEAM_MIN;
+    else if (v > CONTROL_STEAM_MAX)
+        v = CONTROL_STEAM_MAX;
+    if (float_equals(v, s_control.steamSetpoint, CONTROL_TEMP_TOLERANCE))
+        return;
+    s_control.steamSetpoint = v;
+    s_steam_setpoint = v;
+    log_control_float("steam_setpoint", v, 1);
+    handle_control_change();
+}
+
+void MQTT_SetPressureSetpoint(float pressure_bar)
+{
+    float v = pressure_bar;
+    if (v < CONTROL_PRESSURE_MIN)
+        v = CONTROL_PRESSURE_MIN;
+    else if (v > CONTROL_PRESSURE_MAX)
+        v = CONTROL_PRESSURE_MAX;
+    if (float_equals(v, s_control.pressureSetpoint, CONTROL_PRESSURE_TOLERANCE))
+        return;
+    s_control.pressureSetpoint = v;
+    s_pressure_setpoint = v;
+    log_control_float("pressure_setpoint", v, 1);
+    handle_control_change();
+}
+
+void MQTT_SetPumpPower(float percent)
+{
+    float v = percent;
+    if (v < CONTROL_PUMP_POWER_MIN)
+        v = CONTROL_PUMP_POWER_MIN;
+    else if (v > CONTROL_PUMP_POWER_MAX)
+        v = CONTROL_PUMP_POWER_MAX;
+    if (float_equals(v, s_control.pumpPower, CONTROL_PUMP_POWER_TOLERANCE))
+        return;
+    s_control.pumpPower = v;
+    s_pump_power = v;
+    log_control_float("pump_power", v, 1);
+    handle_control_change();
+}
+
+void MQTT_SetPumpPressureMode(bool enabled)
+{
+    if (s_control.pumpPressureMode == enabled)
+        return;
+    s_control.pumpPressureMode = enabled;
+    s_pump_pressure_mode = enabled;
+    log_control_bool("pump_pressure_mode", enabled);
     handle_control_change();
 }
 

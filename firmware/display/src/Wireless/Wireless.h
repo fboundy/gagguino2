@@ -24,15 +24,24 @@ float MQTT_GetSetTemp(void);
 float MQTT_GetCurrentPressure(void);
 float MQTT_GetSetPressure(void);
 bool MQTT_GetPumpPressureMode(void);
+float MQTT_GetBrewSetpoint(void);
+float MQTT_GetSteamSetpoint(void);
+float MQTT_GetPumpPower(void);
 float MQTT_GetShotTime(void);
 float MQTT_GetShotVolume(void);
 uint32_t MQTT_GetZcCount(void);
 bool MQTT_GetHeaterState(void);
 void MQTT_SetHeaterState(bool state);
+void MQTT_SetBrewSetpoint(float temp_c);
+void MQTT_SetSteamSetpoint(float temp_c);
+void MQTT_SetPressureSetpoint(float pressure_bar);
+void MQTT_SetPumpPower(float percent);
+void MQTT_SetPumpPressureMode(bool enabled);
 bool MQTT_GetSteamState(void);
 void MQTT_SetSteamState(bool state);
 
 void Wireless_SetStandbyMode(bool standby);
+TickType_t Wireless_GetLastControlChangeTick(void);
 
 bool Wireless_UsingEspNow(void);
 bool Wireless_IsMQTTConnected(void);
