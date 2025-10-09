@@ -31,6 +31,7 @@ bool MQTT_GetHeaterState(void);
 void MQTT_SetHeaterState(bool state);
 bool MQTT_GetSteamState(void);
 void MQTT_SetSteamState(bool state);
+void MQTT_SetPumpPressureMode(bool enabled);
 
 void Wireless_SetStandbyMode(bool standby);
 
