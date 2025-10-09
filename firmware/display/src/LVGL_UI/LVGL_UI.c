@@ -1,5 +1,6 @@
 #include "LVGL_UI.h"
 #include <inttypes.h>
+#include <limits.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -349,26 +350,129 @@ static void build_roller_options(char *buf, size_t buf_size, float min, float ma
   if (!buf || buf_size == 0 || step <= 0.0f)
     return;
 
-  size_t offset = 0;
-  int steps = (int)roundf((max - min) / step);
-  if (steps < 0)
-    steps = 0;
+  buf[0] = '\0';
 
-  for (int i = 0; i <= steps; ++i)
+  size_t offset = 0;
+  uint8_t actual_decimals = decimals;
+  if (actual_decimals > 8)
+    actual_decimals = 8;
+
+  long scale = 1;
+  for (uint8_t d = 0; d < actual_decimals; ++d)
   {
-    double value = (double)min + (double)step * (double)i;
-    if (value > (double)max)
-      value = (double)max;
-    int written = lv_snprintf(buf + offset, buf_size - offset,
-                              (i == steps) ? "%.*f" : "%.*f\n", decimals,
-                              value);
-    if (written < 0 || (size_t)written >= buf_size - offset)
+    if (scale > LONG_MAX / 10)
+    {
+      actual_decimals = d;
+      break;
+    }
+    scale *= 10;
+  }
+
+  double max_abs_value = fmax(fabs((double)min), fabs((double)max));
+  while (actual_decimals > 0 && max_abs_value * (double)scale > (double)LONG_MAX)
+  {
+    scale /= 10;
+    --actual_decimals;
+  }
+
+  long min_scaled = lround((double)min * (double)scale);
+  long max_scaled = lround((double)max * (double)scale);
+  long step_scaled = lround((double)step * (double)scale);
+  if (step_scaled <= 0)
+    return;
+  if (max_scaled < min_scaled)
+    max_scaled = min_scaled;
+
+  long value_scaled = min_scaled;
+  while (true)
+  {
+    long integer_part = value_scaled / scale;
+    long fractional_part = labs(value_scaled % scale);
+    bool is_last = value_scaled >= max_scaled;
+
+    size_t remaining = buf_size - offset;
+    if (remaining <= 1)
+    {
+      buf[buf_size - 1] = '\0';
+      break;
+    }
+
+    int written = lv_snprintf(buf + offset, remaining, "%ld", integer_part);
+    if (written < 0 || (size_t)written >= remaining)
     {
       buf[buf_size - 1] = '\0';
       break;
     }
     offset += (size_t)written;
+
+    if (actual_decimals > 0)
+    {
+      if (offset + 1 >= buf_size)
+      {
+        buf[buf_size - 1] = '\0';
+        break;
+      }
+      buf[offset++] = '.';
+
+      uint8_t digits = actual_decimals;
+      char frac_buf[8];
+      for (uint8_t i = 0; i < digits; ++i)
+        frac_buf[i] = '0';
+      for (int idx = (int)digits - 1; idx >= 0; --idx)
+      {
+        frac_buf[idx] = (char)('0' + (fractional_part % 10));
+        fractional_part /= 10;
+      }
+
+      if (offset + digits >= buf_size)
+      {
+        if (offset < buf_size)
+          buf[offset] = '\0';
+        buf[buf_size - 1] = '\0';
+        break;
+      }
+
+      for (uint8_t i = 0; i < digits; ++i)
+        buf[offset++] = frac_buf[i];
+    }
+
+    if (offset >= buf_size)
+    {
+      buf[buf_size - 1] = '\0';
+      break;
+    }
+
+    if (is_last)
+    {
+      buf[offset] = '\0';
+      break;
+    }
+
+    if (offset + 1 >= buf_size)
+    {
+      if (offset < buf_size)
+        buf[offset] = '\0';
+      buf[buf_size - 1] = '\0';
+      break;
+    }
+    buf[offset++] = '\n';
+    buf[offset] = '\0';
+
+    long next_value;
+    if (value_scaled > LONG_MAX - step_scaled)
+      next_value = max_scaled;
+    else
+      next_value = value_scaled + step_scaled;
+    if (next_value > max_scaled)
+      next_value = max_scaled;
+    if (next_value <= value_scaled)
+      break;
+    value_scaled = next_value;
   }
+  if (offset < buf_size)
+    buf[offset] = '\0';
+  else
+    buf[buf_size - 1] = '\0';
 }
 
 static void set_switch_state(lv_obj_t *sw, bool enabled)
