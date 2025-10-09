@@ -168,5 +168,14 @@ void app_main(void)
         if (wdt_registered) {
             esp_task_wdt_reset();
         }
+
+        /*
+         * Yield to the scheduler so the idle task can run and feed the
+         * watchdog.  Without this delay the loop becomes a tight spin that
+         * prevents IDLE0 from executing, eventually triggering the task WDT
+         * on the display build.  The fixed branch included an explicit delay
+         * here; reintroduce it so we maintain a cooperative update cadence.
+         */
+        vTaskDelay(loop_delay);
     }
 }
