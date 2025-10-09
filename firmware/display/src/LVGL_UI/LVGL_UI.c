@@ -350,24 +350,43 @@ static void build_roller_options(char *buf, size_t buf_size, float min, float ma
     return;
 
   size_t offset = 0;
-  int steps = (int)roundf((max - min) / step);
-  if (steps < 0)
-    steps = 0;
+  int scale = 1;
+  for (uint8_t d = 0; d < decimals; ++d)
+    scale *= 10;
 
-  for (int i = 0; i <= steps; ++i)
+  long min_scaled = lround((double)min * scale);
+  long max_scaled = lround((double)max * scale);
+  long step_scaled = lround((double)step * scale);
+  if (step_scaled <= 0)
+    return;
+
+  for (long value_scaled = min_scaled;; value_scaled += step_scaled)
   {
-    double value = (double)min + (double)step * (double)i;
-    if (value > (double)max)
-      value = (double)max;
-    int written = lv_snprintf(buf + offset, buf_size - offset,
-                              (i == steps) ? "%.*f" : "%.*f\n", decimals,
-                              value);
+    if (value_scaled > max_scaled)
+      value_scaled = max_scaled;
+
+    long integer_part = value_scaled / scale;
+    long fractional_part = labs(value_scaled % scale);
+    bool is_last = value_scaled >= max_scaled;
+
+    int written;
+    if (decimals == 0)
+      written = lv_snprintf(buf + offset, buf_size - offset,
+                            is_last ? "%ld" : "%ld\n", integer_part);
+    else
+      written = lv_snprintf(buf + offset, buf_size - offset,
+                            is_last ? "%ld.%0*ld" : "%ld.%0*ld\n", integer_part,
+                            decimals, fractional_part);
+
     if (written < 0 || (size_t)written >= buf_size - offset)
     {
       buf[buf_size - 1] = '\0';
       break;
     }
+
     offset += (size_t)written;
+    if (is_last)
+      break;
   }
 }
 
