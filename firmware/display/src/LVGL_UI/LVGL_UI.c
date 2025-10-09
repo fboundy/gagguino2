@@ -68,6 +68,7 @@ static void open_settings_event_cb(lv_event_t *e);
 static void open_screen_event_cb(lv_event_t *e);
 static void open_menu_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
+static void init_tick_cache(void);
 static lv_obj_t *create_comm_status_row(lv_obj_t *parent, lv_coord_t y_offset);
 static lv_obj_t *create_menu_button(lv_obj_t *grid, uint8_t col, uint8_t row,
                                     const char *icon, const char *label);
@@ -191,6 +192,23 @@ static lv_timer_t *buzzer_timer;
 static bool shot_target_reached;
 static float set_temp_val;
 static bool heater_on;
+
+typedef struct
+{
+  float cosv;
+  float sinv;
+  char label[8];
+} tick_cache_t;
+
+#define TEMP_TICK_COUNT ((TEMP_ARC_MAX - TEMP_ARC_MIN) / TEMP_ARC_TICK + 1)
+#define PRESSURE_TICK_COUNT ((PRESSURE_ARC_MAX - PRESSURE_ARC_MIN) / PRESSURE_ARC_TICK + 1)
+
+static tick_cache_t temp_ticks[TEMP_TICK_COUNT];
+static size_t temp_tick_count;
+static tick_cache_t pressure_ticks[PRESSURE_TICK_COUNT];
+static size_t pressure_tick_count;
+static float temp_angle_scale;
+static float pressure_angle_scale;
 
 void Lvgl_Example1(void)
 {
@@ -1048,6 +1066,8 @@ void Lvgl_Example1_close(void)
 
 static void Status_create(lv_obj_t *parent)
 {
+  init_tick_cache();
+
   lv_obj_set_style_border_width(parent, 0, 0);
 
   comm_status_container = create_comm_status_row(parent, -45);
@@ -1248,27 +1268,24 @@ static void draw_ticks_cb(lv_event_t *e)
 
   if (current_temp_arc)
   {
-    for (int val = TEMP_ARC_MIN; val <= TEMP_ARC_MAX; val += TEMP_ARC_TICK)
-    {
-      int angle = TEMP_ARC_START + (val - TEMP_ARC_MIN) * TEMP_ARC_SIZE /
-                                       (TEMP_ARC_MAX - TEMP_ARC_MIN);
-      float rad = angle * 3.14159265f / 180.0f;
-      lv_coord_t len = 20;
+    lv_coord_t len = 20;
+    lv_coord_t text_r = radius - len - 10;
 
-      lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
-                       cy + (lv_coord_t)((radius - len) * sinf(rad))};
-      lv_point_t p2 = {cx + (lv_coord_t)(radius * cosf(rad)),
-                       cy + (lv_coord_t)(radius * sinf(rad))};
+    for (size_t i = 0; i < temp_tick_count; ++i)
+    {
+      const tick_cache_t *tick = &temp_ticks[i];
+
+      lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * tick->cosv),
+                       cy + (lv_coord_t)((radius - len) * tick->sinv)};
+      lv_point_t p2 = {cx + (lv_coord_t)(radius * tick->cosv),
+                       cy + (lv_coord_t)(radius * tick->sinv)};
 
       lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
 
-      char buf[8];
-      lv_snprintf(buf, sizeof(buf), "%d", val);
-      lv_coord_t text_r = radius - len - 10;
-      lv_point_t tp = {cx + (lv_coord_t)(text_r * cosf(rad)),
-                       cy + (lv_coord_t)(text_r * sinf(rad))};
+      lv_point_t tp = {cx + (lv_coord_t)(text_r * tick->cosv),
+                       cy + (lv_coord_t)(text_r * tick->sinv)};
       lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
-      lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
+      lv_draw_label(draw_ctx, &label_dsc, &a, tick->label, NULL);
     }
 
     if (heater_on)
@@ -1280,9 +1297,7 @@ static void draw_ticks_cb(lv_event_t *e)
           v = TEMP_ARC_MIN;
         else if (v > TEMP_ARC_MAX)
           v = TEMP_ARC_MAX;
-        float angle = TEMP_ARC_START + (v - TEMP_ARC_MIN) *
-                                           TEMP_ARC_SIZE /
-                                           (float)(TEMP_ARC_MAX - TEMP_ARC_MIN);
+        float angle = TEMP_ARC_START + (v - TEMP_ARC_MIN) * temp_angle_scale;
         float rad = angle * 3.14159265f / 180.0f;
         lv_coord_t len = 20;
         lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
@@ -1298,30 +1313,67 @@ static void draw_ticks_cb(lv_event_t *e)
 
   if (current_pressure_arc)
   {
-    for (int val = PRESSURE_ARC_MIN; val <= PRESSURE_ARC_MAX;
-         val += PRESSURE_ARC_TICK)
-    {
-      int angle = PRESSURE_ARC_START + PRESSURE_ARC_SIZE -
-                  (val - PRESSURE_ARC_MIN) * PRESSURE_ARC_SIZE /
-                      (PRESSURE_ARC_MAX - PRESSURE_ARC_MIN);
-      float rad = angle * 3.14159265f / 180.0f;
-      lv_coord_t len = 20;
+    lv_coord_t len = 20;
+    lv_coord_t text_r = radius - len - 10;
 
-      lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * cosf(rad)),
-                       cy + (lv_coord_t)((radius - len) * sinf(rad))};
-      lv_point_t p2 = {cx + (lv_coord_t)(radius * cosf(rad)),
-                       cy + (lv_coord_t)(radius * sinf(rad))};
+    for (size_t i = 0; i < pressure_tick_count; ++i)
+    {
+      const tick_cache_t *tick = &pressure_ticks[i];
+
+      lv_point_t p1 = {cx + (lv_coord_t)((radius - len) * tick->cosv),
+                       cy + (lv_coord_t)((radius - len) * tick->sinv)};
+      lv_point_t p2 = {cx + (lv_coord_t)(radius * tick->cosv),
+                       cy + (lv_coord_t)(radius * tick->sinv)};
 
       lv_draw_line(draw_ctx, &line_dsc, &p1, &p2);
 
-      char buf[8];
-      lv_snprintf(buf, sizeof(buf), "%d", val / 10);
-      lv_coord_t text_r = radius - len - 10;
-      lv_point_t tp = {cx + (lv_coord_t)(text_r * cosf(rad)),
-                       cy + (lv_coord_t)(text_r * sinf(rad))};
+      lv_point_t tp = {cx + (lv_coord_t)(text_r * tick->cosv),
+                       cy + (lv_coord_t)(text_r * tick->sinv)};
       lv_area_t a = {tp.x - 20, tp.y - 10, tp.x + 20, tp.y + 10};
-      lv_draw_label(draw_ctx, &label_dsc, &a, buf, NULL);
+      lv_draw_label(draw_ctx, &label_dsc, &a, tick->label, NULL);
     }
+  }
+}
+
+static void init_tick_cache(void)
+{
+  temp_tick_count = 0;
+  pressure_tick_count = 0;
+
+  if (TEMP_ARC_MAX > TEMP_ARC_MIN)
+    temp_angle_scale = (float)TEMP_ARC_SIZE / (float)(TEMP_ARC_MAX - TEMP_ARC_MIN);
+  else
+    temp_angle_scale = 0.0f;
+
+  if (PRESSURE_ARC_MAX > PRESSURE_ARC_MIN)
+    pressure_angle_scale = (float)PRESSURE_ARC_SIZE / (float)(PRESSURE_ARC_MAX - PRESSURE_ARC_MIN);
+  else
+    pressure_angle_scale = 0.0f;
+
+  for (int val = TEMP_ARC_MIN;
+       val <= TEMP_ARC_MAX && temp_tick_count < (sizeof temp_ticks / sizeof temp_ticks[0]);
+       val += TEMP_ARC_TICK)
+  {
+    float angle = TEMP_ARC_START + (val - TEMP_ARC_MIN) * temp_angle_scale;
+    float rad = angle * 3.14159265f / 180.0f;
+    temp_ticks[temp_tick_count].cosv = cosf(rad);
+    temp_ticks[temp_tick_count].sinv = sinf(rad);
+    lv_snprintf(temp_ticks[temp_tick_count].label, sizeof(temp_ticks[temp_tick_count].label), "%d", val);
+    temp_tick_count++;
+  }
+
+  for (int val = PRESSURE_ARC_MIN;
+       val <= PRESSURE_ARC_MAX && pressure_tick_count < (sizeof pressure_ticks / sizeof pressure_ticks[0]);
+       val += PRESSURE_ARC_TICK)
+  {
+    float angle = PRESSURE_ARC_START + PRESSURE_ARC_SIZE -
+                  (val - PRESSURE_ARC_MIN) * pressure_angle_scale;
+    float rad = angle * 3.14159265f / 180.0f;
+    pressure_ticks[pressure_tick_count].cosv = cosf(rad);
+    pressure_ticks[pressure_tick_count].sinv = sinf(rad);
+    lv_snprintf(pressure_ticks[pressure_tick_count].label,
+                sizeof(pressure_ticks[pressure_tick_count].label), "%d", val / 10);
+    pressure_tick_count++;
   }
 }
 
