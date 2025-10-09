@@ -67,6 +67,8 @@ static bool is_leap_year(int year);
 static int days_in_month(int year, int month);
 static int day_of_week(int year, int month, int day);
 static int last_sunday_of_month(int year, int month);
+static void heater_switch_event_cb(lv_event_t *e);
+static void update_heater_controls(bool heater_state);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -148,6 +150,9 @@ static lv_timer_t *buzzer_timer;
 static bool shot_target_reached;
 static float set_temp_val;
 static bool heater_on;
+static lv_obj_t *heater_switch;
+static lv_obj_t *heater_status_label;
+static bool s_syncing_heater_switch;
 
 void Lvgl_Example1(void)
 {
@@ -243,6 +248,9 @@ void Lvgl_Example1(void)
   profiles_screen = NULL;
   standby_screen = NULL;
   Backlight_slider = NULL;
+  heater_switch = NULL;
+  heater_status_label = NULL;
+  s_syncing_heater_switch = false;
   standby_timer = NULL;
   standby_time_label = NULL;
   standby_active = false;
@@ -278,7 +286,73 @@ static void Settings_create(void)
   if (settings_scr)
     return;
 
-  settings_scr = create_placeholder_screen("Settings");
+  settings_scr = lv_obj_create(NULL);
+  lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(settings_scr, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(settings_scr, 0, 0);
+  lv_obj_set_style_text_color(settings_scr, lv_color_white(), 0);
+  lv_obj_set_style_pad_all(settings_scr, 24, 0);
+  lv_obj_set_style_pad_row(settings_scr, 24, 0);
+  lv_obj_set_flex_flow(settings_scr, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(settings_scr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_START);
+
+  lv_obj_t *title_label = lv_label_create(settings_scr);
+  lv_label_set_text(title_label, "Settings");
+  lv_obj_add_style(title_label, &style_title, 0);
+  lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
+  lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_width(title_label, LV_PCT(100));
+
+  lv_obj_t *heater_card = lv_obj_create(settings_scr);
+  lv_obj_remove_style_all(heater_card);
+  lv_obj_set_style_bg_opa(heater_card, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(heater_card, 0, 0);
+  lv_obj_set_style_pad_all(heater_card, 0, 0);
+  lv_obj_set_style_pad_row(heater_card, 8, 0);
+  lv_obj_set_width(heater_card, LV_PCT(100));
+  lv_obj_set_flex_flow(heater_card, LV_FLEX_FLOW_COLUMN);
+
+  lv_obj_t *heater_row = lv_obj_create(heater_card);
+  lv_obj_remove_style_all(heater_row);
+  lv_obj_set_style_bg_opa(heater_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(heater_row, 0, 0);
+  lv_obj_set_style_pad_all(heater_row, 0, 0);
+  lv_obj_set_width(heater_row, LV_PCT(100));
+  lv_obj_set_flex_flow(heater_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(heater_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t *heater_label = lv_label_create(heater_row);
+  lv_label_set_text(heater_label, "Heater");
+  lv_obj_set_style_text_color(heater_label, lv_color_white(), 0);
+
+  heater_switch = lv_switch_create(heater_row);
+  lv_obj_add_event_cb(heater_switch, heater_switch_event_cb, LV_EVENT_VALUE_CHANGED,
+                      NULL);
+
+  heater_status_label = lv_label_create(heater_card);
+  lv_obj_add_style(heater_status_label, &style_text_muted, 0);
+  lv_obj_set_style_text_align(heater_status_label, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_style_text_color(heater_status_label, lv_color_white(), 0);
+  lv_obj_set_width(heater_status_label, LV_PCT(100));
+
+  update_heater_controls(MQTT_GetHeaterState());
+
+  lv_obj_t *spacer = lv_obj_create(settings_scr);
+  lv_obj_remove_style_all(spacer);
+  lv_obj_set_flex_grow(spacer, 1);
+
+  lv_obj_t *back_btn = lv_btn_create(settings_scr);
+  lv_obj_set_size(back_btn, 160, 70);
+  lv_obj_set_style_border_width(back_btn, 0, 0);
+  lv_obj_set_style_bg_color(back_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_add_event_cb(back_btn, open_menu_event_cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *back_label = lv_label_create(back_btn);
+  lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
+  lv_obj_center(back_label);
+
   Backlight_slider = NULL;
   beep_on_shot_btn = NULL;
   beep_on_shot_label = NULL;
@@ -526,6 +600,9 @@ void Lvgl_Example1_close(void)
   shot_duration_roller = NULL;
   shot_volume_label = NULL;
   shot_volume_roller = NULL;
+  heater_switch = NULL;
+  heater_status_label = NULL;
+  s_syncing_heater_switch = false;
   set_temp_val = 0.0f;
   heater_on = false;
 
@@ -847,6 +924,7 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
 
   set_temp_val = set;
   heater_on = heater;
+  update_heater_controls(heater);
 
   if (tick_layer)
     lv_obj_invalidate(tick_layer);
@@ -1164,6 +1242,43 @@ static void buzzer_timer_cb(lv_timer_t *t)
   Buzzer_Off();
   lv_timer_del(t);
   buzzer_timer = NULL;
+}
+
+static void heater_switch_event_cb(lv_event_t *e)
+{
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED)
+    return;
+
+  if (s_syncing_heater_switch)
+    return;
+
+  lv_obj_t *sw = lv_event_get_target(e);
+  bool enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  MQTT_SetHeaterState(enabled);
+  update_heater_controls(enabled);
+}
+
+static void update_heater_controls(bool heater_state)
+{
+  if (heater_switch)
+  {
+    bool checked = lv_obj_has_state(heater_switch, LV_STATE_CHECKED);
+    if (checked != heater_state)
+    {
+      s_syncing_heater_switch = true;
+      if (heater_state)
+        lv_obj_add_state(heater_switch, LV_STATE_CHECKED);
+      else
+        lv_obj_clear_state(heater_switch, LV_STATE_CHECKED);
+      s_syncing_heater_switch = false;
+    }
+  }
+
+  if (heater_status_label)
+  {
+    lv_label_set_text(heater_status_label,
+                      heater_state ? "Heater is on" : "Heater is off");
+  }
 }
 
 void LVGL_Backlight_adjustment(uint8_t Backlight) { Set_Backlight(Backlight); }
