@@ -99,8 +99,6 @@ static void steam_setpoint_event_cb(lv_event_t *e);
 static void pump_pressure_mode_event_cb(lv_event_t *e);
 static void pressure_setpoint_event_cb(lv_event_t *e);
 static void pump_power_event_cb(lv_event_t *e);
-
-void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
  *  STATIC VARIABLES
  **********************/
@@ -114,7 +112,6 @@ static lv_style_t style_bullet;
 static const lv_font_t *font_large;
 static const lv_font_t *font_normal;
 
-static lv_timer_t *auto_step_timer;
 // static lv_color_t original_screen_bg_color;
 
 static lv_timer_t *meter2_timer;
@@ -1136,8 +1133,7 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_text_color(battery_label, lv_color_white(), 0);
   lv_obj_center(battery_label);
 
-  /* Timer to drive UI updates */
-  auto_step_timer = lv_timer_create(example1_increase_lvgl_tick, 100, NULL);
+  /* UI updates are driven from the main application task instead of an LVGL timer. */
 }
 
 static void draw_ticks_cb(lv_event_t *e)
@@ -1241,7 +1237,7 @@ static void draw_ticks_cb(lv_event_t *e)
   }
 }
 
-void example1_increase_lvgl_tick(lv_timer_t *t)
+void LVGL_UI_Update(void)
 {
   float current = MQTT_GetCurrentTemp();
   float set = MQTT_GetSetTemp();
