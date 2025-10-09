@@ -177,6 +177,9 @@ static lv_obj_t *pump_power_roller;
 static lv_obj_t *pressure_row;
 static lv_obj_t *pump_power_row;
 static bool s_syncing_settings_controls;
+static float s_last_tick_setpoint = NAN;
+static bool s_last_tick_heater = false;
+static bool s_tick_layer_needs_redraw = true;
 static char brew_setpoint_options[256];
 static char steam_setpoint_options[256];
 static char pressure_setpoint_options[1024];
@@ -1056,6 +1059,9 @@ void Lvgl_Example1_close(void)
   set_temp_arc = NULL;
   current_pressure_arc = NULL;
   tick_layer = NULL;
+  s_tick_layer_needs_redraw = true;
+  s_last_tick_setpoint = NAN;
+  s_last_tick_heater = false;
   temp_label = NULL;
   pressure_label = NULL;
   temp_icon = NULL;
@@ -1191,6 +1197,9 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_set_style_bg_opa(tick_layer, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(tick_layer, 0, 0);
   lv_obj_add_event_cb(tick_layer, draw_ticks_cb, LV_EVENT_DRAW_POST, NULL);
+  s_tick_layer_needs_redraw = true;
+  s_last_tick_setpoint = NAN;
+  s_last_tick_heater = false;
 
   /* ----------------- Fonts ----------------- */
   const lv_font_t *font_val = &lv_font_montserrat_40;
@@ -1448,7 +1457,29 @@ void LVGL_UI_Update(void)
   heater_on = heater;
 
   if (tick_layer)
-    lv_obj_invalidate(tick_layer);
+  {
+    bool heater_changed = (heater != s_last_tick_heater);
+    bool set_nan = isnan(set);
+    bool last_nan = isnan(s_last_tick_setpoint);
+    bool set_changed = false;
+    if (set_nan != last_nan)
+    {
+      set_changed = true;
+    }
+    else if (!set_nan)
+    {
+      float diff = fabsf(set - s_last_tick_setpoint);
+      set_changed = diff > 0.05f;
+    }
+
+    if (s_tick_layer_needs_redraw || heater_changed || set_changed)
+    {
+      lv_obj_invalidate(tick_layer);
+      s_last_tick_heater = heater;
+      s_last_tick_setpoint = set;
+      s_tick_layer_needs_redraw = false;
+    }
+  }
 
   bool wifi_ok = Wireless_IsWiFiConnected();
   bool mqtt_ok = Wireless_IsMQTTConnected();
