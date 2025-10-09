@@ -1046,6 +1046,7 @@ void loop() {
         LOG("");
         lastLogTime = currentTime;
     }
+
 }
 
 }  // namespace gag
