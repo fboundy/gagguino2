@@ -1,11 +1,21 @@
 {
   "folders": [
-    { "path": "firmware/controller" },
-    { "path": "firmware/display" },
-    { "path": "firmware/secrets" },
-    { "path": "firmware/shared" }
-
-],
+    {
+      "path": "firmware/controller"
+    },
+    {
+      "path": "firmware/display"
+    },
+    {
+      "path": "firmware/secrets"
+    },
+    {
+      "path": "firmware/shared"
+    },
+    {
+      "path": "../../../../../../temp"
+    }
+  ],
   "settings": {
     "terminal.integrated.defaultProfile.windows": "PowerShell"
   }

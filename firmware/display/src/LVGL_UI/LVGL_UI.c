@@ -55,8 +55,8 @@ static lv_obj_t *create_comm_status_row(lv_obj_t *parent, lv_coord_t y_offset);
 static lv_obj_t *create_menu_button(lv_obj_t *grid, uint8_t col, uint8_t row,
                                     const char *icon, const char *label);
 static void add_version_label(lv_obj_t *parent);
-static void shot_def_dd_event_cb(lv_event_t *e);
-static void beep_on_shot_btn_event_cb(lv_event_t *e);
+// static void shot_def_dd_event_cb(lv_event_t *e);
+// static void beep_on_shot_btn_event_cb(lv_event_t *e);
 static void buzzer_timer_cb(lv_timer_t *t);
 static int roller_get_int_value(lv_obj_t *roller);
 static void load_screen(lv_obj_t *screen);
@@ -67,6 +67,12 @@ static bool is_leap_year(int year);
 static int days_in_month(int year, int month);
 static int day_of_week(int year, int month, int day);
 static int last_sunday_of_month(int year, int month);
+static void heater_switch_event_cb(lv_event_t *e);
+static void update_heater_controls(bool heater_state);
+static void pump_pressure_switch_event_cb(lv_event_t *e);
+static void update_pump_pressure_controls(bool enabled);
+static void pump_setting_roller_event_cb(lv_event_t *e);
+static void refresh_pump_setting_ui(void);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -148,6 +154,18 @@ static lv_timer_t *buzzer_timer;
 static bool shot_target_reached;
 static float set_temp_val;
 static bool heater_on;
+static lv_obj_t *heater_switch;
+static lv_obj_t *heater_status_label;
+static bool s_syncing_heater_switch;
+static bool pump_pressure_mode_on;
+static lv_obj_t *pump_pressure_switch;
+static lv_obj_t *pump_pressure_status_label;
+static lv_obj_t *pump_setting_label;
+static lv_obj_t *pump_setting_roller;
+static bool s_syncing_pump_pressure_switch;
+static bool s_syncing_pump_setting_roller;
+static bool s_pump_setting_options_set;
+static bool s_pump_setting_options_pressure_mode;
 
 void Lvgl_Example1(void)
 {
@@ -243,6 +261,18 @@ void Lvgl_Example1(void)
   profiles_screen = NULL;
   standby_screen = NULL;
   Backlight_slider = NULL;
+  heater_switch = NULL;
+  heater_status_label = NULL;
+  s_syncing_heater_switch = false;
+  pump_pressure_switch = NULL;
+  pump_pressure_status_label = NULL;
+  pump_setting_label = NULL;
+  pump_setting_roller = NULL;
+  s_syncing_pump_pressure_switch = false;
+  s_syncing_pump_setting_roller = false;
+  s_pump_setting_options_set = false;
+  s_pump_setting_options_pressure_mode = false;
+  pump_pressure_mode_on = false;
   standby_timer = NULL;
   standby_time_label = NULL;
   standby_active = false;
@@ -278,15 +308,153 @@ static void Settings_create(void)
   if (settings_scr)
     return;
 
-  settings_scr = create_placeholder_screen("Settings");
-  Backlight_slider = NULL;
-  beep_on_shot_btn = NULL;
-  beep_on_shot_label = NULL;
-  shot_def_dd = NULL;
-  shot_duration_label = NULL;
-  shot_duration_roller = NULL;
-  shot_volume_label = NULL;
-  shot_volume_roller = NULL;
+  settings_scr = lv_obj_create(NULL);
+  lv_obj_set_style_bg_color(settings_scr, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(settings_scr, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(settings_scr, 0, 0);
+  lv_obj_set_style_text_color(settings_scr, lv_color_white(), 0);
+  lv_obj_set_style_pad_all(settings_scr, 24, 0);
+  lv_obj_set_style_pad_row(settings_scr, 24, 0);
+  lv_obj_set_style_pad_bottom(settings_scr, 0, 0);
+  lv_obj_set_flex_flow(settings_scr, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(settings_scr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_START);
+
+  lv_obj_t *title_label = lv_label_create(settings_scr);
+  lv_label_set_text(title_label, "Settings");
+  lv_obj_add_style(title_label, &style_title, 0);
+  lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
+  lv_obj_set_style_text_align(title_label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(title_label, LV_PCT(100));
+
+  static lv_coord_t control_cols[] = {LV_GRID_FR(1), LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST};
+  static lv_coord_t control_rows[] = {LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_CONTENT,
+                                      LV_GRID_TEMPLATE_LAST};
+
+  lv_obj_t *control_grid = lv_obj_create(settings_scr);
+  lv_obj_remove_style_all(control_grid);
+  lv_obj_set_style_bg_opa(control_grid, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(control_grid, 0, 0);
+  lv_obj_set_style_pad_all(control_grid, 0, 0);
+  lv_obj_set_style_pad_row(control_grid, 16, 0);
+  lv_obj_set_style_pad_column(control_grid, 16, 0);
+  lv_obj_set_width(control_grid, LV_PCT(80));
+  lv_obj_set_layout(control_grid, LV_LAYOUT_GRID);
+  lv_obj_set_grid_dsc_array(control_grid, control_cols, control_rows);
+  lv_obj_set_flex_grow(control_grid, 1);
+
+  lv_obj_t *heater_label = lv_label_create(control_grid);
+  lv_label_set_text(heater_label, "Heater");
+  lv_obj_set_style_text_color(heater_label, lv_color_white(), 0);
+  lv_obj_set_style_text_align(heater_label, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_grid_cell(heater_label, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_CENTER, 0,
+                       1);
+#if LV_FONT_MONTSERRAT_24
+  lv_obj_set_style_text_font(heater_label, &lv_font_montserrat_24, 0);
+#else
+  lv_obj_set_style_text_font(heater_label, font_large, 0);
+#endif
+
+  heater_switch = lv_switch_create(control_grid);
+  lv_obj_set_size(heater_switch, 130, 50);
+  lv_obj_add_event_cb(heater_switch, heater_switch_event_cb, LV_EVENT_VALUE_CHANGED,
+                      NULL);
+  lv_obj_set_grid_cell(heater_switch, LV_GRID_ALIGN_END, 1, 1, LV_GRID_ALIGN_CENTER, 0,
+                       1);
+
+  // heater_status_label = lv_label_create(heater_card);
+  // lv_obj_add_style(heater_status_label, &style_text_muted, 0);
+  // lv_obj_set_style_text_align(heater_status_label, LV_TEXT_ALIGN_LEFT, 0);
+  // lv_obj_set_style_text_color(heater_status_label, lv_color_white(), 0);
+  // lv_obj_set_width(heater_status_label, LV_PCT(100));
+
+  update_heater_controls(MQTT_GetHeaterState());
+
+  lv_obj_t *pump_pressure_label = lv_label_create(control_grid);
+  lv_label_set_text(pump_pressure_label, "Pump pressure control");
+  lv_label_set_long_mode(pump_pressure_label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(pump_pressure_label, lv_color_white(), 0);
+  lv_obj_set_style_text_align(pump_pressure_label, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_grid_cell(pump_pressure_label, LV_GRID_ALIGN_STRETCH, 0, 1,
+                       LV_GRID_ALIGN_CENTER, 1, 1);
+#if LV_FONT_MONTSERRAT_24
+  lv_obj_set_style_text_font(pump_pressure_label, &lv_font_montserrat_24, 0);
+#else
+  lv_obj_set_style_text_font(pump_pressure_label, font_large, 0);
+#endif
+
+  pump_pressure_switch = lv_switch_create(control_grid);
+  lv_obj_set_size(pump_pressure_switch, 130, 50);
+  lv_obj_add_event_cb(pump_pressure_switch, pump_pressure_switch_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+  lv_obj_set_grid_cell(pump_pressure_switch, LV_GRID_ALIGN_END, 1, 1, LV_GRID_ALIGN_CENTER,
+                       1, 1);
+
+  pump_setting_label = lv_label_create(control_grid);
+  lv_label_set_text(pump_setting_label, "Pressure setpoint");
+  lv_obj_set_style_text_color(pump_setting_label, lv_color_white(), 0);
+  lv_obj_set_style_text_align(pump_setting_label, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_grid_cell(pump_setting_label, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_CENTER,
+                       2, 1);
+#if LV_FONT_MONTSERRAT_24
+  lv_obj_set_style_text_font(pump_setting_label, &lv_font_montserrat_24, 0);
+#else
+  lv_obj_set_style_text_font(pump_setting_label, font_large, 0);
+#endif
+
+  pump_setting_roller = lv_roller_create(control_grid);
+  lv_obj_set_size(pump_setting_roller, 160, 130);
+  lv_obj_set_grid_cell(pump_setting_roller, LV_GRID_ALIGN_END, 1, 1, LV_GRID_ALIGN_CENTER, 2,
+                       1);
+  lv_roller_set_visible_row_count(pump_setting_roller, 4);
+  lv_obj_add_event_cb(pump_setting_roller, pump_setting_roller_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+  lv_obj_set_style_bg_color(pump_setting_roller, lv_color_hex(0x1e1e1e),
+                            LV_PART_MAIN | LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_opa(pump_setting_roller, LV_OPA_COVER,
+                          LV_PART_MAIN | LV_STATE_DEFAULT);
+  lv_obj_set_style_border_width(pump_setting_roller, 0,
+                                LV_PART_MAIN | LV_STATE_DEFAULT);
+  lv_obj_set_style_radius(pump_setting_roller, 12, LV_PART_MAIN | LV_STATE_DEFAULT);
+  lv_obj_set_style_text_color(pump_setting_roller, lv_color_white(),
+                              LV_PART_MAIN | LV_STATE_DEFAULT);
+  lv_obj_set_style_text_color(pump_setting_roller, lv_color_white(),
+                              LV_PART_SELECTED | LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_color(pump_setting_roller, lv_palette_main(LV_PALETTE_BLUE),
+                            LV_PART_SELECTED | LV_STATE_DEFAULT);
+  lv_obj_set_style_bg_opa(pump_setting_roller, LV_OPA_50,
+                          LV_PART_SELECTED | LV_STATE_DEFAULT);
+
+  // pump_pressure_status_label = lv_label_create(heater_card);
+  // lv_obj_add_style(pump_pressure_status_label, &style_text_muted, 0);
+  // lv_obj_set_style_text_align(pump_pressure_status_label, LV_TEXT_ALIGN_LEFT, 0);
+  // lv_obj_set_style_text_color(pump_pressure_status_label, lv_color_white(), 0);
+  // lv_obj_set_width(pump_pressure_status_label, LV_PCT(100));
+
+  update_pump_pressure_controls(MQTT_GetPumpPressureMode());
+
+  lv_obj_t *footer = lv_obj_create(settings_scr);
+  lv_obj_remove_style_all(footer);
+  lv_obj_set_width(footer, LV_PCT(100));
+  lv_obj_set_style_bg_color(footer, lv_color_hex(0x111111), 0);
+  lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, 0);
+  lv_obj_set_style_pad_top(footer, 10, 0);
+  lv_obj_set_style_pad_bottom(footer, 10, 0);
+  lv_obj_set_style_pad_left(footer, 10, 0);
+  lv_obj_set_style_pad_right(footer, 10, 0);
+  lv_obj_set_flex_flow(footer, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(footer, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t *back_btn = lv_btn_create(footer);
+  lv_obj_set_size(back_btn, 160, 70);
+  lv_obj_set_style_border_width(back_btn, 0, 0);
+  lv_obj_set_style_bg_color(back_btn, lv_palette_main(LV_PALETTE_GREY), 0);
+  lv_obj_add_event_cb(back_btn, open_menu_event_cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *back_label = lv_label_create(back_btn);
+  lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
+  lv_obj_center(back_label);
 }
 
 static lv_obj_t *create_placeholder_screen(const char *title)
@@ -526,6 +694,9 @@ void Lvgl_Example1_close(void)
   shot_duration_roller = NULL;
   shot_volume_label = NULL;
   shot_volume_roller = NULL;
+  heater_switch = NULL;
+  heater_status_label = NULL;
+  s_syncing_heater_switch = false;
   set_temp_val = 0.0f;
   heater_on = false;
 
@@ -843,10 +1014,14 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   float shot_time = MQTT_GetShotTime();
   float shot_vol = MQTT_GetShotVolume();
   bool heater = MQTT_GetHeaterState();
+  bool pump_pressure_mode = MQTT_GetPumpPressureMode();
   char buf[32];
 
   set_temp_val = set;
   heater_on = heater;
+  update_heater_controls(heater);
+  pump_pressure_mode_on = pump_pressure_mode;
+  update_pump_pressure_controls(pump_pressure_mode);
 
   if (tick_layer)
     lv_obj_invalidate(tick_layer);
@@ -1103,37 +1278,37 @@ void Backlight_adjustment_event_cb(lv_event_t *e)
     ESP_LOGW("LVGL", "Volume out of range: %d", Backlight);
 }
 
-static void shot_def_dd_event_cb(lv_event_t *e)
-{
-  uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
-  switch (sel)
-  {
-  case 1: /* Time */
-    lv_obj_clear_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(shot_duration_roller, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_volume_roller, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
-    break;
-  case 2: /* Volume */
-    lv_obj_clear_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(shot_volume_roller, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_duration_roller, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
-    break;
-  default:
-    lv_obj_add_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_duration_roller, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(shot_volume_roller, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
-    break;
-  }
-}
+// static void shot_def_dd_event_cb(lv_event_t *e)
+// {
+//   uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
+//   switch (sel)
+//   {
+//   case 1: /* Time */
+//     lv_obj_clear_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_clear_flag(shot_duration_roller, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_add_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_add_flag(shot_volume_roller, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_clear_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_clear_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
+//     break;
+//   case 2: /* Volume */
+//     lv_obj_clear_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_clear_flag(shot_volume_roller, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_add_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_add_flag(shot_duration_roller, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_clear_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_clear_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
+//     break;
+//   default:
+//     lv_obj_add_flag(shot_duration_label, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_add_flag(shot_duration_roller, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_add_flag(shot_volume_label, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_add_flag(shot_volume_roller, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_add_flag(beep_on_shot_label, LV_OBJ_FLAG_HIDDEN);
+//     lv_obj_add_flag(beep_on_shot_btn, LV_OBJ_FLAG_HIDDEN);
+//     break;
+//   }
+// }
 
 static int roller_get_int_value(lv_obj_t *roller)
 {
@@ -1145,25 +1320,256 @@ static int roller_get_int_value(lv_obj_t *roller)
   return atoi(buf);
 }
 
-static void beep_on_shot_btn_event_cb(lv_event_t *e)
-{
-  lv_obj_t *btn = lv_event_get_target(e);
-  lv_obj_t *label = lv_obj_get_child(btn, 0);
-  if (lv_obj_has_state(btn, LV_STATE_CHECKED))
-  {
-    lv_label_set_text(label, "On");
-  }
-  else
-  {
-    lv_label_set_text(label, "Off");
-  }
-}
+// static void beep_on_shot_btn_event_cb(lv_event_t *e)
+// {
+//   lv_obj_t *btn = lv_event_get_target(e);
+//   lv_obj_t *label = lv_obj_get_child(btn, 0);
+//   if (lv_obj_has_state(btn, LV_STATE_CHECKED))
+//   {
+//     lv_label_set_text(label, "On");
+//   }
+//   else
+//   {
+//     lv_label_set_text(label, "Off");
+//   }
+// }
 
 static void buzzer_timer_cb(lv_timer_t *t)
 {
   Buzzer_Off();
   lv_timer_del(t);
   buzzer_timer = NULL;
+}
+
+static void heater_switch_event_cb(lv_event_t *e)
+{
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED)
+    return;
+
+  if (s_syncing_heater_switch)
+    return;
+
+  lv_obj_t *sw = lv_event_get_target(e);
+  bool enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  MQTT_SetHeaterState(enabled);
+  update_heater_controls(enabled);
+}
+
+static void update_heater_controls(bool heater_state)
+{
+  if (heater_switch)
+  {
+    bool checked = lv_obj_has_state(heater_switch, LV_STATE_CHECKED);
+    if (checked != heater_state)
+    {
+      s_syncing_heater_switch = true;
+      if (heater_state)
+        lv_obj_add_state(heater_switch, LV_STATE_CHECKED);
+      else
+        lv_obj_clear_state(heater_switch, LV_STATE_CHECKED);
+      s_syncing_heater_switch = false;
+    }
+  }
+
+  // if (heater_status_label)
+  // {
+  //   lv_label_set_text(heater_status_label,
+  //                     heater_state ? "Heater is on" : "Heater is off");
+  // }
+}
+
+static void pump_pressure_switch_event_cb(lv_event_t *e)
+{
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED)
+    return;
+
+  if (s_syncing_pump_pressure_switch)
+    return;
+
+  lv_obj_t *sw = lv_event_get_target(e);
+  bool enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  MQTT_SetPumpPressureMode(enabled);
+  update_pump_pressure_controls(enabled);
+}
+
+static void update_pump_pressure_controls(bool enabled)
+{
+  pump_pressure_mode_on = enabled;
+
+  if (pump_pressure_switch)
+  {
+    bool checked = lv_obj_has_state(pump_pressure_switch, LV_STATE_CHECKED);
+    if (checked != enabled)
+    {
+      s_syncing_pump_pressure_switch = true;
+      if (enabled)
+        lv_obj_add_state(pump_pressure_switch, LV_STATE_CHECKED);
+      else
+        lv_obj_clear_state(pump_pressure_switch, LV_STATE_CHECKED);
+      s_syncing_pump_pressure_switch = false;
+    }
+  }
+
+  if (pump_setting_label)
+  {
+    lv_label_set_text(pump_setting_label,
+                      enabled ? "Pressure setpoint" : "Pump power");
+  }
+
+  // if (pump_pressure_status_label)
+  // {
+  //   lv_label_set_text(pump_pressure_status_label,
+  //                     enabled ? "Pump pressure control is on"
+  //                             : "Pump pressure control is off");
+  // }
+
+  refresh_pump_setting_ui();
+}
+
+static const char *pressure_option_list(void)
+{
+  static char options[256];
+  static bool cached = false;
+
+  if (!cached)
+  {
+    char *ptr = options;
+    size_t remaining = sizeof(options);
+
+    for (int i = 0; i <= 24; ++i)
+    {
+      float value = i * 0.5f;
+      int written =
+          snprintf(ptr, remaining, "%.1f bar%s", value, i < 24 ? "\n" : "");
+      if (written < 0 || (size_t)written >= remaining)
+        break;
+      ptr += written;
+      remaining -= (size_t)written;
+    }
+
+    cached = true;
+  }
+
+  options[sizeof(options) - 1] = '\0';
+  return options;
+}
+
+static const char *pump_power_option_list(void)
+{
+  static char options[128];
+  static bool cached = false;
+
+  if (!cached)
+  {
+    char *ptr = options;
+    size_t remaining = sizeof(options);
+
+    for (int value = 40; value <= 95; value += 5)
+    {
+      int written =
+          snprintf(ptr, remaining, "%d%%%s", value, value < 95 ? "\n" : "");
+      if (written < 0 || (size_t)written >= remaining)
+        break;
+      ptr += written;
+      remaining -= (size_t)written;
+    }
+
+    cached = true;
+  }
+
+  options[sizeof(options) - 1] = '\0';
+  return options;
+}
+
+static void refresh_pump_setting_ui(void)
+{
+  if (!pump_setting_roller)
+    return;
+
+  bool mode_changed =
+      pump_pressure_mode_on != s_pump_setting_options_pressure_mode;
+
+  bool guard_active = false;
+
+  if (!s_pump_setting_options_set || mode_changed)
+  {
+    s_syncing_pump_setting_roller = true;
+    guard_active = true;
+    const char *options = pump_pressure_mode_on ? pressure_option_list()
+                                                : pump_power_option_list();
+    lv_roller_set_options(pump_setting_roller, options, LV_ROLLER_MODE_NORMAL);
+    s_pump_setting_options_set = true;
+    s_pump_setting_options_pressure_mode = pump_pressure_mode_on;
+  }
+
+  int desired_index = 0;
+  if (pump_pressure_mode_on)
+  {
+    float pressure = MQTT_GetSetPressure();
+    if (isnan(pressure))
+      pressure = 0.0f;
+    if (pressure < 0.0f)
+      pressure = 0.0f;
+    if (pressure > 12.0f)
+      pressure = 12.0f;
+    desired_index = (int)floorf((pressure * 2.0f) + 0.5f);
+    if (desired_index < 0)
+      desired_index = 0;
+    if (desired_index > 24)
+      desired_index = 24;
+  }
+  else
+  {
+    float power = MQTT_GetPumpPower();
+    if (isnan(power))
+      power = 40.0f;
+    if (power < 40.0f)
+      power = 40.0f;
+    if (power > 95.0f)
+      power = 95.0f;
+    desired_index = (int)floorf(((power - 40.0f) / 5.0f) + 0.5f);
+    if (desired_index < 0)
+      desired_index = 0;
+    if (desired_index > 11)
+      desired_index = 11;
+  }
+
+  uint16_t current = lv_roller_get_selected(pump_setting_roller);
+  if (current != (uint16_t)desired_index)
+  {
+    if (!guard_active)
+    {
+      s_syncing_pump_setting_roller = true;
+      guard_active = true;
+    }
+    lv_roller_set_selected(pump_setting_roller, desired_index, LV_ANIM_OFF);
+  }
+
+  if (guard_active)
+    s_syncing_pump_setting_roller = false;
+}
+
+static void pump_setting_roller_event_cb(lv_event_t *e)
+{
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED)
+    return;
+
+  if (s_syncing_pump_setting_roller)
+    return;
+
+  lv_obj_t *roller = lv_event_get_target(e);
+  uint16_t selected = lv_roller_get_selected(roller);
+
+  if (pump_pressure_mode_on)
+  {
+    float value = selected * 0.5f;
+    MQTT_SetPressureSetpoint(value);
+  }
+  else
+  {
+    float value = 40.0f + selected * 5.0f;
+    MQTT_SetPumpPower(value);
+  }
 }
 
 void LVGL_Backlight_adjustment(uint8_t Backlight) { Set_Backlight(Backlight); }
@@ -1184,11 +1590,11 @@ void LVGL_EnterStandby(void)
 
     (void)create_comm_status_row(standby_screen, -45);
 
-    lv_obj_t *title = lv_label_create(standby_screen);
-    lv_label_set_text(title, "Standby");
-    lv_obj_add_style(title, &style_title, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
+    // lv_obj_t *title = lv_label_create(standby_screen);
+    // lv_label_set_text(title, "Standby");
+    // lv_obj_add_style(title, &style_title, 0);
+    // lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    // lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
 
     standby_time_label = lv_label_create(standby_screen);
     lv_obj_add_style(standby_time_label, &style_title, 0);

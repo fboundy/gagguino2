@@ -123,6 +123,12 @@ constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 60000;
 constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
 constexpr float PUMP_POWER_DEFAULT = 95.0f;
+constexpr float PRESSURE_SETPOINT_DEFAULT = 9.0f;
+constexpr float PRESSURE_SETPOINT_MIN = 0.0f;
+constexpr float PRESSURE_SETPOINT_MAX = 12.0f;
+constexpr float PRESSURE_LIMIT_TOL = 0.1f;
+constexpr float PUMP_PRESSURE_RAMP_RATE = 50.0f;    // % per second when ramping up in pressure mode
+constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;    // Max dt (s) considered for ramp calculations
 
 const bool debugPrint = true;
 }  // namespace
@@ -189,6 +195,10 @@ int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;             // HA switch default ON at boot
 float pumpPower = PUMP_POWER_DEFAULT;  // Default pump power (%), overridden by display
+float pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;  // Target brew pressure in bar
+bool pumpPressureModeEnabled = false;  // When true limit pump power to pressure setpoint
+float lastPumpApplied = 0.0f;          // Actual power sent to dimmer after ramp/limits
+unsigned long lastPumpApplyMs = 0;     // Timestamp of last pump power application
 
 // Pressure
 int rawPress = 0;
@@ -203,17 +213,14 @@ unsigned long nLoop = 0, currentTime = 0, lastPidTime = 0, lastPwmTime = 0, last
 // microsecond timestamps for ISR debounce
 volatile int64_t lastPulseTime = 0;
 unsigned long shotStart = 0, startTime = 0;
-float shotTime = 0;                   //
-unsigned long shotAccumulatedMs = 0;  //!< total pump?active time of completed segments
-unsigned long shotTimeMs = 0;         //!< current shot time including active segment
-bool pumpPrevActive = false;          //!< tracks pump activity transitions
+float shotTime = 0;  //
 
 // Flow / flags
 volatile unsigned long pulseCount = 0;
 volatile unsigned long zcCount = 0;
+volatile unsigned long lastZcCount = 0;
 volatile int64_t lastZcTime = 0;  // microsecond timestamp
-float vol = 0, preFlowVol = 0, shotVol = 0;
-float lastVol = 0;
+int vol = 0, preFlowVol = 0, shotVol = 0;
 bool prevSteamFlag = false, ac = false;
 int acCount = 0;
 bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
@@ -320,9 +327,6 @@ static void checkShotStartStop() {
         ((currentTime - startTime) > ZC_WAIT)) {
         shotStart = currentTime;
         shotTime = 0;
-        shotTimeMs = 0;
-        shotAccumulatedMs = 0;
-        pumpPrevActive = true;
         shotFlag = true;
         pulseCount = 0;
         preFlow = true;
@@ -332,12 +336,8 @@ static void checkShotStartStop() {
     if ((steamFlag && !prevSteamFlag) ||
         (currentTime - lastZcTimeMs >= SHOT_RESET && shotFlag && currentTime > lastZcTimeMs)) {
         pulseCount = 0;
-        lastVol = 0;
         shotVol = 0;
         shotTime = 0;
-        shotTimeMs = 0;
-        shotAccumulatedMs = 0;
-        pumpPrevActive = false;
         lastPulseTime = esp_timer_get_time();
         shotFlag = false;
         preFlow = false;
@@ -403,8 +403,47 @@ static inline float clampf(float v, float lo, float hi) {
  * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
  */
 static void applyPumpPower() {
-    float clamped = clampf(pumpPower, 0.0f, 100.0f);
-    int percent = static_cast<int>(lroundf(clamped));
+    float requested = clampf(pumpPower, 0.0f, 100.0f);
+    float applied = requested;
+
+    if (pumpPressureModeEnabled) {
+        float limit = clampf(pressureSetpointBar, PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX);
+        float sensed = lastPress;
+        if (limit <= 0.0f) {
+            applied = 0.0f;
+        } else if (sensed > (limit + PRESSURE_LIMIT_TOL)) {
+            if (sensed > 0.1f) {
+                float ratio = (limit + PRESSURE_LIMIT_TOL) / sensed;
+                ratio = clampf(ratio, 0.0f, 1.0f);
+                applied = requested * ratio;
+            } else {
+                applied = 0.0f;
+            }
+        }
+    }
+
+    unsigned long nowMs = millis();
+    if (pumpPressureModeEnabled) {
+        float dt = 0.0f;
+        if (lastPumpApplyMs == 0) {
+            dt = PRESS_CYCLE / 1000.0f;  // assume at least one pressure cycle
+        } else {
+            dt = (nowMs - lastPumpApplyMs) / 1000.0f;
+        }
+        dt = clampf(dt, 0.0f, PUMP_PRESSURE_RAMP_MAX_DT);
+        float maxIncrease = PUMP_PRESSURE_RAMP_RATE * dt;
+        float allowed = lastPumpApplied + maxIncrease;
+        if (applied > allowed) {
+            applied = allowed;
+        }
+    }
+
+    applied = clampf(applied, 0.0f, 100.0f);
+
+    lastPumpApplyMs = nowMs;
+    lastPumpApplied = applied;
+
+    int percent = static_cast<int>(lroundf(applied));
     pumpDimmer.setPower(percent);
     pumpDimmer.setState(percent > 0 ? ON : OFF);
 }
@@ -422,6 +461,10 @@ static void updatePressure() {
     pressBuffIdx++;
     if (pressBuffIdx >= PRESS_BUFF_SIZE) pressBuffIdx = 0;
     lastPress = pressSum / PRESS_BUFF_SIZE;
+
+    if (pumpPressureModeEnabled) {
+        applyPumpPower();
+    }
 }
 
 /**
@@ -464,35 +507,9 @@ static void updatePreFlow() {
  * @brief Convert pulse counts to volumes and maintain shot volume.
  */
 static void updateVols() {
-    vol = pulseCount * FLOW_CAL;
-    lastVol = vol;
+    unsigned long pulses = pulseCount;
+    vol = static_cast<int>(pulses * FLOW_CAL);
     shotVol = (preFlow || !shotFlag) ? 0.0f : (vol - preFlowVol);
-}
-
-/**
- * @brief Update shot timer, pausing when pump zero-crosses cease.
- */
-static void updateShotTime() {
-    if (!shotFlag) return;
-
-    unsigned long lastZcTimeMs = lastZcTime / 1000;
-    bool pumpActive = (currentTime - lastZcTimeMs) <= ZC_OFF;
-
-    if (pumpActive) {
-        if (!pumpPrevActive) {
-            shotStart = currentTime;
-            pumpPrevActive = true;
-        }
-        shotTimeMs = shotAccumulatedMs + (currentTime - shotStart);
-    } else {
-        if (pumpPrevActive) {
-            shotAccumulatedMs += currentTime - shotStart;
-            pumpPrevActive = false;
-        }
-        shotTimeMs = shotAccumulatedMs;
-    }
-
-    shotTime = shotTimeMs / 1000.0f;
 }
 
 // ISRs
@@ -526,6 +543,8 @@ static void revertToSafeDefaults() {
         LOG("ESP-NOW: Heater default -> ON");
     }
     pumpPower = PUMP_POWER_DEFAULT;
+    pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;
+    pumpPressureModeEnabled = false;
     applyPumpPower();
     pumpMode = ESPNOW_PUMP_MODE_NORMAL;
     steamDispFlag = false;
@@ -539,13 +558,15 @@ static void sendEspNowPacket() {
     pkt.shotFlag = shotFlag ? 1 : 0;
     pkt.steamFlag = steamFlag ? 1 : 0;
     pkt.heaterSwitch = heaterEnabled ? 1 : 0;
-    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(shotTimeMs) : 0;
+    pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(shotTime * 1000.0f) : 0;
     pkt.shotVolumeMl = static_cast<float>(shotVol);
     pkt.setTempC = setTemp;
     pkt.currentTempC = currentTemp;
     pkt.pressureBar = pressNow;
     pkt.steamSetpointC = steamSetpoint;
     pkt.brewSetpointC = brewSetpoint;
+    pkt.pressureSetpointBar = pressureSetpointBar;
+    pkt.pumpPressureMode = pumpPressureModeEnabled ? 1 : 0;
     const uint8_t* dest = g_haveDisplayPeer ? g_displayMac : nullptr;
     esp_err_t err = esp_now_send(dest, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
     if (err != ESP_OK) {
@@ -560,11 +581,12 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
 
     LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f "
         "pidP=%.2f pidI=%.2f pidGuard=%.2f "
-        "pidD=%.2f pump=%.1f mode=%u",
+        "pidD=%.2f pump=%.1f mode=%u pressSet=%.1f pressMode=%d",
         static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
         (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
         pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.dTau, pkt.pumpPowerPercent,
-        static_cast<unsigned>(pkt.pumpMode));
+        static_cast<unsigned>(pkt.pumpMode), pkt.pressureSetpointBar,
+        (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_PRESSURE) ? 1 : 0);
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
     if (hv != heaterEnabled) {
@@ -626,7 +648,27 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
         applyPumpPower();
     }
 
+    float newPressureSetpoint = clampf(pkt.pressureSetpointBar, 0.0f, 15.0f);
+    if (fabsf(newPressureSetpoint - pressureSetpointBar) > 0.1f) {
+        pressureSetpointBar = newPressureSetpoint;
+    }
+
     pumpMode = static_cast<EspNowPumpMode>(pkt.pumpMode);
+
+    float newPressureSet =
+        clampf(pkt.pressureSetpointBar, PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX);
+    if (fabsf(newPressureSet - pressureSetpointBar) > 0.01f) {
+        pressureSetpointBar = newPressureSet;
+        LOG("ESP-NOW: Pressure setpoint -> %.1f bar", pressureSetpointBar);
+        if (pumpPressureModeEnabled) applyPumpPower();
+    }
+
+    bool newPressureMode = (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_PRESSURE) != 0;
+    if (newPressureMode != pumpPressureModeEnabled) {
+        pumpPressureModeEnabled = newPressureMode;
+        LOG("ESP-NOW: Pump pressure mode -> %s", pumpPressureModeEnabled ? "ON" : "OFF");
+        applyPumpPower();
+    }
 
     if (mac) {
         memcpy(g_displayMac, mac, ESP_NOW_ETH_ALEN);
@@ -1002,10 +1044,14 @@ void loop() {
     updatePreFlow();
     updateVols();
     updateSteamFlag();
-    updateShotTime();
 
     syncClockFromWifi();
     maybeHopEspNowChannel();
+    // Update shot time continuously while shot is active (seconds)
+    if (shotFlag && (zcCount > lastZcCount)) {
+        shotTime = (currentTime - shotStart) / 1000.0f;
+    }
+    lastZcCount = zcCount;
 
     if (g_espnowHandshake && (currentTime - lastEspNowTime) >= ESP_CYCLE) {
         sendEspNowPacket();
