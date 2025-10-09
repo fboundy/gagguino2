@@ -8,7 +8,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "esp_err.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include <sys/time.h>
 #include <time.h>
 #include <string.h>
@@ -82,6 +84,17 @@ void app_main(void)
     Wireless_Init();  // Configure Wi-Fi/BLE modules
     Driver_Init();    // Initialize hardware drivers
 
+    bool wdt_registered = false;
+    esp_err_t wdt_err = esp_task_wdt_add(NULL);
+    if (wdt_err == ESP_OK) {
+        wdt_registered = true;
+        ESP_LOGI("BOOT", "Registered app_main with task watchdog");
+    } else if (wdt_err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGW("BOOT", "Task watchdog not initialized; skipping manual feed");
+    } else {
+        ESP_LOGW("BOOT", "Failed to register app_main with task watchdog: %s", esp_err_to_name(wdt_err));
+    }
+
     LCD_Init();      // Prepare LCD display
     Touch_Init();    // Initialize touch controller
     SD_Init();       // Mount SD card
@@ -141,6 +154,10 @@ void app_main(void)
                 Set_Backlight(LCD_Backlight);
                 standby_mode = false;
             }
+        }
+
+        if (wdt_registered) {
+            esp_task_wdt_reset();
         }
     }
 }
