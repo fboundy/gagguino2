@@ -6,8 +6,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "esp_err.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#ifdef CONFIG_ESP_TASK_WDT
+#include "esp_task_wdt.h"
+#endif
 #include "version.h"
 #include "Battery.h"
 
@@ -66,6 +72,8 @@ static void Menu_create(void);
 static lv_obj_t *create_placeholder_screen(const char *title);
 static void open_settings_event_cb(lv_event_t *e);
 static void open_screen_event_cb(lv_event_t *e);
+static void brew_button_event_cb(lv_event_t *e);
+static void log_brew_button_diagnostics(lv_event_t *e);
 static void open_menu_event_cb(lv_event_t *e);
 static void draw_ticks_cb(lv_event_t *e);
 static void init_tick_cache(void);
@@ -103,6 +111,8 @@ static void pump_power_event_cb(lv_event_t *e);
 /**********************
  *  STATIC VARIABLES
  **********************/
+static const char *TAG_UI = "UI";
+
 static disp_size_t disp_size;
 
 lv_style_t style_text_muted;
@@ -856,7 +866,7 @@ static void Menu_create(void)
   lv_obj_align(button_grid, LV_ALIGN_CENTER, 0, 0);
 
   lv_obj_t *brew_btn = create_menu_button(button_grid, 0, 0, MDI_COFFEE, "Brew");
-  lv_obj_add_event_cb(brew_btn, open_screen_event_cb, LV_EVENT_CLICKED, brew_screen);
+  lv_obj_add_event_cb(brew_btn, brew_button_event_cb, LV_EVENT_CLICKED, brew_screen);
 
   lv_obj_t *steam_btn = create_menu_button(button_grid, 1, 0, MDI_STEAM, "Steam");
   lv_obj_add_event_cb(steam_btn, open_screen_event_cb, LV_EVENT_CLICKED, steam_screen);
@@ -868,6 +878,53 @@ static void Menu_create(void)
   lv_obj_add_event_cb(settings_btn, open_settings_event_cb, LV_EVENT_CLICKED, NULL);
 
   add_version_label(menu_screen);
+}
+
+static void log_brew_button_diagnostics(lv_event_t *e)
+{
+  lv_obj_t *target = lv_event_get_target(e);
+  lv_obj_t *user_data = lv_event_get_user_data(e);
+  size_t free_heap = esp_get_free_heap_size();
+  size_t min_free_heap = esp_get_minimum_free_heap_size();
+  UBaseType_t stack_high_water_mark = uxTaskGetStackHighWaterMark(NULL);
+
+  ESP_LOGI(TAG_UI,
+           "Brew button pressed (event=%d target=%p user_data=%p)",
+           (int)lv_event_get_code(e), (void *)target, (void *)user_data);
+  ESP_LOGI(TAG_UI,
+           "Heap free=%zu bytes (minimum=%zu), UI task stack high watermark=%u words",
+           free_heap, min_free_heap, (unsigned)stack_high_water_mark);
+
+#ifdef CONFIG_ESP_TASK_WDT
+  esp_err_t wdt_status = esp_task_wdt_status(NULL);
+  if (wdt_status == ESP_OK)
+  {
+    ESP_LOGI(TAG_UI, "Task WDT status: registered and healthy");
+  }
+  else if (wdt_status == ESP_ERR_NOT_FOUND)
+  {
+    ESP_LOGW(TAG_UI, "Task WDT status: UI task not registered");
+  }
+  else
+  {
+    ESP_LOGW(TAG_UI, "Task WDT status error: %s", esp_err_to_name(wdt_status));
+  }
+#endif
+}
+
+static void brew_button_event_cb(lv_event_t *e)
+{
+  log_brew_button_diagnostics(e);
+
+  lv_obj_t *target = lv_event_get_user_data(e);
+  if (target)
+  {
+    load_screen(target);
+  }
+  else
+  {
+    ESP_LOGW(TAG_UI, "Brew button pressed without associated screen");
+  }
 }
 
 static void open_screen_event_cb(lv_event_t *e)
