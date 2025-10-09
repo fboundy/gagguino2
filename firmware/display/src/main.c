@@ -90,7 +90,19 @@ void app_main(void)
         wdt_registered = true;
         ESP_LOGI("BOOT", "Registered app_main with task watchdog");
     } else if (wdt_err == ESP_ERR_INVALID_STATE) {
-        ESP_LOGW("BOOT", "Task watchdog not initialized; skipping manual feed");
+        /*
+         * ESP_ERR_INVALID_STATE can mean either that the task watchdog is not
+         * initialised yet or that the current task has already been
+         * registered by the IDF startup code.  Attempt a reset to
+         * differentiate the two situations so we continue feeding the WDT in
+         * the latter case.
+         */
+        if (esp_task_wdt_reset() == ESP_OK) {
+            wdt_registered = true;
+            ESP_LOGW("BOOT", "Task watchdog already registered; using existing entry");
+        } else {
+            ESP_LOGW("BOOT", "Task watchdog not initialized; skipping manual feed");
+        }
     } else {
         ESP_LOGW("BOOT", "Failed to register app_main with task watchdog: %s", esp_err_to_name(wdt_err));
     }
