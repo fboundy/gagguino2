@@ -513,6 +513,7 @@ static bool s_pid_d_discovery_published = false;
 static bool s_pid_g_discovery_published = false;
 static bool s_dtau_discovery_published = false;
 static bool s_pressure_setpoint_discovery_published = false;
+static bool s_pump_power_discovery_published = false;
 static bool s_pump_pressure_mode_discovery_published = false;
 
 static bool publish_pid_number_discovery(const char *name, const char *suffix, const char *cmd_topic,
@@ -615,8 +616,10 @@ static void publish_pid_discovery(void)
     publish_pid_number_discovery("PID dTau", "pid_dtau", TOPIC_DTAU_CMD, TOPIC_DTAU_STATE, 0.0f, 2.0f, 0.05f,
                                  &s_dtau_discovery_published);
     publish_pid_number_discovery("Pressure Setpoint", "pressure_setpoint", TOPIC_PRESSURE_SETPOINT_CMD,
-                                 TOPIC_PRESSURE_SETPOINT_STATE, CONTROL_PRESSURE_MIN, CONTROL_PRESSURE_MAX, 0.1f,
+                                 TOPIC_PRESSURE_SETPOINT_STATE, CONTROL_PRESSURE_MIN, CONTROL_PRESSURE_MAX, 0.5f,
                                  &s_pressure_setpoint_discovery_published);
+    publish_pid_number_discovery("Pump Power", "pump_power", TOPIC_PUMP_POWER_CMD, TOPIC_PUMP_POWER_STATE, 40.0f, 95.0f,
+                                 5.0f, &s_pump_power_discovery_published);
     publish_switch_discovery("Pump Pressure Mode", "pump_pressure_mode", TOPIC_PUMP_PRESSURE_MODE_CMD,
                              TOPIC_PUMP_PRESSURE_MODE_STATE, &s_pump_pressure_mode_discovery_published);
 }
@@ -629,6 +632,7 @@ static inline void reset_pid_discovery_flags(void)
     s_pid_g_discovery_published = false;
     s_dtau_discovery_published = false;
     s_pressure_setpoint_discovery_published = false;
+    s_pump_power_discovery_published = false;
     s_pump_pressure_mode_discovery_published = false;
 }
 #else
@@ -875,7 +879,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 break;
             }
             s_control.pressureSetpoint = v;
-            s_pump_power = s_control.pressureSetpoint;
+            s_pressure_setpoint = s_control.pressureSetpoint;
         }
         else if (strcmp(topic, TOPIC_PUMP_MODE_STATE) == 0)
         {
@@ -1035,10 +1039,15 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         else if (strcmp(topic, TOPIC_PUMP_POWER_CMD) == 0)
         {
             float v = strtof(payload, NULL);
+            if (v < 40.0f)
+                v = 40.0f;
+            else if (v > 95.0f)
+                v = 95.0f;
             control_bootstrap_complete();
             if (!float_equals(v, s_control.pumpPower, CONTROL_PUMP_POWER_TOLERANCE))
             {
                 s_control.pumpPower = v;
+                s_pump_power = v;
                 log_control_float("pump_power", v, 1);
                 handle_control_change();
             }
@@ -1506,6 +1515,7 @@ float MQTT_GetSetTemp(void) { return s_set_temp; }
 float MQTT_GetCurrentPressure(void) { return s_pressure; }
 float MQTT_GetSetPressure(void) { return s_pressure_setpoint; }
 bool MQTT_GetPumpPressureMode(void) { return s_pump_pressure_mode; }
+float MQTT_GetPumpPower(void) { return s_pump_power; }
 float MQTT_GetShotTime(void) { return s_shot_time; }
 float MQTT_GetShotVolume(void) { return s_shot_volume; }
 uint32_t MQTT_GetZcCount(void) { return s_zc_count; }
@@ -1541,6 +1551,38 @@ void MQTT_SetPumpPressureMode(bool enabled)
     s_control.pumpPressureMode = enabled;
     s_pump_pressure_mode = enabled;
     log_control_bool("pump_pressure_mode", enabled);
+    handle_control_change();
+}
+
+void MQTT_SetPressureSetpoint(float pressure)
+{
+    if (pressure < CONTROL_PRESSURE_MIN)
+        pressure = CONTROL_PRESSURE_MIN;
+    else if (pressure > CONTROL_PRESSURE_MAX)
+        pressure = CONTROL_PRESSURE_MAX;
+
+    if (float_equals(pressure, s_control.pressureSetpoint, CONTROL_PRESSURE_TOLERANCE))
+        return;
+
+    s_control.pressureSetpoint = pressure;
+    s_pressure_setpoint = pressure;
+    log_control_float("pressure_setpoint", pressure, 1);
+    handle_control_change();
+}
+
+void MQTT_SetPumpPower(float power)
+{
+    if (power < 40.0f)
+        power = 40.0f;
+    else if (power > 95.0f)
+        power = 95.0f;
+
+    if (float_equals(power, s_control.pumpPower, CONTROL_PUMP_POWER_TOLERANCE))
+        return;
+
+    s_control.pumpPower = power;
+    s_pump_power = power;
+    log_control_float("pump_power", power, 1);
     handle_control_change();
 }
 
