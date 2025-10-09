@@ -1046,6 +1046,11 @@ void loop() {
         LOG("");
         lastLogTime = currentTime;
     }
+
+    // Yield briefly so the FreeRTOS idle task can run and feed the watchdog.
+    // Without this pause, the tight control loop can monopolize CPU0 and
+    // trigger the task watchdog (observed as IDLE0 timeouts in the logs).
+    delay(1);
 }
 
 }  // namespace gag
