@@ -36,6 +36,31 @@ static int log_vprintf(const char *fmt, va_list args)
     strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &tm);
     return esp_rom_printf("[%s.%03ld] %s", tbuf, tv.tv_usec / 1000, msg);
 }
+
+static bool feed_task_watchdog(bool registered)
+{
+    if (!registered)
+        return false;
+
+    esp_err_t reset_err = esp_task_wdt_reset();
+    if (reset_err == ESP_OK)
+        return true;
+
+    ESP_LOGW("BOOT", "Failed to reset task watchdog: %s", esp_err_to_name(reset_err));
+
+    if (reset_err == ESP_ERR_NOT_FOUND)
+    {
+        esp_err_t add_err = esp_task_wdt_add(NULL);
+        if (add_err == ESP_OK)
+        {
+            ESP_LOGW("BOOT", "Re-registered app_main with task watchdog");
+            return true;
+        }
+        ESP_LOGE("BOOT", "Failed to re-register app_main with task watchdog: %s", esp_err_to_name(add_err));
+    }
+
+    return false;
+}
 #include "TCA9554PWR.h"
 #include "ST7701S.h"
 #include "CST820.h"
@@ -129,8 +154,10 @@ void app_main(void)
     last_zc_count = MQTT_GetZcCount();
 
     const TickType_t loop_delay = pdMS_TO_TICKS(50);
+    const TickType_t sleep_period = (loop_delay > 0) ? loop_delay : 1;
     const TickType_t ui_update_period = pdMS_TO_TICKS(100);
     TickType_t last_ui_update = start_tick;
+    TickType_t next_wake = start_tick;
 
     while (1) {
         TickType_t tick_before = xTaskGetTickCount();
@@ -177,17 +204,16 @@ void app_main(void)
             }
         }
 
-        if (wdt_registered) {
-            esp_task_wdt_reset();
-        }
+        wdt_registered = feed_task_watchdog(wdt_registered);
 
         /*
          * Yield to the scheduler so the idle task can run and feed the
          * watchdog.  Without this delay the loop becomes a tight spin that
          * prevents IDLE0 from executing, eventually triggering the task WDT
-         * on the display build.  The fixed branch included an explicit delay
-         * here; reintroduce it so we maintain a cooperative update cadence.
+         * on the display build.  Use vTaskDelayUntil() so we maintain a
+         * cooperative update cadence even if the body of the loop takes
+         * varying amounts of time to complete.
          */
-        vTaskDelay(loop_delay);
+        vTaskDelayUntil(&next_wake, sleep_period);
     }
 }
