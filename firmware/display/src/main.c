@@ -168,7 +168,5 @@ void app_main(void)
         if (wdt_registered) {
             esp_task_wdt_reset();
         }
-
-        vTaskDelay(loop_delay);
     }
 }
