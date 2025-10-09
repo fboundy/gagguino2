@@ -72,8 +72,8 @@ static lv_obj_t *create_comm_status_row(lv_obj_t *parent, lv_coord_t y_offset);
 static lv_obj_t *create_menu_button(lv_obj_t *grid, uint8_t col, uint8_t row,
                                     const char *icon, const char *label);
 static void add_version_label(lv_obj_t *parent);
-static void shot_def_dd_event_cb(lv_event_t *e);
-static void beep_on_shot_btn_event_cb(lv_event_t *e);
+static void __attribute__((unused)) shot_def_dd_event_cb(lv_event_t *e);
+static void __attribute__((unused)) beep_on_shot_btn_event_cb(lv_event_t *e);
 static void buzzer_timer_cb(lv_timer_t *t);
 static int roller_get_int_value(lv_obj_t *roller);
 static float roller_get_float_value(lv_obj_t *roller);
@@ -324,7 +324,7 @@ static lv_obj_t *create_settings_row(lv_obj_t *parent, const char *label)
   lv_obj_t *row = lv_obj_create(parent);
   lv_obj_remove_style_all(row);
   lv_obj_set_width(row, LV_PCT(100));
-  lv_obj_set_height(row, LV_SIZE_CONTENT);
+  lv_obj_set_style_height(row, LV_SIZE_CONTENT, 0);
   lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(row, 0, 0);
   lv_obj_set_style_pad_all(row, 0, 0);
@@ -1507,7 +1507,7 @@ void Backlight_adjustment_event_cb(lv_event_t *e)
     ESP_LOGW("LVGL", "Volume out of range: %d", Backlight);
 }
 
-static void shot_def_dd_event_cb(lv_event_t *e)
+static void __attribute__((unused)) shot_def_dd_event_cb(lv_event_t *e)
 {
   uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
   switch (sel)
@@ -1549,7 +1549,7 @@ static int roller_get_int_value(lv_obj_t *roller)
   return atoi(buf);
 }
 
-static void beep_on_shot_btn_event_cb(lv_event_t *e)
+static void __attribute__((unused)) beep_on_shot_btn_event_cb(lv_event_t *e)
 {
   lv_obj_t *btn = lv_event_get_target(e);
   lv_obj_t *label = lv_obj_get_child(btn, 0);
