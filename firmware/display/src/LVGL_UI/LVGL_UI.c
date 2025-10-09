@@ -343,14 +343,79 @@ static lv_obj_t *create_settings_row(lv_obj_t *parent, const char *label)
   return row;
 }
 
+static bool append_char_to_buffer(char *buf, size_t buf_size, size_t *offset, char c)
+{
+  if (!buf || !offset || buf_size == 0)
+    return false;
+
+  if (*offset + 1 >= buf_size)
+  {
+    buf[buf_size - 1] = '\0';
+    return false;
+  }
+
+  buf[*offset] = c;
+  (*offset)++;
+  buf[*offset] = '\0';
+  return true;
+}
+
+static bool append_unsigned_to_buffer(char *buf, size_t buf_size, size_t *offset, unsigned long value)
+{
+  char digits[21];
+  size_t len = 0;
+
+  do
+  {
+    digits[len++] = (char)('0' + (value % 10));
+    value /= 10;
+  } while (value > 0 && len < sizeof(digits));
+
+  while (len > 0)
+  {
+    if (!append_char_to_buffer(buf, buf_size, offset, digits[--len]))
+      return false;
+  }
+
+  return true;
+}
+
+static bool append_fraction_to_buffer(char *buf, size_t buf_size, size_t *offset, unsigned long fraction,
+                                      unsigned long scale, uint8_t decimals)
+{
+  if (decimals == 0)
+    return true;
+
+  if (!append_char_to_buffer(buf, buf_size, offset, '.'))
+    return false;
+
+  unsigned long divisor = scale;
+  for (uint8_t i = 0; i < decimals; ++i)
+  {
+    if (divisor > 1)
+      divisor /= 10;
+    else
+      divisor = 1;
+
+    unsigned long digit = divisor ? fraction / divisor : 0;
+    fraction = divisor ? fraction % divisor : 0;
+
+    if (!append_char_to_buffer(buf, buf_size, offset, (char)('0' + digit)))
+      return false;
+  }
+
+  return true;
+}
+
 static void build_roller_options(char *buf, size_t buf_size, float min, float max,
                                  float step, uint8_t decimals)
 {
   if (!buf || buf_size == 0 || step <= 0.0f)
     return;
 
+  buf[0] = '\0';
   size_t offset = 0;
-  int scale = 1;
+  unsigned long scale = 1;
   for (uint8_t d = 0; d < decimals; ++d)
     scale *= 10;
 
@@ -365,28 +430,32 @@ static void build_roller_options(char *buf, size_t buf_size, float min, float ma
     if (value_scaled > max_scaled)
       value_scaled = max_scaled;
 
-    long integer_part = value_scaled / scale;
-    long fractional_part = labs(value_scaled % scale);
     bool is_last = value_scaled >= max_scaled;
+    bool negative = value_scaled < 0;
+    unsigned long abs_value = (unsigned long)(negative ? -value_scaled : value_scaled);
+    unsigned long integer_part = abs_value / scale;
+    unsigned long fractional_part = abs_value % scale;
 
-    int written;
-    if (decimals == 0)
-      written = lv_snprintf(buf + offset, buf_size - offset,
-                            is_last ? "%ld" : "%ld\n", integer_part);
-    else
-      written = lv_snprintf(buf + offset, buf_size - offset,
-                            is_last ? "%ld.%0*ld" : "%ld.%0*ld\n", integer_part,
-                            decimals, fractional_part);
+    if (negative && !append_char_to_buffer(buf, buf_size, &offset, '-'))
+      break;
 
-    if (written < 0 || (size_t)written >= buf_size - offset)
+    if (!append_unsigned_to_buffer(buf, buf_size, &offset, integer_part))
+      break;
+
+    if (!append_fraction_to_buffer(buf, buf_size, &offset, fractional_part, scale, decimals))
+      break;
+
+    if (!is_last)
     {
-      buf[buf_size - 1] = '\0';
+      if (!append_char_to_buffer(buf, buf_size, &offset, '\n'))
+        break;
+    }
+    else
+    {
+      if (offset < buf_size)
+        buf[offset] = '\0';
       break;
     }
-
-    offset += (size_t)written;
-    if (is_last)
-      break;
   }
 }
 
