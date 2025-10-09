@@ -1,5 +1,6 @@
 #include "LVGL_UI.h"
 #include <inttypes.h>
+#include <limits.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -352,26 +353,113 @@ static void build_roller_options(char *buf, size_t buf_size, float min, float ma
   if (!buf || buf_size == 0 || step <= 0.0f)
     return;
 
+  buf[0] = '\0';
   size_t offset = 0;
   int steps = (int)roundf((max - min) / step);
   if (steps < 0)
     steps = 0;
 
-  for (int i = 0; i <= steps; ++i)
+  uint8_t effective_decimals = decimals;
+  long factor = 1;
+  for (uint8_t i = 0; i < decimals; ++i)
+  {
+    if (factor > LONG_MAX / 10)
+    {
+      effective_decimals = 0;
+      factor = 1;
+      break;
+    }
+    factor *= 10;
+  }
+
+  bool truncated = false;
+
+  for (int i = 0; i <= steps && !truncated; ++i)
   {
     double value = (double)min + (double)step * (double)i;
     if (value > (double)max)
       value = (double)max;
-    int written = lv_snprintf(buf + offset, buf_size - offset,
-                              (i == steps) ? "%.*f" : "%.*f\n", decimals,
-                              value);
+
+    long scaled = lround(value * (double)factor);
+    long integer_part = scaled;
+    long fractional_part = 0;
+
+    if (effective_decimals > 0 && factor > 1)
+    {
+      integer_part = scaled / factor;
+      fractional_part = labs(scaled - integer_part * factor);
+    }
+
+    int written = lv_snprintf(buf + offset, buf_size - offset, "%ld", integer_part);
     if (written < 0 || (size_t)written >= buf_size - offset)
     {
       buf[buf_size - 1] = '\0';
+      truncated = true;
       break;
     }
     offset += (size_t)written;
+
+    if (effective_decimals > 0 && factor > 1)
+    {
+      if (offset + 1 >= buf_size)
+      {
+        buf[buf_size - 1] = '\0';
+        truncated = true;
+        break;
+      }
+      buf[offset++] = '.';
+      buf[offset] = '\0';
+
+      long frac_value = fractional_part;
+      long divisor = factor / 10;
+      if (divisor <= 0)
+        divisor = 1;
+
+      for (uint8_t digit_index = 0; digit_index < effective_decimals; ++digit_index)
+      {
+        if (offset + 1 >= buf_size)
+        {
+          buf[buf_size - 1] = '\0';
+          truncated = true;
+          break;
+        }
+
+        long digit = (divisor > 0) ? (frac_value / divisor) : 0;
+        if (digit < 0)
+          digit = -digit;
+
+        buf[offset++] = (char)('0' + (int)digit);
+        buf[offset] = '\0';
+
+        if (divisor > 0)
+        {
+          frac_value -= digit * divisor;
+          if (divisor > 1)
+            divisor /= 10;
+        }
+      }
+
+      if (truncated)
+        break;
+    }
+
+    if (i != steps)
+    {
+      if (offset + 1 >= buf_size)
+      {
+        buf[buf_size - 1] = '\0';
+        truncated = true;
+        break;
+      }
+      buf[offset++] = '\n';
+      buf[offset] = '\0';
+    }
   }
+
+  if (offset < buf_size)
+    buf[offset] = '\0';
+  else
+    buf[buf_size - 1] = '\0';
 }
 
 static void set_switch_state(lv_obj_t *sw, bool enabled)
@@ -579,6 +667,7 @@ static void Settings_create(void)
   lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER,
                         LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_flex_grow(content, 1);
 
   lv_obj_t *heater_row = create_settings_row(content, "Heater");
   heater_switch = lv_switch_create(heater_row);
@@ -663,12 +752,21 @@ static void Settings_create(void)
   lv_obj_add_event_cb(pump_power_roller, pump_power_event_cb,
                       LV_EVENT_VALUE_CHANGED, NULL);
 
-  lv_obj_t *back_btn = lv_btn_create(settings_scr);
-  lv_obj_set_size(back_btn, 80, 80);
+  lv_obj_t *footer = lv_obj_create(settings_scr);
+  lv_obj_remove_style_all(footer);
+  lv_obj_set_width(footer, LV_PCT(100));
+  lv_obj_set_height(footer, LV_PCT(15));
+  lv_obj_set_style_bg_opa(footer, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_pad_all(footer, 0, 0);
+  lv_obj_set_flex_flow(footer, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(footer, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                        LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t *back_btn = lv_btn_create(footer);
   lv_obj_set_style_border_width(back_btn, 0, 0);
   lv_obj_set_style_bg_color(back_btn, lv_palette_main(LV_PALETTE_GREY), 0);
-  lv_obj_add_flag(back_btn, LV_OBJ_FLAG_IGNORE_LAYOUT);
-  lv_obj_align(back_btn, LV_ALIGN_BOTTOM_MID, 0, -70);
+  lv_obj_set_height(back_btn, LV_PCT(60));
+  lv_obj_set_width(back_btn, LV_SIZE_CONTENT);
   lv_obj_add_event_cb(back_btn, open_menu_event_cb, LV_EVENT_CLICKED, NULL);
 
   lv_obj_t *back_label = lv_label_create(back_btn);
