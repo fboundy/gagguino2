@@ -69,6 +69,8 @@ static int day_of_week(int year, int month, int day);
 static int last_sunday_of_month(int year, int month);
 static void heater_switch_event_cb(lv_event_t *e);
 static void update_heater_controls(bool heater_state);
+static void pump_pressure_switch_event_cb(lv_event_t *e);
+static void update_pump_pressure_controls(bool enabled);
 
 void example1_increase_lvgl_tick(lv_timer_t *t);
 /**********************
@@ -153,6 +155,10 @@ static bool heater_on;
 static lv_obj_t *heater_switch;
 static lv_obj_t *heater_status_label;
 static bool s_syncing_heater_switch;
+static bool pump_pressure_mode_on;
+static lv_obj_t *pump_pressure_switch;
+static lv_obj_t *pump_pressure_status_label;
+static bool s_syncing_pump_pressure_switch;
 
 void Lvgl_Example1(void)
 {
@@ -251,6 +257,10 @@ void Lvgl_Example1(void)
   heater_switch = NULL;
   heater_status_label = NULL;
   s_syncing_heater_switch = false;
+  pump_pressure_switch = NULL;
+  pump_pressure_status_label = NULL;
+  s_syncing_pump_pressure_switch = false;
+  pump_pressure_mode_on = false;
   standby_timer = NULL;
   standby_time_label = NULL;
   standby_active = false;
@@ -338,6 +348,41 @@ static void Settings_create(void)
   lv_obj_set_width(heater_status_label, LV_PCT(100));
 
   update_heater_controls(MQTT_GetHeaterState());
+
+  lv_obj_t *pump_pressure_card = lv_obj_create(settings_scr);
+  lv_obj_remove_style_all(pump_pressure_card);
+  lv_obj_set_style_bg_opa(pump_pressure_card, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(pump_pressure_card, 0, 0);
+  lv_obj_set_style_pad_all(pump_pressure_card, 0, 0);
+  lv_obj_set_style_pad_row(pump_pressure_card, 8, 0);
+  lv_obj_set_width(pump_pressure_card, LV_PCT(100));
+  lv_obj_set_flex_flow(pump_pressure_card, LV_FLEX_FLOW_COLUMN);
+
+  lv_obj_t *pump_pressure_row = lv_obj_create(pump_pressure_card);
+  lv_obj_remove_style_all(pump_pressure_row);
+  lv_obj_set_style_bg_opa(pump_pressure_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(pump_pressure_row, 0, 0);
+  lv_obj_set_style_pad_all(pump_pressure_row, 0, 0);
+  lv_obj_set_width(pump_pressure_row, LV_PCT(100));
+  lv_obj_set_flex_flow(pump_pressure_row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(pump_pressure_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                        LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+  lv_obj_t *pump_pressure_label = lv_label_create(pump_pressure_row);
+  lv_label_set_text(pump_pressure_label, "Pump pressure control");
+  lv_obj_set_style_text_color(pump_pressure_label, lv_color_white(), 0);
+
+  pump_pressure_switch = lv_switch_create(pump_pressure_row);
+  lv_obj_add_event_cb(pump_pressure_switch, pump_pressure_switch_event_cb,
+                      LV_EVENT_VALUE_CHANGED, NULL);
+
+  pump_pressure_status_label = lv_label_create(pump_pressure_card);
+  lv_obj_add_style(pump_pressure_status_label, &style_text_muted, 0);
+  lv_obj_set_style_text_align(pump_pressure_status_label, LV_TEXT_ALIGN_LEFT, 0);
+  lv_obj_set_style_text_color(pump_pressure_status_label, lv_color_white(), 0);
+  lv_obj_set_width(pump_pressure_status_label, LV_PCT(100));
+
+  update_pump_pressure_controls(MQTT_GetPumpPressureMode());
 
   lv_obj_t *spacer = lv_obj_create(settings_scr);
   lv_obj_remove_style_all(spacer);
@@ -920,11 +965,14 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   float shot_time = MQTT_GetShotTime();
   float shot_vol = MQTT_GetShotVolume();
   bool heater = MQTT_GetHeaterState();
+  bool pump_pressure_mode = MQTT_GetPumpPressureMode();
   char buf[32];
 
   set_temp_val = set;
   heater_on = heater;
   update_heater_controls(heater);
+  pump_pressure_mode_on = pump_pressure_mode;
+  update_pump_pressure_controls(pump_pressure_mode);
 
   if (tick_layer)
     lv_obj_invalidate(tick_layer);
@@ -1278,6 +1326,46 @@ static void update_heater_controls(bool heater_state)
   {
     lv_label_set_text(heater_status_label,
                       heater_state ? "Heater is on" : "Heater is off");
+  }
+}
+
+static void pump_pressure_switch_event_cb(lv_event_t *e)
+{
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED)
+    return;
+
+  if (s_syncing_pump_pressure_switch)
+    return;
+
+  lv_obj_t *sw = lv_event_get_target(e);
+  bool enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  MQTT_SetPumpPressureMode(enabled);
+  update_pump_pressure_controls(enabled);
+}
+
+static void update_pump_pressure_controls(bool enabled)
+{
+  pump_pressure_mode_on = enabled;
+
+  if (pump_pressure_switch)
+  {
+    bool checked = lv_obj_has_state(pump_pressure_switch, LV_STATE_CHECKED);
+    if (checked != enabled)
+    {
+      s_syncing_pump_pressure_switch = true;
+      if (enabled)
+        lv_obj_add_state(pump_pressure_switch, LV_STATE_CHECKED);
+      else
+        lv_obj_clear_state(pump_pressure_switch, LV_STATE_CHECKED);
+      s_syncing_pump_pressure_switch = false;
+    }
+  }
+
+  if (pump_pressure_status_label)
+  {
+    lv_label_set_text(pump_pressure_status_label,
+                      enabled ? "Pump pressure control is on"
+                               : "Pump pressure control is off");
   }
 }
 

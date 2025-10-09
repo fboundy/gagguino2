@@ -1534,6 +1534,16 @@ void MQTT_SetSteamState(bool steam)
     handle_control_change();
 }
 
+void MQTT_SetPumpPressureMode(bool enabled)
+{
+    if (s_control.pumpPressureMode == enabled)
+        return;
+    s_control.pumpPressureMode = enabled;
+    s_pump_pressure_mode = enabled;
+    log_control_bool("pump_pressure_mode", enabled);
+    handle_control_change();
+}
+
 bool Wireless_UsingEspNow(void) { return s_use_espnow; }
 bool Wireless_IsMQTTConnected(void) { return s_mqtt_connected; }
 bool Wireless_IsWiFiConnected(void) { return s_wifi_ready; }
