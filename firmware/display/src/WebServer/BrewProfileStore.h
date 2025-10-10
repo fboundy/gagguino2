@@ -37,10 +37,14 @@ typedef struct
     BrewProfileConfig profiles[BREW_PROFILE_STORE_MAX_PROFILES];
 } BrewProfileSnapshot;
 
+#define BREW_PROFILE_STORE_ACTIVE_NONE (-1)
+
 esp_err_t BrewProfileStore_Init(void);
 esp_err_t BrewProfileStore_GetSnapshot(BrewProfileSnapshot *snapshot);
 esp_err_t BrewProfileStore_AddProfile(const BrewProfileConfig *profile, uint32_t *out_index);
 esp_err_t BrewProfileStore_UpdateProfile(uint32_t index, const BrewProfileConfig *profile);
+esp_err_t BrewProfileStore_GetActiveProfile(int32_t *index);
+esp_err_t BrewProfileStore_SetActiveProfile(int32_t index);
 
 #ifdef __cplusplus
 }
