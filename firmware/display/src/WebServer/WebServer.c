@@ -109,12 +109,13 @@ static const char INDEX_HTML[] =
     "const state={profiles:[],activeIndex:null,editingIndex:null};\n"
     "const samplePhases=[{\"name\":\"Phase 1\",\"durationMode\":\"time\",\"durationValue\":30,\"pumpMode\":\"power\",\"pumpValue\":95,\"temperatureC\":92}];\n"
     "function showMessage(text,isError=false){messages.textContent=text;messages.className=isError?'error':'success';if(text){setTimeout(()=>{messages.textContent='';messages.className='';},5000);}}\n"
-    "function setActiveDisplay(){if(state.activeIndex===null||state.activeIndex<0||state.activeIndex>=state.profiles.length){activeProfileEl.textContent='None selected';return;}const profile=state.profiles[state.activeIndex];activeProfileEl.textContent=`${profile.name} (Profile ${state.activeIndex+1})`;}\n"
+    "function setActiveDisplay(){if(state.activeIndex===null||state.activeIndex<0||state.activeIndex>=state.profiles.length){activeProfileEl.textContent='None selected';return;}const profile=state.profiles[state.activeIndex];activeProfileEl.textContent=profile.name;}\n"
     "function createActionButton(label,handler,options={}){const btn=document.createElement('button');btn.type='button';btn.textContent=label;if(options.secondary)btn.classList.add('secondary');if(options.disabled){btn.disabled=true;}btn.addEventListener('click',handler);return btn;}\n"
+    "async function deleteProfile(index){if(!confirm('Delete this profile?'))return;try{const response=await fetch(`/api/profiles/${index}`,{method:'DELETE'});if(!response.ok){const text=await response.text();throw new Error(text||'Failed to delete profile');}showMessage('Profile deleted');await loadProfiles();}catch(err){showMessage(err.message,true);}}\n"
     "async function setActive(index){try{const response=await fetch('/api/profiles/active',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:index===null?null:index})});if(!response.ok){const text=await response.text();throw new Error(text||'Failed to set active profile');}showMessage(index===null?'Active profile cleared':'Active profile updated');await loadProfiles();}catch(err){showMessage(err.message,true);}}\n"
     "function startEditor(index){state.editingIndex=index;editorCard.classList.remove('hidden');const nameInput=editorForm.elements.namedItem('name');const phasesInput=editorForm.elements.namedItem('phases');if(index===-1){editorTitle.textContent='Add Profile';nameInput.value='';phasesInput.value=JSON.stringify(samplePhases,null,2);}else{const profile=state.profiles[index];editorTitle.textContent=`Edit: ${profile.name}`;nameInput.value=profile.name;phasesInput.value=JSON.stringify(profile.phases,null,2);}}\n"
     "function hideEditor(){state.editingIndex=null;editorCard.classList.add('hidden');editorForm.reset();}\n"
-    "function renderProfiles(){profileList.innerHTML='';const noneRow=document.createElement('div');noneRow.className='profile-row';const noneInfo=document.createElement('div');noneInfo.className='profile-row-info';const noneTitle=document.createElement('h3');noneTitle.textContent='None';noneInfo.appendChild(noneTitle);const noneDesc=document.createElement('p');noneDesc.textContent='Use manual settings.';noneInfo.appendChild(noneDesc);const noneActions=document.createElement('div');noneActions.className='profile-row-actions';const noneButton=createActionButton(state.activeIndex===null?'Active':'Activate',()=>setActive(null),{disabled:state.activeIndex===null});noneActions.appendChild(noneButton);noneRow.appendChild(noneInfo);noneRow.appendChild(noneActions);profileList.appendChild(noneRow);state.profiles.forEach((profile,index)=>{const row=document.createElement('div');row.className='profile-row';const info=document.createElement('div');info.className='profile-row-info';const title=document.createElement('h3');title.textContent=profile.name;info.appendChild(title);const phaseCount=Array.isArray(profile.phases)?profile.phases.length:(typeof profile.phaseCount==='number'?profile.phaseCount:0);const desc=document.createElement('p');desc.textContent=`${phaseCount} phase${phaseCount===1?'':'s'}`;info.appendChild(desc);const actions=document.createElement('div');actions.className='profile-row-actions';const activateBtn=createActionButton(state.activeIndex===index?'Active':'Activate',()=>setActive(index),{disabled:state.activeIndex===index});actions.appendChild(activateBtn);const editBtn=createActionButton('Edit',()=>startEditor(index),{secondary:true});actions.appendChild(editBtn);row.appendChild(info);row.appendChild(actions);profileList.appendChild(row);});setActiveDisplay();}\n"
+    "function renderProfiles(){profileList.innerHTML='';const noneRow=document.createElement('div');noneRow.className='profile-row';const noneInfo=document.createElement('div');noneInfo.className='profile-row-info';const noneTitle=document.createElement('h3');noneTitle.textContent='None';noneInfo.appendChild(noneTitle);const noneDesc=document.createElement('p');noneDesc.textContent='Use manual settings.';noneInfo.appendChild(noneDesc);const noneActions=document.createElement('div');noneActions.className='profile-row-actions';const noneButton=createActionButton(state.activeIndex===null?'Active':'Activate',()=>setActive(null),{disabled:state.activeIndex===null});noneActions.appendChild(noneButton);noneRow.appendChild(noneInfo);noneRow.appendChild(noneActions);profileList.appendChild(noneRow);state.profiles.forEach((profile,index)=>{const row=document.createElement('div');row.className='profile-row';const info=document.createElement('div');info.className='profile-row-info';const title=document.createElement('h3');title.textContent=profile.name;info.appendChild(title);const phaseCount=Array.isArray(profile.phases)?profile.phases.length:(typeof profile.phaseCount==='number'?profile.phaseCount:0);const desc=document.createElement('p');desc.textContent=`${phaseCount} phase${phaseCount===1?'':'s'}`;info.appendChild(desc);const actions=document.createElement('div');actions.className='profile-row-actions';const activateBtn=createActionButton(state.activeIndex===index?'Active':'Activate',()=>setActive(index),{disabled:state.activeIndex===index});actions.appendChild(activateBtn);const editBtn=createActionButton('Edit',()=>startEditor(index),{secondary:true});actions.appendChild(editBtn);const deleteBtn=createActionButton('Delete',()=>deleteProfile(index),{secondary:true});actions.appendChild(deleteBtn);row.appendChild(info);row.appendChild(actions);profileList.appendChild(row);});setActiveDisplay();}\n"
     "async function loadProfiles(){try{const response=await fetch('/api/profiles');if(!response.ok)throw new Error('Failed to load profiles');const data=await response.json();state.profiles=Array.isArray(data.profiles)?data.profiles:[];if(Number.isInteger(data.activeIndex)){state.activeIndex=data.activeIndex;}else{state.activeIndex=null;}if(state.activeIndex!==null&&state.activeIndex<0)state.activeIndex=null;renderProfiles();}catch(err){showMessage(err.message,true);}}\n"
     "editorForm.addEventListener('submit',async(event)=>{event.preventDefault();const form=event.target;const name=form.name.value.trim();if(!name){showMessage('Name is required',true);return;}let phases;try{phases=JSON.parse(form.phases.value||'[]');}catch(err){showMessage('Phases must be valid JSON',true);return;}if(!Array.isArray(phases)||phases.length===0){showMessage('At least one phase is required',true);return;}const payload={name,phases};try{let response;if(state.editingIndex===-1){response=await fetch('/api/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else if(state.editingIndex!==null){response=await fetch(`/api/profiles/${state.editingIndex}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else{return;}if(!response.ok){const text=await response.text();throw new Error(text||'Failed to save profile');}showMessage('Profile saved');hideEditor();await loadProfiles();}catch(err){showMessage(err.message,true);}});\n"
     "cancelEditBtn.addEventListener('click',()=>{hideEditor();});\n"
@@ -569,6 +570,43 @@ static esp_err_t handle_put_profiles(httpd_req_t *req)
     return err;
 }
 
+static esp_err_t handle_delete_profiles(httpd_req_t *req)
+{
+    const char *uri = req->uri;
+    const char *prefix = "/api/profiles/";
+    size_t prefix_len = strlen(prefix);
+    if (strncmp(uri, prefix, prefix_len) != 0)
+    {
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
+    }
+    char *endptr = NULL;
+    unsigned long value = strtoul(uri + prefix_len, &endptr, 10);
+    if (endptr == uri + prefix_len || (endptr && *endptr != '\0' && *endptr != '?'))
+    {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid profile index");
+    }
+    uint32_t index = (uint32_t)value;
+    esp_err_t err = BrewProfileStore_DeleteProfile(index);
+    if (err == ESP_ERR_INVALID_ARG)
+    {
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Profile not found");
+    }
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to delete profile %u: %s", (unsigned)index, esp_err_to_name(err));
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to delete profile");
+    }
+    cJSON *response = cJSON_CreateObject();
+    if (!response)
+    {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
+    cJSON_AddStringToObject(response, "status", "deleted");
+    err = send_json_response(req, response);
+    cJSON_Delete(response);
+    return err;
+}
+
 static esp_err_t handle_put_active_profile(httpd_req_t *req)
 {
     int32_t desired_index = BREW_PROFILE_STORE_ACTIVE_NONE;
@@ -711,12 +749,19 @@ esp_err_t WebServer_Start(void)
         .handler = handle_put_profiles,
         .user_ctx = NULL,
     };
+    httpd_uri_t profiles_delete = {
+        .uri = "/api/profiles/*",
+        .method = HTTP_DELETE,
+        .handler = handle_delete_profiles,
+        .user_ctx = NULL,
+    };
     httpd_register_uri_handler(s_server, &root_uri);
     httpd_register_uri_handler(s_server, &index_uri);
     httpd_register_uri_handler(s_server, &profiles_get);
     httpd_register_uri_handler(s_server, &profiles_post);
     httpd_register_uri_handler(s_server, &profiles_active_put);
     httpd_register_uri_handler(s_server, &profiles_put);
+    httpd_register_uri_handler(s_server, &profiles_delete);
     ESP_LOGI(TAG, "HTTP server started");
     return ESP_OK;
 }

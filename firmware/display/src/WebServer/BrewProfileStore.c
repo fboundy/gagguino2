@@ -354,6 +354,44 @@ esp_err_t BrewProfileStore_UpdateProfile(uint32_t index, const BrewProfileConfig
     return err;
 }
 
+esp_err_t BrewProfileStore_DeleteProfile(uint32_t index)
+{
+    if (!s_initialized)
+        return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+        return ESP_ERR_TIMEOUT;
+    if (index >= s_storage.snapshot.profileCount)
+    {
+        xSemaphoreGive(s_mutex);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (s_storage.activeIndex == (int32_t)index)
+    {
+        s_storage.activeIndex = BREW_PROFILE_STORE_ACTIVE_NONE;
+    }
+    else if (s_storage.activeIndex > (int32_t)index)
+    {
+        s_storage.activeIndex--;
+    }
+
+    for (uint32_t i = index; i + 1 < s_storage.snapshot.profileCount; ++i)
+    {
+        copy_profile(&s_storage.snapshot.profiles[i], &s_storage.snapshot.profiles[i + 1]);
+    }
+
+    if (s_storage.snapshot.profileCount > 0)
+    {
+        memset(&s_storage.snapshot.profiles[s_storage.snapshot.profileCount - 1], 0,
+               sizeof(s_storage.snapshot.profiles[0]));
+        s_storage.snapshot.profileCount--;
+    }
+
+    esp_err_t err = save_locked();
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
 esp_err_t BrewProfileStore_GetActiveProfile(int32_t *index)
 {
     if (!index)
