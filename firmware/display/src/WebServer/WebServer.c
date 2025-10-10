@@ -1,6 +1,7 @@
 #include "WebServer.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,6 +54,7 @@ static const char INDEX_HTML[] =
     "label input,label textarea{display:block;margin-top:4px;}\n"
     "input[type=\"text\"],textarea{width:100%;padding:8px;box-sizing:border-box;border:1px solid #ccc;border-radius:4px;}\n"
     "textarea{min-height:180px;font-family:monospace;}\n"
+    ".description-input{min-height:100px;font-family:inherit;}\n"
     "button{margin-top:12px;padding:8px 16px;border:none;border-radius:4px;background:#1976d2;color:#fff;cursor:pointer;}\n"
     "button:hover{background:#125a9c;}\n"
     "button:disabled{background:#9e9e9e;cursor:default;}\n"
@@ -89,6 +91,8 @@ static const char INDEX_HTML[] =
     "  <h2 id=\"editor-title\">Edit Profile</h2>\n"
     "  <form id=\"editor-form\">\n"
     "    <label>Name<input name=\"name\" type=\"text\" required></label>\n"
+    "    <label>Description</label>\n"
+    "    <textarea name=\"description\" class=\"description-input\" placeholder='Optional profile description'></textarea>\n"
     "    <label>Phases (JSON array)</label>\n"
     "    <textarea name=\"phases\" placeholder='[{\"name\":\"Phase\",\"durationMode\":\"time\",\"durationValue\":30,\"pumpMode\":\"power\",\"pumpValue\":95,\"temperatureC\":92}]'></textarea>\n"
     "    <div class=\"actions\">\n"
@@ -109,14 +113,15 @@ static const char INDEX_HTML[] =
     "const state={profiles:[],activeIndex:null,editingIndex:null};\n"
     "const samplePhases=[{\"name\":\"Phase 1\",\"durationMode\":\"time\",\"durationValue\":30,\"pumpMode\":\"power\",\"pumpValue\":95,\"temperatureC\":92}];\n"
     "function showMessage(text,isError=false){messages.textContent=text;messages.className=isError?'error':'success';if(text){setTimeout(()=>{messages.textContent='';messages.className='';},5000);}}\n"
-    "function setActiveDisplay(){if(state.activeIndex===null||state.activeIndex<0||state.activeIndex>=state.profiles.length){activeProfileEl.textContent='None selected';return;}const profile=state.profiles[state.activeIndex];activeProfileEl.textContent=`${profile.name} (Profile ${state.activeIndex+1})`;}\n"
+    "function setActiveDisplay(){if(state.activeIndex===null||state.activeIndex<0||state.activeIndex>=state.profiles.length){activeProfileEl.textContent='None selected';return;}const profile=state.profiles[state.activeIndex];const description=profile.description&&profile.description.trim().length>0?` — ${profile.description.trim()}`:'';activeProfileEl.textContent=`${profile.name}${description}`;}\n"
     "function createActionButton(label,handler,options={}){const btn=document.createElement('button');btn.type='button';btn.textContent=label;if(options.secondary)btn.classList.add('secondary');if(options.disabled){btn.disabled=true;}btn.addEventListener('click',handler);return btn;}\n"
     "async function setActive(index){try{const response=await fetch('/api/profiles/active',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:index===null?null:index})});if(!response.ok){const text=await response.text();throw new Error(text||'Failed to set active profile');}showMessage(index===null?'Active profile cleared':'Active profile updated');await loadProfiles();}catch(err){showMessage(err.message,true);}}\n"
-    "function startEditor(index){state.editingIndex=index;editorCard.classList.remove('hidden');const nameInput=editorForm.elements.namedItem('name');const phasesInput=editorForm.elements.namedItem('phases');if(index===-1){editorTitle.textContent='Add Profile';nameInput.value='';phasesInput.value=JSON.stringify(samplePhases,null,2);}else{const profile=state.profiles[index];editorTitle.textContent=`Edit: ${profile.name}`;nameInput.value=profile.name;phasesInput.value=JSON.stringify(profile.phases,null,2);}}\n"
+    "function startEditor(index){state.editingIndex=index;editorCard.classList.remove('hidden');const nameInput=editorForm.elements.namedItem('name');const descriptionInput=editorForm.elements.namedItem('description');const phasesInput=editorForm.elements.namedItem('phases');if(index===-1){editorTitle.textContent='Add Profile';nameInput.value='';descriptionInput.value='';phasesInput.value=JSON.stringify(samplePhases,null,2);}else{const profile=state.profiles[index];editorTitle.textContent=`Edit: ${profile.name}`;nameInput.value=profile.name;descriptionInput.value=profile.description||'';phasesInput.value=JSON.stringify(profile.phases,null,2);}}\n"
     "function hideEditor(){state.editingIndex=null;editorCard.classList.add('hidden');editorForm.reset();}\n"
-    "function renderProfiles(){profileList.innerHTML='';const noneRow=document.createElement('div');noneRow.className='profile-row';const noneInfo=document.createElement('div');noneInfo.className='profile-row-info';const noneTitle=document.createElement('h3');noneTitle.textContent='None';noneInfo.appendChild(noneTitle);const noneDesc=document.createElement('p');noneDesc.textContent='Use manual settings.';noneInfo.appendChild(noneDesc);const noneActions=document.createElement('div');noneActions.className='profile-row-actions';const noneButton=createActionButton(state.activeIndex===null?'Active':'Activate',()=>setActive(null),{disabled:state.activeIndex===null});noneActions.appendChild(noneButton);noneRow.appendChild(noneInfo);noneRow.appendChild(noneActions);profileList.appendChild(noneRow);state.profiles.forEach((profile,index)=>{const row=document.createElement('div');row.className='profile-row';const info=document.createElement('div');info.className='profile-row-info';const title=document.createElement('h3');title.textContent=profile.name;info.appendChild(title);const phaseCount=Array.isArray(profile.phases)?profile.phases.length:(typeof profile.phaseCount==='number'?profile.phaseCount:0);const desc=document.createElement('p');desc.textContent=`${phaseCount} phase${phaseCount===1?'':'s'}`;info.appendChild(desc);const actions=document.createElement('div');actions.className='profile-row-actions';const activateBtn=createActionButton(state.activeIndex===index?'Active':'Activate',()=>setActive(index),{disabled:state.activeIndex===index});actions.appendChild(activateBtn);const editBtn=createActionButton('Edit',()=>startEditor(index),{secondary:true});actions.appendChild(editBtn);row.appendChild(info);row.appendChild(actions);profileList.appendChild(row);});setActiveDisplay();}\n"
+    "function renderProfiles(){profileList.innerHTML='';const noneRow=document.createElement('div');noneRow.className='profile-row';const noneInfo=document.createElement('div');noneInfo.className='profile-row-info';const noneTitle=document.createElement('h3');noneTitle.textContent='None';noneInfo.appendChild(noneTitle);const noneDesc=document.createElement('p');noneDesc.textContent='Use manual settings.';noneInfo.appendChild(noneDesc);const noneActions=document.createElement('div');noneActions.className='profile-row-actions';const noneButton=createActionButton(state.activeIndex===null?'Active':'Activate',()=>setActive(null),{disabled:state.activeIndex===null});noneActions.appendChild(noneButton);noneRow.appendChild(noneInfo);noneRow.appendChild(noneActions);profileList.appendChild(noneRow);state.profiles.forEach((profile,index)=>{const row=document.createElement('div');row.className='profile-row';const info=document.createElement('div');info.className='profile-row-info';const title=document.createElement('h3');title.textContent=profile.name;info.appendChild(title);const description=document.createElement('p');const hasDescription=profile.description&&profile.description.trim().length>0;description.textContent=hasDescription?profile.description.trim():'No description provided.';info.appendChild(description);const phaseCount=Array.isArray(profile.phases)?profile.phases.length:(typeof profile.phaseCount==='number'?profile.phaseCount:0);const meta=document.createElement('p');meta.textContent=`${phaseCount} phase${phaseCount===1?'':'s'}`;info.appendChild(meta);const actions=document.createElement('div');actions.className='profile-row-actions';const activateBtn=createActionButton(state.activeIndex===index?'Active':'Activate',()=>setActive(index),{disabled:state.activeIndex===index});actions.appendChild(activateBtn);const editBtn=createActionButton('Edit',()=>startEditor(index),{secondary:true});actions.appendChild(editBtn);const deleteBtn=createActionButton('Delete',()=>deleteProfile(index),{secondary:true});actions.appendChild(deleteBtn);row.appendChild(info);row.appendChild(actions);profileList.appendChild(row);});setActiveDisplay();}\n"
     "async function loadProfiles(){try{const response=await fetch('/api/profiles');if(!response.ok)throw new Error('Failed to load profiles');const data=await response.json();state.profiles=Array.isArray(data.profiles)?data.profiles:[];if(Number.isInteger(data.activeIndex)){state.activeIndex=data.activeIndex;}else{state.activeIndex=null;}if(state.activeIndex!==null&&state.activeIndex<0)state.activeIndex=null;renderProfiles();}catch(err){showMessage(err.message,true);}}\n"
-    "editorForm.addEventListener('submit',async(event)=>{event.preventDefault();const form=event.target;const name=form.name.value.trim();if(!name){showMessage('Name is required',true);return;}let phases;try{phases=JSON.parse(form.phases.value||'[]');}catch(err){showMessage('Phases must be valid JSON',true);return;}if(!Array.isArray(phases)||phases.length===0){showMessage('At least one phase is required',true);return;}const payload={name,phases};try{let response;if(state.editingIndex===-1){response=await fetch('/api/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else if(state.editingIndex!==null){response=await fetch(`/api/profiles/${state.editingIndex}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else{return;}if(!response.ok){const text=await response.text();throw new Error(text||'Failed to save profile');}showMessage('Profile saved');hideEditor();await loadProfiles();}catch(err){showMessage(err.message,true);}});\n"
+    "editorForm.addEventListener('submit',async(event)=>{event.preventDefault();const form=event.target;const name=form.name.value.trim();if(!name){showMessage('Name is required',true);return;}const description=form.description.value.trim();let phases;try{phases=JSON.parse(form.phases.value||'[]');}catch(err){showMessage('Phases must be valid JSON',true);return;}if(!Array.isArray(phases)||phases.length===0){showMessage('At least one phase is required',true);return;}const payload={name,description,phases};try{let response;if(state.editingIndex===-1){response=await fetch('/api/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else if(state.editingIndex!==null){response=await fetch(`/api/profiles/${state.editingIndex}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else{return;}if(!response.ok){const text=await response.text();throw new Error(text||'Failed to save profile');}showMessage('Profile saved');hideEditor();await loadProfiles();}catch(err){showMessage(err.message,true);}});\n"
+    "async function deleteProfile(index){if(!Number.isInteger(index))return;const confirmDelete=confirm('Delete this profile?');if(!confirmDelete)return;try{const response=await fetch(`/api/profiles/${index}`,{method:'DELETE'});if(!response.ok){const text=await response.text();throw new Error(text||'Failed to delete profile');}showMessage('Profile deleted');if(state.editingIndex===index){hideEditor();}await loadProfiles();}catch(err){showMessage(err.message,true);}}\n"
     "cancelEditBtn.addEventListener('click',()=>{hideEditor();});\n"
     "addProfileButton.addEventListener('click',()=>{startEditor(-1);});\n"
     "hideEditor();\n"
@@ -234,11 +239,19 @@ static esp_err_t parse_profile_json(const char *json, BrewProfileConfig *out, ch
         goto cleanup;
     }
     cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
+    cJSON *description = cJSON_GetObjectItemCaseSensitive(root, "description");
     cJSON *phases = cJSON_GetObjectItemCaseSensitive(root, "phases");
     if (!cJSON_IsString(name) || !name->valuestring)
     {
         if (errbuf && errlen)
             strlcpy(errbuf, "Profile name must be a string", errlen);
+        result = ESP_ERR_INVALID_ARG;
+        goto cleanup;
+    }
+    if (description && !cJSON_IsString(description))
+    {
+        if (errbuf && errlen)
+            strlcpy(errbuf, "Description must be a string", errlen);
         result = ESP_ERR_INVALID_ARG;
         goto cleanup;
     }
@@ -266,6 +279,19 @@ static esp_err_t parse_profile_json(const char *json, BrewProfileConfig *out, ch
     }
     memset(out, 0, sizeof(*out));
     strlcpy(out->name, name->valuestring, sizeof(out->name));
+    if (description && description->valuestring)
+    {
+        size_t desc_len = strlen(description->valuestring);
+        if (desc_len >= sizeof(out->description))
+        {
+            if (errbuf && errlen)
+                snprintf(errbuf, errlen, "Description too long (max %u characters)",
+                         (unsigned)(sizeof(out->description) - 1));
+            result = ESP_ERR_INVALID_ARG;
+            goto cleanup;
+        }
+        strlcpy(out->description, description->valuestring, sizeof(out->description));
+    }
     out->phaseCount = (uint32_t)phase_count;
     for (uint32_t i = 0; i < out->phaseCount; ++i)
     {
@@ -422,6 +448,7 @@ static esp_err_t handle_get_profiles(httpd_req_t *req)
         if (!profile_obj)
             goto error;
         cJSON_AddStringToObject(profile_obj, "name", profile->name);
+        cJSON_AddStringToObject(profile_obj, "description", profile->description);
         cJSON_AddNumberToObject(profile_obj, "phaseCount", profile->phaseCount);
         cJSON *phases = cJSON_CreateArray();
         if (!phases)
@@ -513,16 +540,37 @@ static esp_err_t handle_post_profiles(httpd_req_t *req)
     return err;
 }
 
-static esp_err_t handle_put_profiles(httpd_req_t *req)
+static bool parse_profile_index_from_uri(const char *uri, uint32_t *out_index)
 {
-    const char *uri = req->uri;
+    if (!uri || !out_index)
+        return false;
     const char *prefix = "/api/profiles/";
     size_t prefix_len = strlen(prefix);
     if (strncmp(uri, prefix, prefix_len) != 0)
+        return false;
+    const char *index_str = uri + prefix_len;
+    if (*index_str == '\0')
+        return false;
+    uint64_t value = 0;
+    for (const char *p = index_str; *p; ++p)
     {
-        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
+        if (*p < '0' || *p > '9')
+            return false;
+        value = value * 10ULL + (uint64_t)(*p - '0');
+        if (value > UINT32_MAX)
+            return false;
     }
-    uint32_t index = (uint32_t)strtoul(uri + prefix_len, NULL, 10);
+    *out_index = (uint32_t)value;
+    return true;
+}
+
+static esp_err_t handle_put_profiles(httpd_req_t *req)
+{
+    uint32_t index = 0;
+    if (!parse_profile_index_from_uri(req->uri, &index))
+    {
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Profile not found");
+    }
     char *body = NULL;
     esp_err_t err = read_request_body(req, &body);
     if (err != ESP_OK)
@@ -564,6 +612,30 @@ static esp_err_t handle_put_profiles(httpd_req_t *req)
     if (!response)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     cJSON_AddStringToObject(response, "status", "ok");
+    err = send_json_response(req, response);
+    cJSON_Delete(response);
+    return err;
+}
+
+static esp_err_t handle_delete_profile(httpd_req_t *req)
+{
+    uint32_t index = 0;
+    if (!parse_profile_index_from_uri(req->uri, &index))
+    {
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Profile not found");
+    }
+    esp_err_t err = BrewProfileStore_DeleteProfile(index);
+    if (err == ESP_ERR_INVALID_ARG)
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Profile not found");
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to delete profile %u: %s", (unsigned)index, esp_err_to_name(err));
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to delete profile");
+    }
+    cJSON *response = cJSON_CreateObject();
+    if (!response)
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    cJSON_AddStringToObject(response, "status", "deleted");
     err = send_json_response(req, response);
     cJSON_Delete(response);
     return err;
@@ -711,12 +783,19 @@ esp_err_t WebServer_Start(void)
         .handler = handle_put_profiles,
         .user_ctx = NULL,
     };
+    httpd_uri_t profiles_delete = {
+        .uri = "/api/profiles/*",
+        .method = HTTP_DELETE,
+        .handler = handle_delete_profile,
+        .user_ctx = NULL,
+    };
     httpd_register_uri_handler(s_server, &root_uri);
     httpd_register_uri_handler(s_server, &index_uri);
     httpd_register_uri_handler(s_server, &profiles_get);
     httpd_register_uri_handler(s_server, &profiles_post);
     httpd_register_uri_handler(s_server, &profiles_active_put);
     httpd_register_uri_handler(s_server, &profiles_put);
+    httpd_register_uri_handler(s_server, &profiles_delete);
     ESP_LOGI(TAG, "HTTP server started");
     return ESP_OK;
 }

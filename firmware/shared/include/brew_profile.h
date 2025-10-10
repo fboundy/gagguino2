@@ -33,6 +33,7 @@ typedef struct {
 /**\brief Collection of brew phases that make up a brew profile. */
 typedef struct {
     const char *name;            //!< Identifier for the brew profile (max 128 characters)
+    const char *description;     //!< Optional description for the brew profile
     const BrewPhase *phases;     //!< Ordered phases in this profile
     size_t phaseCount;           //!< Number of phases in the profile
 } BrewProfile;
@@ -51,6 +52,7 @@ static const BrewPhase BREW_PROFILE_DEFAULT_PHASES[] = {
 
 static const BrewProfile BREW_PROFILE_DEFAULT = {
     .name = "Default",
+    .description = "",
     .phases = BREW_PROFILE_DEFAULT_PHASES,
     .phaseCount = sizeof(BREW_PROFILE_DEFAULT_PHASES) / sizeof(BREW_PROFILE_DEFAULT_PHASES[0]),
 };
