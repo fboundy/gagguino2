@@ -30,6 +30,7 @@ float MQTT_GetShotVolume(void);
 uint32_t MQTT_GetZcCount(void);
 bool MQTT_GetHeaterState(void);
 void MQTT_SetHeaterState(bool state);
+void MQTT_ForceHeaterState(bool state);
 bool MQTT_GetSteamState(void);
 void MQTT_SetSteamState(bool state);
 void MQTT_SetPumpPressureMode(bool enabled);

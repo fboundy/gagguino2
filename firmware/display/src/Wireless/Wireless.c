@@ -207,7 +207,6 @@ static bool s_mqtt_connected = false;
 static esp_mqtt_client_handle_t s_mqtt = NULL;
 static bool s_mqtt_enabled = true;
 static bool s_standby_suppressed = false;
-static bool s_restore_heater_on_exit = false;
 
 static bool s_wifi_ready = false;
 static uint8_t s_sta_channel = 0;
@@ -1484,11 +1483,7 @@ void Wireless_SetStandbyMode(bool standby)
             return;
         s_standby_suppressed = true;
         s_mqtt_enabled = false;
-        s_restore_heater_on_exit = s_control.heater;
-        if (s_control.heater)
-        {
-            MQTT_SetHeaterState(false);
-        }
+        MQTT_ForceHeaterState(false);
         MQTT_Stop();
         return;
     }
@@ -1498,13 +1493,8 @@ void Wireless_SetStandbyMode(bool standby)
 
     s_standby_suppressed = false;
     s_mqtt_enabled = true;
-    bool restore = s_restore_heater_on_exit;
-    s_restore_heater_on_exit = false;
-    if (restore)
-    {
-        MQTT_SetHeaterState(true);
-    }
     MQTT_Start();
+    MQTT_ForceHeaterState(true);
 }
 
 // -----------------------------------------------------------------------------
@@ -1521,13 +1511,18 @@ float MQTT_GetShotVolume(void) { return s_shot_volume; }
 uint32_t MQTT_GetZcCount(void) { return s_zc_count; }
 bool MQTT_GetHeaterState(void) { return s_heater; }
 
+void MQTT_ForceHeaterState(bool heater)
+{
+    s_control.heater = heater;
+    s_heater = heater;
+    handle_control_change();
+}
+
 void MQTT_SetHeaterState(bool heater)
 {
     if (s_control.heater == heater)
         return;
-    s_control.heater = heater;
-    s_heater = heater;
-    handle_control_change();
+    MQTT_ForceHeaterState(heater);
 }
 
 bool MQTT_GetSteamState(void) { return s_steam; }
