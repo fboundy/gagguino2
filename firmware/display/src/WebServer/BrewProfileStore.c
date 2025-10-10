@@ -210,9 +210,9 @@ esp_err_t BrewProfileStore_Init(void)
     }
     else if (required == sizeof(BrewProfileSnapshot))
     {
-        BrewProfileSnapshot legacy = {0};
-        size_t len = sizeof(legacy);
-        err = nvs_get_blob(handle, BREW_PROFILE_STORE_KEY, &legacy, &len);
+        // Read directly into the persistent storage buffer to avoid large stack allocations
+        size_t len = sizeof(s_storage.snapshot);
+        err = nvs_get_blob(handle, BREW_PROFILE_STORE_KEY, &s_storage.snapshot, &len);
         if (err != ESP_OK)
         {
             ESP_LOGE(TAG, "Failed to read legacy profile blob: %s", esp_err_to_name(err));
@@ -221,10 +221,9 @@ esp_err_t BrewProfileStore_Init(void)
             s_mutex = NULL;
             return err;
         }
-        memset(&s_storage, 0, sizeof(s_storage));
+        // version and activeIndex were zeroed earlier when s_storage was cleared
         s_storage.version = BREW_PROFILE_STORE_VERSION;
         s_storage.activeIndex = BREW_PROFILE_STORE_ACTIVE_NONE;
-        memcpy(&s_storage.snapshot, &legacy, sizeof(legacy));
         persist_updated_blob = true;
     }
     else
