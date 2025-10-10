@@ -1,6 +1,7 @@
 #include "BrewProfileStore.h"
 
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
@@ -241,12 +242,21 @@ esp_err_t BrewProfileStore_Init(void)
     }
     else if (required == sizeof(BrewProfileStorageV1))
     {
-        BrewProfileStorageV1 legacy = {0};
-        size_t len = sizeof(legacy);
-        err = nvs_get_blob(handle, BREW_PROFILE_STORE_KEY, &legacy, &len);
+        BrewProfileStorageV1 *legacy = (BrewProfileStorageV1 *)calloc(1, sizeof(*legacy));
+        if (!legacy)
+        {
+            ESP_LOGE(TAG, "Failed to allocate legacy profile buffer");
+            nvs_close(handle);
+            vSemaphoreDelete(s_mutex);
+            s_mutex = NULL;
+            return ESP_ERR_NO_MEM;
+        }
+        size_t len = sizeof(*legacy);
+        err = nvs_get_blob(handle, BREW_PROFILE_STORE_KEY, legacy, &len);
         if (err != ESP_OK)
         {
             ESP_LOGE(TAG, "Failed to read legacy profile blob: %s", esp_err_to_name(err));
+            free(legacy);
             nvs_close(handle);
             vSemaphoreDelete(s_mutex);
             s_mutex = NULL;
@@ -254,27 +264,28 @@ esp_err_t BrewProfileStore_Init(void)
         }
         memset(&s_storage, 0, sizeof(s_storage));
         s_storage.version = BREW_PROFILE_STORE_VERSION;
-        s_storage.activeIndex = legacy.activeIndex;
-        if (legacy.snapshot.profileCount > BREW_PROFILE_STORE_MAX_PROFILES)
+        s_storage.activeIndex = legacy->activeIndex;
+        if (legacy->snapshot.profileCount > BREW_PROFILE_STORE_MAX_PROFILES)
         {
-            legacy.snapshot.profileCount = BREW_PROFILE_STORE_MAX_PROFILES;
+            legacy->snapshot.profileCount = BREW_PROFILE_STORE_MAX_PROFILES;
         }
-        s_storage.snapshot.profileCount = legacy.snapshot.profileCount;
-        for (uint32_t i = 0; i < legacy.snapshot.profileCount; ++i)
+        s_storage.snapshot.profileCount = legacy->snapshot.profileCount;
+        for (uint32_t i = 0; i < legacy->snapshot.profileCount; ++i)
         {
             BrewProfileConfig temp = {0};
-            strlcpy(temp.name, legacy.snapshot.profiles[i].name, sizeof(temp.name));
-            temp.phaseCount = legacy.snapshot.profiles[i].phaseCount;
+            strlcpy(temp.name, legacy->snapshot.profiles[i].name, sizeof(temp.name));
+            temp.phaseCount = legacy->snapshot.profiles[i].phaseCount;
             if (temp.phaseCount > BREW_PROFILE_STORE_MAX_PHASES)
             {
                 temp.phaseCount = BREW_PROFILE_STORE_MAX_PHASES;
             }
             for (uint32_t p = 0; p < temp.phaseCount; ++p)
             {
-                copy_phase(&temp.phases[p], &legacy.snapshot.profiles[i].phases[p]);
+                copy_phase(&temp.phases[p], &legacy->snapshot.profiles[i].phases[p]);
             }
             copy_profile(&s_storage.snapshot.profiles[i], &temp);
         }
+        free(legacy);
         persist_updated_blob = true;
     }
     else if (required == sizeof(BrewProfileSnapshot))
