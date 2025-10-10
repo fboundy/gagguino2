@@ -1,5 +1,6 @@
 #include "WebServer.h"
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,6 +38,27 @@ static bool is_storage_full_error(esp_err_t err)
     return false;
 }
 
+static bool parse_profile_index_from_uri(const char *uri, uint32_t *out_index)
+{
+    const char *prefix = "/api/profiles/";
+    size_t prefix_len = strlen(prefix);
+    if (strncmp(uri, prefix, prefix_len) != 0)
+        return false;
+    const char *index_str = uri + prefix_len;
+    if (!index_str || *index_str == '\0')
+        return false;
+    char *endptr = NULL;
+    errno = 0;
+    unsigned long value = strtoul(index_str, &endptr, 10);
+    if (errno != 0 || endptr == index_str || *endptr != '\0')
+        return false;
+    if (value > UINT32_MAX)
+        return false;
+    if (out_index)
+        *out_index = (uint32_t)value;
+    return true;
+}
+
 static const char INDEX_HTML[] =
     "<!DOCTYPE html>\n"
     "<html lang=\"en\">\n"
@@ -58,6 +80,8 @@ static const char INDEX_HTML[] =
     "button:disabled{background:#9e9e9e;cursor:default;}\n"
     "button.secondary{background:#e0e0e0;color:#333;}\n"
     "button.secondary:hover{background:#c2c2c2;}\n"
+    "button.danger{background:#d32f2f;color:#fff;}\n"
+    "button.danger:hover{background:#9a1f1f;}\n"
     ".hidden{display:none;}\n"
     ".profile-row{display:flex;justify-content:space-between;align-items:center;padding:12px;border:1px solid #ddd;border-radius:6px;margin-top:12px;background:#fafafa;}\n"
     ".profile-row:first-child{margin-top:0;}\n"
@@ -186,7 +210,7 @@ static const char INDEX_HTML[] =
     "    return;\n"
     "  }\n"
     "  const profile = state.profiles[state.activeIndex];\n"
-    "  activeProfileEl.textContent = `${profile.name} (Profile ${state.activeIndex + 1})`;\n"
+    "  activeProfileEl.textContent = profile.name;\n"
     "}\n"
     "\n"
     "function createActionButton(label, handler, options = {}) {\n"
@@ -194,6 +218,7 @@ static const char INDEX_HTML[] =
     "  btn.type = 'button';\n"
     "  btn.textContent = label;\n"
     "  if (options.secondary) btn.classList.add('secondary');\n"
+    "  if (options.danger) btn.classList.add('danger');\n"
     "  if (options.disabled) {\n"
     "    btn.disabled = true;\n"
     "  }\n"
@@ -381,6 +406,26 @@ static const char INDEX_HTML[] =
     "  }\n"
     "}\n"
     "\n"
+    "async function deleteProfile(index) {\n"
+    "  const profile = state.profiles[index];\n"
+    "  const name = profile && profile.name ? profile.name : 'this profile';\n"
+    "  if (!confirm(`Delete "${name}"?`)) {\n"
+    "    return;\n"
+    "  }\n"
+    "  try {\n"
+    "    const response = await fetch(`/api/profiles/${index}`, { method: 'DELETE' });\n"
+    "    if (!response.ok) {\n"
+    "      const text = await response.text();\n"
+    "      throw new Error(text || 'Failed to delete profile');\n"
+    "    }\n"
+    "    showMessage('Profile deleted');\n"
+    "    hideEditor();\n"
+    "    await loadProfiles();\n"
+    "  } catch (err) {\n"
+    "    showMessage(err.message, true);\n"
+    "  }\n"
+    "}\n"
+    "\n"
     "function startEditor(index) {\n"
     "  state.editingIndex = index;\n"
     "  editorCard.classList.remove('hidden');\n"
@@ -447,6 +492,8 @@ static const char INDEX_HTML[] =
     "    actions.appendChild(activateBtn);\n"
     "    const editBtn = createActionButton('Edit', () => startEditor(index), { secondary: true });\n"
     "    actions.appendChild(editBtn);\n"
+    "    const deleteBtn = createActionButton('Delete', () => deleteProfile(index), { danger: true });\n"
+    "    actions.appendChild(deleteBtn);\n"
     "    row.appendChild(info);\n"
     "    row.appendChild(actions);\n"
     "    profileList.appendChild(row);\n"
@@ -965,14 +1012,11 @@ static esp_err_t handle_post_profiles(httpd_req_t *req)
 
 static esp_err_t handle_put_profiles(httpd_req_t *req)
 {
-    const char *uri = req->uri;
-    const char *prefix = "/api/profiles/";
-    size_t prefix_len = strlen(prefix);
-    if (strncmp(uri, prefix, prefix_len) != 0)
+    uint32_t index = 0;
+    if (!parse_profile_index_from_uri(req->uri, &index))
     {
         return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
     }
-    uint32_t index = (uint32_t)strtoul(uri + prefix_len, NULL, 10);
     char *body = NULL;
     esp_err_t err = read_request_body(req, &body);
     if (err != ESP_OK)
@@ -1095,6 +1139,38 @@ static esp_err_t handle_put_active_profile(httpd_req_t *req)
     return err;
 }
 
+static esp_err_t handle_delete_profile(httpd_req_t *req)
+{
+    uint32_t index = 0;
+    if (!parse_profile_index_from_uri(req->uri, &index))
+    {
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
+    }
+    esp_err_t err = BrewProfileStore_DeleteProfile(index);
+    if (err == ESP_ERR_INVALID_ARG)
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Profile not found");
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to delete profile %u: %s", (unsigned)index, esp_err_to_name(err));
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to delete profile");
+    }
+    cJSON *response = cJSON_CreateObject();
+    if (!response)
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    int32_t active_index = BREW_PROFILE_STORE_ACTIVE_NONE;
+    if (BrewProfileStore_GetActiveProfile(&active_index) == ESP_OK)
+    {
+        if (active_index >= 0)
+            cJSON_AddNumberToObject(response, "activeIndex", active_index);
+        else
+            cJSON_AddNullToObject(response, "activeIndex");
+    }
+    cJSON_AddStringToObject(response, "status", "ok");
+    err = send_json_response(req, response);
+    cJSON_Delete(response);
+    return err;
+}
+
 esp_err_t WebServer_Init(void)
 {
     if (s_initialized)
@@ -1161,12 +1237,19 @@ esp_err_t WebServer_Start(void)
         .handler = handle_put_profiles,
         .user_ctx = NULL,
     };
+    httpd_uri_t profiles_delete = {
+        .uri = "/api/profiles/*",
+        .method = HTTP_DELETE,
+        .handler = handle_delete_profile,
+        .user_ctx = NULL,
+    };
     httpd_register_uri_handler(s_server, &root_uri);
     httpd_register_uri_handler(s_server, &index_uri);
     httpd_register_uri_handler(s_server, &profiles_get);
     httpd_register_uri_handler(s_server, &profiles_post);
     httpd_register_uri_handler(s_server, &profiles_active_put);
     httpd_register_uri_handler(s_server, &profiles_put);
+    httpd_register_uri_handler(s_server, &profiles_delete);
     ESP_LOGI(TAG, "HTTP server started");
     return ESP_OK;
 }
