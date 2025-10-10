@@ -3,6 +3,7 @@
 #include "LVGL_Driver.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 // Timestamp (in RTOS ticks) of the most recent touch event.  Defined in
 // main.c and updated here whenever the user interacts with the screen.
