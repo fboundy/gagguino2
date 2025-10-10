@@ -1,7 +1,6 @@
 #include "BrewProfileStore.h"
 
 #include <string.h>
-#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
@@ -11,7 +10,7 @@
 
 #define BREW_PROFILE_STORE_NAMESPACE "brew_profiles"
 #define BREW_PROFILE_STORE_KEY       "profiles"
-#define BREW_PROFILE_STORE_VERSION   (2U)
+#define BREW_PROFILE_STORE_VERSION   (1U)
 
 static const char *TAG = "BrewProfileStore";
 
@@ -21,26 +20,6 @@ typedef struct
     int32_t activeIndex;
     BrewProfileSnapshot snapshot;
 } BrewProfileStorage;
-
-typedef struct
-{
-    char name[BREW_PROFILE_NAME_MAX_LEN];
-    uint32_t phaseCount;
-    BrewPhaseConfig phases[BREW_PROFILE_STORE_MAX_PHASES];
-} BrewProfileConfigV1;
-
-typedef struct
-{
-    uint32_t profileCount;
-    BrewProfileConfigV1 profiles[BREW_PROFILE_STORE_MAX_PROFILES];
-} BrewProfileSnapshotV1;
-
-typedef struct
-{
-    uint32_t version;
-    int32_t activeIndex;
-    BrewProfileSnapshotV1 snapshot;
-} BrewProfileStorageV1;
 
 static BrewProfileStorage s_storage;
 static bool s_initialized = false;
@@ -54,12 +33,6 @@ static esp_err_t validate_profile(const BrewProfileConfig *profile)
     if (name_len == 0 || name_len >= sizeof(profile->name))
     {
         ESP_LOGE(TAG, "Profile name is invalid");
-        return ESP_ERR_INVALID_ARG;
-    }
-    size_t desc_len = strnlen(profile->description, sizeof(profile->description));
-    if (desc_len >= sizeof(profile->description))
-    {
-        ESP_LOGE(TAG, "Profile description is invalid");
         return ESP_ERR_INVALID_ARG;
     }
     if (profile->phaseCount == 0 || profile->phaseCount > BREW_PROFILE_STORE_MAX_PHASES)
@@ -145,7 +118,6 @@ static void copy_profile(BrewProfileConfig *dst, const BrewProfileConfig *src)
 {
     memset(dst, 0, sizeof(*dst));
     strlcpy(dst->name, src->name, sizeof(dst->name));
-    strlcpy(dst->description, src->description, sizeof(dst->description));
     dst->phaseCount = src->phaseCount;
     for (uint32_t i = 0; i < dst->phaseCount && i < BREW_PROFILE_STORE_MAX_PHASES; ++i)
     {
@@ -160,10 +132,6 @@ static void load_default_locked(void)
     s_storage.activeIndex = BREW_PROFILE_STORE_ACTIVE_NONE;
     BrewProfileConfig def = {0};
     strlcpy(def.name, BREW_PROFILE_DEFAULT.name, sizeof(def.name));
-    if (BREW_PROFILE_DEFAULT.description)
-    {
-        strlcpy(def.description, BREW_PROFILE_DEFAULT.description, sizeof(def.description));
-    }
     def.phaseCount = BREW_PROFILE_DEFAULT.phaseCount;
     if (def.phaseCount > BREW_PROFILE_STORE_MAX_PHASES)
     {
@@ -239,54 +207,6 @@ esp_err_t BrewProfileStore_Init(void)
             s_mutex = NULL;
             return err;
         }
-    }
-    else if (required == sizeof(BrewProfileStorageV1))
-    {
-        BrewProfileStorageV1 *legacy = (BrewProfileStorageV1 *)calloc(1, sizeof(*legacy));
-        if (!legacy)
-        {
-            ESP_LOGE(TAG, "Failed to allocate legacy profile buffer");
-            nvs_close(handle);
-            vSemaphoreDelete(s_mutex);
-            s_mutex = NULL;
-            return ESP_ERR_NO_MEM;
-        }
-        size_t len = sizeof(*legacy);
-        err = nvs_get_blob(handle, BREW_PROFILE_STORE_KEY, legacy, &len);
-        if (err != ESP_OK)
-        {
-            ESP_LOGE(TAG, "Failed to read legacy profile blob: %s", esp_err_to_name(err));
-            free(legacy);
-            nvs_close(handle);
-            vSemaphoreDelete(s_mutex);
-            s_mutex = NULL;
-            return err;
-        }
-        memset(&s_storage, 0, sizeof(s_storage));
-        s_storage.version = BREW_PROFILE_STORE_VERSION;
-        s_storage.activeIndex = legacy->activeIndex;
-        if (legacy->snapshot.profileCount > BREW_PROFILE_STORE_MAX_PROFILES)
-        {
-            legacy->snapshot.profileCount = BREW_PROFILE_STORE_MAX_PROFILES;
-        }
-        s_storage.snapshot.profileCount = legacy->snapshot.profileCount;
-        for (uint32_t i = 0; i < legacy->snapshot.profileCount; ++i)
-        {
-            BrewProfileConfig temp = {0};
-            strlcpy(temp.name, legacy->snapshot.profiles[i].name, sizeof(temp.name));
-            temp.phaseCount = legacy->snapshot.profiles[i].phaseCount;
-            if (temp.phaseCount > BREW_PROFILE_STORE_MAX_PHASES)
-            {
-                temp.phaseCount = BREW_PROFILE_STORE_MAX_PHASES;
-            }
-            for (uint32_t p = 0; p < temp.phaseCount; ++p)
-            {
-                copy_phase(&temp.phases[p], &legacy->snapshot.profiles[i].phases[p]);
-            }
-            copy_profile(&s_storage.snapshot.profiles[i], &temp);
-        }
-        free(legacy);
-        persist_updated_blob = true;
     }
     else if (required == sizeof(BrewProfileSnapshot))
     {
@@ -430,40 +350,6 @@ esp_err_t BrewProfileStore_UpdateProfile(uint32_t index, const BrewProfileConfig
     }
     copy_profile(&s_storage.snapshot.profiles[index], profile);
     err = save_locked();
-    xSemaphoreGive(s_mutex);
-    return err;
-}
-
-esp_err_t BrewProfileStore_DeleteProfile(uint32_t index)
-{
-    if (!s_initialized)
-        return ESP_ERR_INVALID_STATE;
-    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000)) != pdTRUE)
-        return ESP_ERR_TIMEOUT;
-    if (index >= s_storage.snapshot.profileCount)
-    {
-        xSemaphoreGive(s_mutex);
-        return ESP_ERR_INVALID_ARG;
-    }
-    for (uint32_t i = index; i + 1 < s_storage.snapshot.profileCount; ++i)
-    {
-        copy_profile(&s_storage.snapshot.profiles[i], &s_storage.snapshot.profiles[i + 1]);
-    }
-    if (s_storage.snapshot.profileCount > 0)
-    {
-        memset(&s_storage.snapshot.profiles[s_storage.snapshot.profileCount - 1], 0,
-               sizeof(s_storage.snapshot.profiles[0]));
-        s_storage.snapshot.profileCount--;
-    }
-    if (s_storage.activeIndex == (int32_t)index)
-    {
-        s_storage.activeIndex = BREW_PROFILE_STORE_ACTIVE_NONE;
-    }
-    else if (s_storage.activeIndex > (int32_t)index)
-    {
-        s_storage.activeIndex--;
-    }
-    esp_err_t err = save_locked();
     xSemaphoreGive(s_mutex);
     return err;
 }
