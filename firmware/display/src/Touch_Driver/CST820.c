@@ -1,14 +1,13 @@
 #include "CST820.h"
 
-#define POINT_NUM_MAX       (1)
+#define POINT_NUM_MAX (1)
 
-#define DATA_START_REG      (0x15)
-#define CHIP_ID_REG         (0x01)
-#define TOUCH_NUM           (0x02)
-#define TOUCH_POSITION      (0x03)
+#define DATA_START_REG (0x15)
+#define CHIP_ID_REG (0x01)
+#define TOUCH_NUM (0x02)
+#define TOUCH_POSITION (0x03)
 
 static const char *TAG = "cst820";
-
 
 static esp_err_t read_data(esp_lcd_touch_handle_t tp);
 static bool get_xy(esp_lcd_touch_handle_t tp, uint16_t *x, uint16_t *y, uint16_t *strength, uint8_t *point_num, uint8_t max_point_num);
@@ -43,28 +42,28 @@ esp_err_t esp_lcd_touch_new_i2c_cst820(const esp_lcd_panel_io_handle_t io, const
     memcpy(&cst820->config, config, sizeof(esp_lcd_touch_config_t));
 
     /* Prepare pin for touch interrupt */
-    if (cst820->config.int_gpio_num != GPIO_NUM_NC) {
+    if (cst820->config.int_gpio_num != GPIO_NUM_NC)
+    {
         const gpio_config_t int_gpio_config = {
             .mode = GPIO_MODE_INPUT,
             .intr_type = GPIO_INTR_NEGEDGE,
-            .pin_bit_mask = BIT64(cst820->config.int_gpio_num)
-        };
+            .pin_bit_mask = BIT64(cst820->config.int_gpio_num)};
         ESP_GOTO_ON_ERROR(gpio_config(&int_gpio_config), err, TAG, "GPIO intr config failed");
 
         /* Register interrupt callback */
-        if (cst820->config.interrupt_callback) {
+        if (cst820->config.interrupt_callback)
+        {
             esp_lcd_touch_register_interrupt_callback(cst820, cst820->config.interrupt_callback);
         }
     }
     /* Prepare pin for touch controller reset */
-    if (cst820->config.rst_gpio_num != GPIO_NUM_NC) {
+    if (cst820->config.rst_gpio_num != GPIO_NUM_NC)
+    {
         const gpio_config_t rst_gpio_config = {
             .mode = GPIO_MODE_OUTPUT,
-            .pin_bit_mask = BIT64(cst820->config.rst_gpio_num)
-        };
+            .pin_bit_mask = BIT64(cst820->config.rst_gpio_num)};
         ESP_GOTO_ON_ERROR(gpio_config(&rst_gpio_config), err, TAG, "GPIO reset config failed");
     }
-
 
     /* Reset controller */
     ESP_GOTO_ON_ERROR(reset(cst820), err, TAG, "Reset failed");
@@ -75,7 +74,8 @@ esp_err_t esp_lcd_touch_new_i2c_cst820(const esp_lcd_panel_io_handle_t io, const
 
     return ESP_OK;
 err:
-    if (cst820) {
+    if (cst820)
+    {
         del(cst820);
     }
     ESP_LOGE(TAG, "Initialization failed!");
@@ -103,12 +103,16 @@ static esp_err_t read_data(esp_lcd_touch_handle_t tp)
     ESP_RETURN_ON_ERROR(err, TAG, "I2C read error!");
     touch_cst820_i2c_write(tp, TOUCH_POSITION, &Over, 1);
 
-    if ((buf[0] & 0x0F) == 0x00) {
-        touch_cst820_i2c_write(tp, TOUCH_NUM, &clear, 1);  
-    } else {
+    if ((buf[0] & 0x0F) == 0x00)
+    {
+        touch_cst820_i2c_write(tp, TOUCH_NUM, &clear, 1);
+    }
+    else
+    {
         /* Count of touched points */
         touch_cnt = buf[0] & 0x0F;
-        if (touch_cnt > 2 || touch_cnt == 0) {
+        if (touch_cnt > 2 || touch_cnt == 0)
+        {
             touch_cst820_i2c_write(tp, TOUCH_NUM, &clear, 1);
             return ESP_OK;
         }
@@ -124,14 +128,15 @@ static esp_err_t read_data(esp_lcd_touch_handle_t tp)
         taskENTER_CRITICAL(&tp->data.lock);
 
         /* Number of touched points */
-        if(touch_cnt > CONFIG_ESP_LCD_TOUCH_MAX_POINTS)
+        if (touch_cnt > CONFIG_ESP_LCD_TOUCH_MAX_POINTS)
             touch_cnt = CONFIG_ESP_LCD_TOUCH_MAX_POINTS;
         tp->data.points = (uint8_t)touch_cnt;
-        
+
         /* Fill all coordinates */
-        for (i = 0; i < touch_cnt; i++) {
-            tp->data.coords[i].x = (uint16_t)(((uint16_t)(buf[(i * 6) ] & 0x0F) << 8) + (buf[(i * 6) + 1]));               
-            tp->data.coords[i].y = (uint16_t)(((uint16_t)(buf[(i * 6) + 2] & 0x0F) << 8) + (buf[(i * 6) + 3])); 
+        for (i = 0; i < touch_cnt; i++)
+        {
+            tp->data.coords[i].x = (uint16_t)(((uint16_t)(buf[(i * 6)] & 0x0F) << 8) + (buf[(i * 6) + 1]));
+            tp->data.coords[i].y = (uint16_t)(((uint16_t)(buf[(i * 6) + 2] & 0x0F) << 8) + (buf[(i * 6) + 3]));
             tp->data.coords[i].strength = 50;
         }
 
@@ -146,11 +151,13 @@ static bool get_xy(esp_lcd_touch_handle_t tp, uint16_t *x, uint16_t *y, uint16_t
     portENTER_CRITICAL(&tp->data.lock);
     /* Count of points */
     *point_num = (tp->data.points > max_point_num ? max_point_num : tp->data.points);
-    for (size_t i = 0; i < *point_num; i++) {
+    for (size_t i = 0; i < *point_num; i++)
+    {
         x[i] = tp->data.coords[i].x;
         y[i] = tp->data.coords[i].y;
 
-        if (strength) {
+        if (strength)
+        {
             strength[i] = tp->data.coords[i].strength;
         }
     }
@@ -164,10 +171,12 @@ static bool get_xy(esp_lcd_touch_handle_t tp, uint16_t *x, uint16_t *y, uint16_t
 static esp_err_t del(esp_lcd_touch_handle_t tp)
 {
     /* Reset GPIO pin settings */
-    if (tp->config.int_gpio_num != GPIO_NUM_NC) {
+    if (tp->config.int_gpio_num != GPIO_NUM_NC)
+    {
         gpio_reset_pin(tp->config.int_gpio_num);
     }
-    if (tp->config.rst_gpio_num != GPIO_NUM_NC) {
+    if (tp->config.rst_gpio_num != GPIO_NUM_NC)
+    {
         gpio_reset_pin(tp->config.rst_gpio_num);
     }
     /* Release memory */
@@ -179,16 +188,16 @@ static esp_err_t del(esp_lcd_touch_handle_t tp)
 static esp_err_t reset(esp_lcd_touch_handle_t tp)
 {
 
-    Set_EXIO(TCA9554_EXIO2,false);
+    Set_EXIO(TCA9554_EXIO2, false);
     vTaskDelay(pdMS_TO_TICKS(10));
-    Set_EXIO(TCA9554_EXIO2,true);
+    Set_EXIO(TCA9554_EXIO2, true);
     vTaskDelay(pdMS_TO_TICKS(50));
     return ESP_OK;
 }
 
 static esp_err_t read_id(esp_lcd_touch_handle_t tp)
 {
-    uint8_t id=0x10;
+    uint8_t id = 0x10;
     uint8_t Over = 0x01;
 
     touch_cst820_i2c_write(tp, DATA_START_REG, &Over, 1);
@@ -197,7 +206,6 @@ static esp_err_t read_id(esp_lcd_touch_handle_t tp)
     ESP_LOGI(TAG, "IC id: %d", id);
     return ESP_OK;
 }
-
 
 static esp_err_t i2c_read_bytes(esp_lcd_touch_handle_t tp, uint16_t reg, uint8_t *data, uint8_t len)
 {
@@ -208,7 +216,7 @@ static esp_err_t i2c_read_bytes(esp_lcd_touch_handle_t tp, uint16_t reg, uint8_t
     return esp_lcd_panel_io_rx_param(tp->io, reg, data, len);
 }
 
-static esp_err_t touch_cst820_i2c_write(esp_lcd_touch_handle_t tp, uint16_t reg, uint8_t* data, uint8_t len)
+static esp_err_t touch_cst820_i2c_write(esp_lcd_touch_handle_t tp, uint16_t reg, uint8_t *data, uint8_t len)
 {
     assert(tp != NULL);
 
@@ -222,8 +230,8 @@ static esp_err_t touch_cst820_i2c_write(esp_lcd_touch_handle_t tp, uint16_t reg,
 esp_lcd_touch_handle_t tp = NULL;
 void Touch_Init(void)
 {
-    
-/********************* Touch *********************/
+
+    /********************* Touch *********************/
 
     esp_lcd_panel_io_handle_t tp_io_handle = NULL;
     esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_CST820_CONFIG();
