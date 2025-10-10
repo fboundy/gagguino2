@@ -10,7 +10,7 @@
 
 #define BREW_PROFILE_STORE_NAMESPACE "brew_profiles"
 #define BREW_PROFILE_STORE_KEY       "profiles"
-#define BREW_PROFILE_STORE_VERSION   (1U)
+#define BREW_PROFILE_STORE_VERSION   (2U)
 
 static const char *TAG = "BrewProfileStore";
 
@@ -20,6 +20,26 @@ typedef struct
     int32_t activeIndex;
     BrewProfileSnapshot snapshot;
 } BrewProfileStorage;
+
+typedef struct
+{
+    char name[BREW_PROFILE_NAME_MAX_LEN];
+    uint32_t phaseCount;
+    BrewPhaseConfig phases[BREW_PROFILE_STORE_MAX_PHASES];
+} BrewProfileConfigV1;
+
+typedef struct
+{
+    uint32_t profileCount;
+    BrewProfileConfigV1 profiles[BREW_PROFILE_STORE_MAX_PROFILES];
+} BrewProfileSnapshotV1;
+
+typedef struct
+{
+    uint32_t version;
+    int32_t activeIndex;
+    BrewProfileSnapshotV1 snapshot;
+} BrewProfileStorageV1;
 
 static BrewProfileStorage s_storage;
 static bool s_initialized = false;
@@ -33,6 +53,12 @@ static esp_err_t validate_profile(const BrewProfileConfig *profile)
     if (name_len == 0 || name_len >= sizeof(profile->name))
     {
         ESP_LOGE(TAG, "Profile name is invalid");
+        return ESP_ERR_INVALID_ARG;
+    }
+    size_t description_len = strnlen(profile->description, sizeof(profile->description));
+    if (description_len >= sizeof(profile->description))
+    {
+        ESP_LOGE(TAG, "Profile description is too long");
         return ESP_ERR_INVALID_ARG;
     }
     if (profile->phaseCount == 0 || profile->phaseCount > BREW_PROFILE_STORE_MAX_PHASES)
@@ -114,10 +140,22 @@ static void copy_phase(BrewPhaseConfig *dst, const BrewPhaseConfig *src)
     dst->name[sizeof(dst->name) - 1] = '\0';
 }
 
+static void copy_profile_from_v1(BrewProfileConfig *dst, const BrewProfileConfigV1 *src)
+{
+    memset(dst, 0, sizeof(*dst));
+    strlcpy(dst->name, src->name, sizeof(dst->name));
+    dst->phaseCount = src->phaseCount;
+    for (uint32_t i = 0; i < dst->phaseCount && i < BREW_PROFILE_STORE_MAX_PHASES; ++i)
+    {
+        copy_phase(&dst->phases[i], &src->phases[i]);
+    }
+}
+
 static void copy_profile(BrewProfileConfig *dst, const BrewProfileConfig *src)
 {
     memset(dst, 0, sizeof(*dst));
     strlcpy(dst->name, src->name, sizeof(dst->name));
+    strlcpy(dst->description, src->description, sizeof(dst->description));
     dst->phaseCount = src->phaseCount;
     for (uint32_t i = 0; i < dst->phaseCount && i < BREW_PROFILE_STORE_MAX_PHASES; ++i)
     {
@@ -132,6 +170,10 @@ static void load_default_locked(void)
     s_storage.activeIndex = BREW_PROFILE_STORE_ACTIVE_NONE;
     BrewProfileConfig def = {0};
     strlcpy(def.name, BREW_PROFILE_DEFAULT.name, sizeof(def.name));
+    if (BREW_PROFILE_DEFAULT.description)
+    {
+        strlcpy(def.description, BREW_PROFILE_DEFAULT.description, sizeof(def.description));
+    }
     def.phaseCount = BREW_PROFILE_DEFAULT.phaseCount;
     if (def.phaseCount > BREW_PROFILE_STORE_MAX_PHASES)
     {
@@ -208,6 +250,32 @@ esp_err_t BrewProfileStore_Init(void)
             return err;
         }
     }
+    else if (required == sizeof(BrewProfileStorageV1))
+    {
+        BrewProfileStorageV1 legacy = {0};
+        size_t len = sizeof(legacy);
+        err = nvs_get_blob(handle, BREW_PROFILE_STORE_KEY, &legacy, &len);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Failed to read legacy profile blob: %s", esp_err_to_name(err));
+            nvs_close(handle);
+            vSemaphoreDelete(s_mutex);
+            s_mutex = NULL;
+            return err;
+        }
+        s_storage.version = BREW_PROFILE_STORE_VERSION;
+        s_storage.activeIndex = legacy.activeIndex;
+        s_storage.snapshot.profileCount = legacy.snapshot.profileCount;
+        if (s_storage.snapshot.profileCount > BREW_PROFILE_STORE_MAX_PROFILES)
+        {
+            s_storage.snapshot.profileCount = BREW_PROFILE_STORE_MAX_PROFILES;
+        }
+        for (uint32_t i = 0; i < s_storage.snapshot.profileCount; ++i)
+        {
+            copy_profile_from_v1(&s_storage.snapshot.profiles[i], &legacy.snapshot.profiles[i]);
+        }
+        persist_updated_blob = true;
+    }
     else if (required == sizeof(BrewProfileSnapshot))
     {
         // Read directly into the persistent storage buffer to avoid large stack allocations
@@ -224,6 +292,32 @@ esp_err_t BrewProfileStore_Init(void)
         // version and activeIndex were zeroed earlier when s_storage was cleared
         s_storage.version = BREW_PROFILE_STORE_VERSION;
         s_storage.activeIndex = BREW_PROFILE_STORE_ACTIVE_NONE;
+        persist_updated_blob = true;
+    }
+    else if (required == sizeof(BrewProfileSnapshotV1))
+    {
+        BrewProfileSnapshotV1 legacy = {0};
+        size_t len = sizeof(legacy);
+        err = nvs_get_blob(handle, BREW_PROFILE_STORE_KEY, &legacy, &len);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Failed to read legacy profile blob: %s", esp_err_to_name(err));
+            nvs_close(handle);
+            vSemaphoreDelete(s_mutex);
+            s_mutex = NULL;
+            return err;
+        }
+        s_storage.version = BREW_PROFILE_STORE_VERSION;
+        s_storage.activeIndex = BREW_PROFILE_STORE_ACTIVE_NONE;
+        s_storage.snapshot.profileCount = legacy.profileCount;
+        if (s_storage.snapshot.profileCount > BREW_PROFILE_STORE_MAX_PROFILES)
+        {
+            s_storage.snapshot.profileCount = BREW_PROFILE_STORE_MAX_PROFILES;
+        }
+        for (uint32_t i = 0; i < s_storage.snapshot.profileCount; ++i)
+        {
+            copy_profile_from_v1(&s_storage.snapshot.profiles[i], &legacy.profiles[i]);
+        }
         persist_updated_blob = true;
     }
     else
@@ -256,6 +350,7 @@ esp_err_t BrewProfileStore_Init(void)
             persist_updated_blob = true;
         }
         s_storage.snapshot.profiles[i].name[sizeof(s_storage.snapshot.profiles[i].name) - 1] = '\0';
+        s_storage.snapshot.profiles[i].description[sizeof(s_storage.snapshot.profiles[i].description) - 1] = '\0';
         for (uint32_t p = 0; p < s_storage.snapshot.profiles[i].phaseCount; ++p)
         {
             s_storage.snapshot.profiles[i].phases[p].name[sizeof(s_storage.snapshot.profiles[i].phases[p].name) - 1] = '\0';

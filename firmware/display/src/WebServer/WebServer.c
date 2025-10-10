@@ -89,6 +89,7 @@ static const char INDEX_HTML[] =
     "  <h2 id=\"editor-title\">Edit Profile</h2>\n"
     "  <form id=\"editor-form\">\n"
     "    <label>Name<input name=\"name\" type=\"text\" required></label>\n"
+    "    <label>Description<textarea name=\"description\" placeholder=\"Flavor notes, brew goals, etc. (optional)\"></textarea></label>\n"
     "    <label>Phases (JSON array)</label>\n"
     "    <textarea name=\"phases\" placeholder='[{\"name\":\"Phase\",\"durationMode\":\"time\",\"durationValue\":30,\"pumpMode\":\"power\",\"pumpValue\":95,\"temperatureC\":92}]'></textarea>\n"
     "    <div class=\"actions\">\n"
@@ -112,11 +113,11 @@ static const char INDEX_HTML[] =
     "function setActiveDisplay(){if(state.activeIndex===null||state.activeIndex<0||state.activeIndex>=state.profiles.length){activeProfileEl.textContent='None selected';return;}const profile=state.profiles[state.activeIndex];activeProfileEl.textContent=`${profile.name} (Profile ${state.activeIndex+1})`;}\n"
     "function createActionButton(label,handler,options={}){const btn=document.createElement('button');btn.type='button';btn.textContent=label;if(options.secondary)btn.classList.add('secondary');if(options.disabled){btn.disabled=true;}btn.addEventListener('click',handler);return btn;}\n"
     "async function setActive(index){try{const response=await fetch('/api/profiles/active',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:index===null?null:index})});if(!response.ok){const text=await response.text();throw new Error(text||'Failed to set active profile');}showMessage(index===null?'Active profile cleared':'Active profile updated');await loadProfiles();}catch(err){showMessage(err.message,true);}}\n"
-    "function startEditor(index){state.editingIndex=index;editorCard.classList.remove('hidden');const nameInput=editorForm.elements.namedItem('name');const phasesInput=editorForm.elements.namedItem('phases');if(index===-1){editorTitle.textContent='Add Profile';nameInput.value='';phasesInput.value=JSON.stringify(samplePhases,null,2);}else{const profile=state.profiles[index];editorTitle.textContent=`Edit: ${profile.name}`;nameInput.value=profile.name;phasesInput.value=JSON.stringify(profile.phases,null,2);}}\n"
+    "function startEditor(index){state.editingIndex=index;editorCard.classList.remove('hidden');const nameInput=editorForm.elements.namedItem('name');const descriptionInput=editorForm.elements.namedItem('description');const phasesInput=editorForm.elements.namedItem('phases');if(index===-1){editorTitle.textContent='Add Profile';nameInput.value='';descriptionInput.value='';phasesInput.value=JSON.stringify(samplePhases,null,2);}else{const profile=state.profiles[index];editorTitle.textContent=`Edit: ${profile.name}`;nameInput.value=profile.name;descriptionInput.value=profile.description||'';phasesInput.value=JSON.stringify(profile.phases,null,2);}}\n"
     "function hideEditor(){state.editingIndex=null;editorCard.classList.add('hidden');editorForm.reset();}\n"
-    "function renderProfiles(){profileList.innerHTML='';const noneRow=document.createElement('div');noneRow.className='profile-row';const noneInfo=document.createElement('div');noneInfo.className='profile-row-info';const noneTitle=document.createElement('h3');noneTitle.textContent='None';noneInfo.appendChild(noneTitle);const noneDesc=document.createElement('p');noneDesc.textContent='Use manual settings.';noneInfo.appendChild(noneDesc);const noneActions=document.createElement('div');noneActions.className='profile-row-actions';const noneButton=createActionButton(state.activeIndex===null?'Active':'Activate',()=>setActive(null),{disabled:state.activeIndex===null});noneActions.appendChild(noneButton);noneRow.appendChild(noneInfo);noneRow.appendChild(noneActions);profileList.appendChild(noneRow);state.profiles.forEach((profile,index)=>{const row=document.createElement('div');row.className='profile-row';const info=document.createElement('div');info.className='profile-row-info';const title=document.createElement('h3');title.textContent=profile.name;info.appendChild(title);const phaseCount=Array.isArray(profile.phases)?profile.phases.length:(typeof profile.phaseCount==='number'?profile.phaseCount:0);const desc=document.createElement('p');desc.textContent=`${phaseCount} phase${phaseCount===1?'':'s'}`;info.appendChild(desc);const actions=document.createElement('div');actions.className='profile-row-actions';const activateBtn=createActionButton(state.activeIndex===index?'Active':'Activate',()=>setActive(index),{disabled:state.activeIndex===index});actions.appendChild(activateBtn);const editBtn=createActionButton('Edit',()=>startEditor(index),{secondary:true});actions.appendChild(editBtn);row.appendChild(info);row.appendChild(actions);profileList.appendChild(row);});setActiveDisplay();}\n"
+    "function renderProfiles(){profileList.innerHTML='';const noneRow=document.createElement('div');noneRow.className='profile-row';const noneInfo=document.createElement('div');noneInfo.className='profile-row-info';const noneTitle=document.createElement('h3');noneTitle.textContent='None';noneInfo.appendChild(noneTitle);const noneDesc=document.createElement('p');noneDesc.textContent='Use manual settings.';noneInfo.appendChild(noneDesc);const noneActions=document.createElement('div');noneActions.className='profile-row-actions';const noneButton=createActionButton(state.activeIndex===null?'Active':'Activate',()=>setActive(null),{disabled:state.activeIndex===null});noneActions.appendChild(noneButton);noneRow.appendChild(noneInfo);noneRow.appendChild(noneActions);profileList.appendChild(noneRow);state.profiles.forEach((profile,index)=>{const row=document.createElement('div');row.className='profile-row';const info=document.createElement('div');info.className='profile-row-info';const title=document.createElement('h3');title.textContent=profile.name;info.appendChild(title);const phaseCount=Array.isArray(profile.phases)?profile.phases.length:(typeof profile.phaseCount==='number'?profile.phaseCount:0);const desc=document.createElement('p');const descriptionText=(typeof profile.description==='string'?profile.description:'').trim();if(descriptionText){desc.textContent=`${descriptionText} · ${phaseCount} phase${phaseCount===1?'':'s'}`;}else{desc.textContent=`${phaseCount} phase${phaseCount===1?'':'s'}`;}info.appendChild(desc);const actions=document.createElement('div');actions.className='profile-row-actions';const activateBtn=createActionButton(state.activeIndex===index?'Active':'Activate',()=>setActive(index),{disabled:state.activeIndex===index});actions.appendChild(activateBtn);const editBtn=createActionButton('Edit',()=>startEditor(index),{secondary:true});actions.appendChild(editBtn);row.appendChild(info);row.appendChild(actions);profileList.appendChild(row);});setActiveDisplay();}\n"
     "async function loadProfiles(){try{const response=await fetch('/api/profiles');if(!response.ok)throw new Error('Failed to load profiles');const data=await response.json();state.profiles=Array.isArray(data.profiles)?data.profiles:[];if(Number.isInteger(data.activeIndex)){state.activeIndex=data.activeIndex;}else{state.activeIndex=null;}if(state.activeIndex!==null&&state.activeIndex<0)state.activeIndex=null;renderProfiles();}catch(err){showMessage(err.message,true);}}\n"
-    "editorForm.addEventListener('submit',async(event)=>{event.preventDefault();const form=event.target;const name=form.name.value.trim();if(!name){showMessage('Name is required',true);return;}let phases;try{phases=JSON.parse(form.phases.value||'[]');}catch(err){showMessage('Phases must be valid JSON',true);return;}if(!Array.isArray(phases)||phases.length===0){showMessage('At least one phase is required',true);return;}const payload={name,phases};try{let response;if(state.editingIndex===-1){response=await fetch('/api/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else if(state.editingIndex!==null){response=await fetch(`/api/profiles/${state.editingIndex}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else{return;}if(!response.ok){const text=await response.text();throw new Error(text||'Failed to save profile');}showMessage('Profile saved');hideEditor();await loadProfiles();}catch(err){showMessage(err.message,true);}});\n"
+    "editorForm.addEventListener('submit',async(event)=>{event.preventDefault();const form=event.target;const name=form.name.value.trim();if(!name){showMessage('Name is required',true);return;}const description=form.description.value.trim();let phases;try{phases=JSON.parse(form.phases.value||'[]');}catch(err){showMessage('Phases must be valid JSON',true);return;}if(!Array.isArray(phases)||phases.length===0){showMessage('At least one phase is required',true);return;}const payload={name,description,phases};try{let response;if(state.editingIndex===-1){response=await fetch('/api/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else if(state.editingIndex!==null){response=await fetch(`/api/profiles/${state.editingIndex}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else{return;}if(!response.ok){const text=await response.text();throw new Error(text||'Failed to save profile');}showMessage('Profile saved');hideEditor();await loadProfiles();}catch(err){showMessage(err.message,true);}});\n"
     "cancelEditBtn.addEventListener('click',()=>{hideEditor();});\n"
     "addProfileButton.addEventListener('click',()=>{startEditor(-1);});\n"
     "hideEditor();\n"
@@ -234,6 +235,7 @@ static esp_err_t parse_profile_json(const char *json, BrewProfileConfig *out, ch
         goto cleanup;
     }
     cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
+    cJSON *description = cJSON_GetObjectItemCaseSensitive(root, "description");
     cJSON *phases = cJSON_GetObjectItemCaseSensitive(root, "phases");
     if (!cJSON_IsString(name) || !name->valuestring)
     {
@@ -266,6 +268,20 @@ static esp_err_t parse_profile_json(const char *json, BrewProfileConfig *out, ch
     }
     memset(out, 0, sizeof(*out));
     strlcpy(out->name, name->valuestring, sizeof(out->name));
+    if (description)
+    {
+        if (cJSON_IsString(description) && description->valuestring)
+        {
+            strlcpy(out->description, description->valuestring, sizeof(out->description));
+        }
+        else if (!cJSON_IsNull(description))
+        {
+            if (errbuf && errlen)
+                strlcpy(errbuf, "Description must be a string", errlen);
+            result = ESP_ERR_INVALID_ARG;
+            goto cleanup;
+        }
+    }
     out->phaseCount = (uint32_t)phase_count;
     for (uint32_t i = 0; i < out->phaseCount; ++i)
     {
@@ -422,6 +438,7 @@ static esp_err_t handle_get_profiles(httpd_req_t *req)
         if (!profile_obj)
             goto error;
         cJSON_AddStringToObject(profile_obj, "name", profile->name);
+        cJSON_AddStringToObject(profile_obj, "description", profile->description);
         cJSON_AddNumberToObject(profile_obj, "phaseCount", profile->phaseCount);
         cJSON *phases = cJSON_CreateArray();
         if (!phases)
