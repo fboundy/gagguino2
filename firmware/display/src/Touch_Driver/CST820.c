@@ -94,6 +94,13 @@ static esp_err_t read_data(esp_lcd_touch_handle_t tp)
 
     assert(tp != NULL);
 
+    if (tp->config.int_gpio_num != GPIO_NUM_NC) {
+        /* Skip I2C transactions when the touch controller does not signal data ready */
+        if (gpio_get_level(tp->config.int_gpio_num) != 0) {
+            return ESP_OK;
+        }
+    }
+
     uint8_t write_buf = 0x01;
     i2c_master_write_to_device(0, DATA_START_REG, &write_buf, 1, 1000 / portTICK_PERIOD_MS);
 
