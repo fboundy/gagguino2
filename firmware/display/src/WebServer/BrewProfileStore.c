@@ -68,11 +68,38 @@ static esp_err_t save_locked(void)
     esp_err_t err = nvs_open(BREW_PROFILE_STORE_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK)
         return err;
-    err = nvs_set_blob(handle, BREW_PROFILE_STORE_KEY, &s_storage.snapshot, sizeof(s_storage.snapshot));
-    if (err == ESP_OK)
+    bool retried = false;
+    while (true)
     {
-        err = nvs_commit(handle);
+        err = nvs_set_blob(handle, BREW_PROFILE_STORE_KEY, &s_storage.snapshot, sizeof(s_storage.snapshot));
+        if (err == ESP_OK)
+            break;
+        bool out_of_space = (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE);
+#ifdef ESP_ERR_NVS_PART_NOT_ENOUGH_SPACE
+        out_of_space = out_of_space || (err == ESP_ERR_NVS_PART_NOT_ENOUGH_SPACE);
+#endif
+        if (!retried && out_of_space)
+        {
+            ESP_LOGW(TAG, "NVS out of space, erasing key before retry: %s", esp_err_to_name(err));
+            esp_err_t erase_err = nvs_erase_key(handle, BREW_PROFILE_STORE_KEY);
+            if (erase_err != ESP_OK && erase_err != ESP_ERR_NVS_NOT_FOUND)
+            {
+                nvs_close(handle);
+                return erase_err;
+            }
+            esp_err_t commit_err = nvs_commit(handle);
+            if (commit_err != ESP_OK)
+            {
+                nvs_close(handle);
+                return commit_err;
+            }
+            retried = true;
+            continue;
+        }
+        nvs_close(handle);
+        return err;
     }
+    err = nvs_commit(handle);
     nvs_close(handle);
     return err;
 }

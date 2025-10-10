@@ -7,6 +7,7 @@
 #include <strings.h>
 #include "esp_log.h"
 #include "esp_http_server.h"
+#include "nvs.h"
 #include "cJSON.h"
 #include "BrewProfileStore.h"
 
@@ -14,6 +15,27 @@ static const char *TAG = "WebServer";
 
 static httpd_handle_t s_server = NULL;
 static bool s_initialized = false;
+
+static bool is_storage_full_error(esp_err_t err)
+{
+    if (err == ESP_ERR_NO_MEM || err == ESP_ERR_NVS_NOT_ENOUGH_SPACE)
+    {
+        return true;
+    }
+#ifdef ESP_ERR_NVS_PART_NOT_ENOUGH_SPACE
+    if (err == ESP_ERR_NVS_PART_NOT_ENOUGH_SPACE)
+    {
+        return true;
+    }
+#endif
+#ifdef ESP_ERR_NVS_FULL
+    if (err == ESP_ERR_NVS_FULL)
+    {
+        return true;
+    }
+#endif
+    return false;
+}
 
 static const char INDEX_HTML[] =
     "<!DOCTYPE html>\n"
@@ -318,19 +340,25 @@ static esp_err_t handle_get_root(httpd_req_t *req)
 
 static esp_err_t handle_get_profiles(httpd_req_t *req)
 {
-    BrewProfileSnapshot snapshot;
-    esp_err_t err = BrewProfileStore_GetSnapshot(&snapshot);
+    BrewProfileSnapshot *snapshot = calloc(1, sizeof(*snapshot));
+    if (!snapshot)
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    esp_err_t err = BrewProfileStore_GetSnapshot(snapshot);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to get profiles: %s", esp_err_to_name(err));
+        free(snapshot);
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to load profiles");
     }
     cJSON *root = cJSON_CreateArray();
     if (!root)
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-    for (uint32_t i = 0; i < snapshot.profileCount; ++i)
     {
-        const BrewProfileConfig *profile = &snapshot.profiles[i];
+        free(snapshot);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
+    for (uint32_t i = 0; i < snapshot->profileCount; ++i)
+    {
+        const BrewProfileConfig *profile = &snapshot->profiles[i];
         cJSON *profile_obj = cJSON_CreateObject();
         if (!profile_obj)
             goto error;
@@ -360,9 +388,11 @@ static esp_err_t handle_get_profiles(httpd_req_t *req)
     }
     err = send_json_response(req, root);
     cJSON_Delete(root);
+    free(snapshot);
     return err;
 error:
     cJSON_Delete(root);
+    free(snapshot);
     return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to encode profiles");
 }
 
@@ -376,20 +406,27 @@ static esp_err_t handle_post_profiles(httpd_req_t *req)
             return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
     }
-    BrewProfileConfig profile;
+    BrewProfileConfig *profile = calloc(1, sizeof(*profile));
+    if (!profile)
+    {
+        free(body);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
     char error_msg[96];
-    err = parse_profile_json(body, &profile, error_msg, sizeof(error_msg));
+    err = parse_profile_json(body, profile, error_msg, sizeof(error_msg));
     free(body);
     if (err != ESP_OK)
     {
+        free(profile);
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, error_msg);
     }
     uint32_t index = 0;
-    err = BrewProfileStore_AddProfile(&profile, &index);
+    err = BrewProfileStore_AddProfile(profile, &index);
+    free(profile);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to add profile: %s", esp_err_to_name(err));
-        if (err == ESP_ERR_NO_MEM)
+        if (is_storage_full_error(err))
         {
             httpd_resp_set_status(req, "507 Insufficient Storage");
             httpd_resp_set_type(req, "text/plain");
@@ -426,18 +463,31 @@ static esp_err_t handle_put_profiles(httpd_req_t *req)
             return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid request body");
     }
-    BrewProfileConfig profile;
+    BrewProfileConfig *profile = calloc(1, sizeof(*profile));
+    if (!profile)
+    {
+        free(body);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
     char error_msg[96];
-    err = parse_profile_json(body, &profile, error_msg, sizeof(error_msg));
+    err = parse_profile_json(body, profile, error_msg, sizeof(error_msg));
     free(body);
     if (err != ESP_OK)
     {
+        free(profile);
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, error_msg);
     }
-    err = BrewProfileStore_UpdateProfile(index, &profile);
+    err = BrewProfileStore_UpdateProfile(index, profile);
+    free(profile);
     if (err != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to update profile %u: %s", (unsigned)index, esp_err_to_name(err));
+        if (is_storage_full_error(err))
+        {
+            httpd_resp_set_status(req, "507 Insufficient Storage");
+            httpd_resp_set_type(req, "text/plain");
+            return httpd_resp_send(req, "Profile storage full", HTTPD_RESP_USE_STRLEN);
+        }
         if (err == ESP_ERR_INVALID_ARG)
             return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Profile not found");
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to update profile");
