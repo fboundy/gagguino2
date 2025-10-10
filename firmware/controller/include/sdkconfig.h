@@ -16,9 +16,14 @@
 // stack allowance there as well so the core can create the Arduino loop task
 // safely before handing execution to our code.
 #undef CONFIG_ESP_MAIN_TASK_STACK_SIZE
-#define CONFIG_ESP_MAIN_TASK_STACK_SIZE 12288
+// The Arduino core performs substantial work inside the IDF "main" task before
+// it spins up the sketch's loop task.  Wi-Fi bring-up, ESP-NOW initialisation
+// and NTP configuration pull in large call stacks which exceeded the previous
+// 12 KiB allowance.  Bump the stack budget to 20 KiB (value expressed in bytes)
+// to give the RTOS enough breathing room during start-up.
+#define CONFIG_ESP_MAIN_TASK_STACK_SIZE 20480
 
 // Older IDF releases still key off CONFIG_MAIN_TASK_STACK_SIZE, so mirror the
 // larger value to cover both variants.
 #undef CONFIG_MAIN_TASK_STACK_SIZE
-#define CONFIG_MAIN_TASK_STACK_SIZE 12288
+#define CONFIG_MAIN_TASK_STACK_SIZE 20480
