@@ -9,11 +9,13 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "freertos/timers.h"
+#include "mdns.h"
 #include "mqtt_client.h"
 #include "secrets.h"
 #include "mqtt_topics.h"
 #include "espnow_protocol.h"
 #include "version.h"
+#include "WebServer.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -212,6 +214,8 @@ static bool s_restore_heater_on_exit = false;
 static bool s_wifi_ready = false;
 static uint8_t s_sta_channel = 0;
 static bool s_sta_channel_valid = false;
+static bool s_mdns_initialized = false;
+static bool s_mdns_service_registered = false;
 
 static bool s_espnow_active = false;
 static bool s_espnow_handshake = false;
@@ -352,6 +356,66 @@ static void espnow_timeout_cb(TimerHandle_t xTimer);
 static void espnow_ping_cb(TimerHandle_t xTimer);
 static void Wireless_Task(void *arg);
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int data_len);
+static void start_mdns_service(void);
+static void stop_mdns_service(void);
+
+static void start_mdns_service(void)
+{
+    if (!s_mdns_initialized)
+    {
+        esp_err_t err = mdns_init();
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG_WIFI, "mDNS init failed: %s", esp_err_to_name(err));
+            return;
+        }
+        s_mdns_initialized = true;
+    }
+
+    esp_err_t err = mdns_hostname_set("gaggia");
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG_WIFI, "Failed to set mDNS hostname: %s", esp_err_to_name(err));
+    }
+
+    err = mdns_instance_name_set("Gaggia Espresso Display");
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG_WIFI, "Failed to set mDNS instance name: %s", esp_err_to_name(err));
+    }
+
+    if (!s_mdns_service_registered)
+    {
+        mdns_txt_item_t service_txt_data[] = {
+            {"path", "/"},
+        };
+        err = mdns_service_add("Gaggia Web", "_http", "_tcp", 80, service_txt_data, 1);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG_WIFI, "Failed to add mDNS HTTP service: %s", esp_err_to_name(err));
+        }
+        else
+        {
+            s_mdns_service_registered = true;
+        }
+    }
+}
+
+static void stop_mdns_service(void)
+{
+    if (!s_mdns_initialized || !s_mdns_service_registered)
+        return;
+
+    esp_err_t err = mdns_service_remove("_http", "_tcp");
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG_WIFI, "Failed to remove mDNS service: %s", esp_err_to_name(err));
+    }
+    else
+    {
+        s_mdns_service_registered = false;
+    }
+}
 
 // -----------------------------------------------------------------------------
 // Wi-Fi initialisation and event handling
@@ -363,6 +427,12 @@ static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG_WIFI, "Got IP: %d.%d.%d.%d", IP2STR(&event->ip_info.ip));
         s_wifi_ready = true;
+        esp_err_t err = WebServer_Start();
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG_WIFI, "Failed to start web server: %s", esp_err_to_name(err));
+        }
+        start_mdns_service();
     }
 }
 
@@ -398,6 +468,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         s_wifi_ready = false;
         s_sta_channel_valid = false;
         s_last_espnow_channel = 0;
+        stop_mdns_service();
         stop_espnow();
         esp_wifi_connect();
         break;

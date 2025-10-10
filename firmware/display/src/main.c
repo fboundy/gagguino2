@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "esp_err.h"
 #include <sys/time.h>
 #include <time.h>
 #include <string.h>
@@ -41,6 +42,7 @@ static int log_vprintf(const char *fmt, va_list args)
 #include "LVGL_Driver.h"
 #include "LVGL_UI.h"
 #include "Wireless.h"
+#include "WebServer.h"
 #include "Battery.h"
 
 // Track interaction and machine activity for LCD backlight control.
@@ -81,6 +83,11 @@ void app_main(void)
     vTaskDelay(pdMS_TO_TICKS(boot_delay_ms));
 
     Wireless_Init();  // Configure Wi-Fi/BLE modules
+    esp_err_t web_err = WebServer_Init();
+    if (web_err != ESP_OK)
+    {
+        ESP_LOGE("WEB", "Web server init failed: %s", esp_err_to_name(web_err));
+    }
     Driver_Init();    // Initialize hardware drivers
 
     LCD_Init();      // Prepare LCD display
