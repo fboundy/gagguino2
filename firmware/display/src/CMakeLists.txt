@@ -53,5 +53,5 @@ idf_component_register(
         esp_lcd
         mqtt
         esp_http_server
-        cJSON
+        json
 )
