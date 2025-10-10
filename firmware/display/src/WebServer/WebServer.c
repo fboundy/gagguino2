@@ -699,24 +699,24 @@ esp_err_t WebServer_Start(void)
         .handler = handle_post_profiles,
         .user_ctx = NULL,
     };
-    httpd_uri_t profiles_put = {
-        .uri = "/api/profiles/*",
-        .method = HTTP_PUT,
-        .handler = handle_put_profiles,
-        .user_ctx = NULL,
-    };
     httpd_uri_t profiles_active_put = {
         .uri = "/api/profiles/active",
         .method = HTTP_PUT,
         .handler = handle_put_active_profile,
         .user_ctx = NULL,
     };
+    httpd_uri_t profiles_put = {
+        .uri = "/api/profiles/*",
+        .method = HTTP_PUT,
+        .handler = handle_put_profiles,
+        .user_ctx = NULL,
+    };
     httpd_register_uri_handler(s_server, &root_uri);
     httpd_register_uri_handler(s_server, &index_uri);
     httpd_register_uri_handler(s_server, &profiles_get);
     httpd_register_uri_handler(s_server, &profiles_post);
-    httpd_register_uri_handler(s_server, &profiles_put);
     httpd_register_uri_handler(s_server, &profiles_active_put);
+    httpd_register_uri_handler(s_server, &profiles_put);
     ESP_LOGI(TAG, "HTTP server started");
     return ESP_OK;
 }
