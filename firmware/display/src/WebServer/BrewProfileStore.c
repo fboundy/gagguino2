@@ -10,11 +10,14 @@
 
 #define BREW_PROFILE_STORE_NAMESPACE "brew_profiles"
 #define BREW_PROFILE_STORE_KEY       "profiles"
+#define BREW_PROFILE_STORE_VERSION   (1U)
 
 static const char *TAG = "BrewProfileStore";
 
 typedef struct
 {
+    uint32_t version;
+    int32_t activeIndex;
     BrewProfileSnapshot snapshot;
 } BrewProfileStorage;
 
@@ -69,9 +72,10 @@ static esp_err_t save_locked(void)
     if (err != ESP_OK)
         return err;
     bool retried = false;
+    s_storage.version = BREW_PROFILE_STORE_VERSION;
     while (true)
     {
-        err = nvs_set_blob(handle, BREW_PROFILE_STORE_KEY, &s_storage.snapshot, sizeof(s_storage.snapshot));
+        err = nvs_set_blob(handle, BREW_PROFILE_STORE_KEY, &s_storage, sizeof(s_storage));
         if (err == ESP_OK)
             break;
         bool out_of_space = (err == ESP_ERR_NVS_NOT_ENOUGH_SPACE);
@@ -124,6 +128,8 @@ static void copy_profile(BrewProfileConfig *dst, const BrewProfileConfig *src)
 static void load_default_locked(void)
 {
     memset(&s_storage, 0, sizeof(s_storage));
+    s_storage.version = BREW_PROFILE_STORE_VERSION;
+    s_storage.activeIndex = BREW_PROFILE_STORE_ACTIVE_NONE;
     BrewProfileConfig def = {0};
     strlcpy(def.name, BREW_PROFILE_DEFAULT.name, sizeof(def.name));
     def.phaseCount = BREW_PROFILE_DEFAULT.phaseCount;
@@ -171,55 +177,116 @@ esp_err_t BrewProfileStore_Init(void)
         return err;
     }
 
-    size_t required = sizeof(s_storage.snapshot);
-    err = nvs_get_blob(handle, BREW_PROFILE_STORE_KEY, &s_storage.snapshot, &required);
+    size_t required = 0;
+    err = nvs_get_blob(handle, BREW_PROFILE_STORE_KEY, NULL, &required);
+    bool persist_updated_blob = false;
     if (err == ESP_ERR_NVS_NOT_FOUND)
     {
         ESP_LOGI(TAG, "No stored profiles found, loading defaults");
         load_default_locked();
-        esp_err_t save_err = nvs_set_blob(handle, BREW_PROFILE_STORE_KEY, &s_storage.snapshot, sizeof(s_storage.snapshot));
+        persist_updated_blob = true;
+        err = ESP_OK;
+    }
+    else if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to query profiles blob: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+        return err;
+    }
+    else if (required == sizeof(s_storage))
+    {
+        size_t len = sizeof(s_storage);
+        err = nvs_get_blob(handle, BREW_PROFILE_STORE_KEY, &s_storage, &len);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Failed to read profile blob: %s", esp_err_to_name(err));
+            nvs_close(handle);
+            vSemaphoreDelete(s_mutex);
+            s_mutex = NULL;
+            return err;
+        }
+    }
+    else if (required == sizeof(BrewProfileSnapshot))
+    {
+        BrewProfileSnapshot legacy = {0};
+        size_t len = sizeof(legacy);
+        err = nvs_get_blob(handle, BREW_PROFILE_STORE_KEY, &legacy, &len);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Failed to read legacy profile blob: %s", esp_err_to_name(err));
+            nvs_close(handle);
+            vSemaphoreDelete(s_mutex);
+            s_mutex = NULL;
+            return err;
+        }
+        memset(&s_storage, 0, sizeof(s_storage));
+        s_storage.version = BREW_PROFILE_STORE_VERSION;
+        s_storage.activeIndex = BREW_PROFILE_STORE_ACTIVE_NONE;
+        memcpy(&s_storage.snapshot, &legacy, sizeof(legacy));
+        persist_updated_blob = true;
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Stored profile blob unexpected size %u, loading defaults", (unsigned)required);
+        load_default_locked();
+        persist_updated_blob = true;
+    }
+
+    if (s_storage.version != BREW_PROFILE_STORE_VERSION)
+    {
+        ESP_LOGW(TAG, "Profile store version %u unexpected, resetting metadata", (unsigned)s_storage.version);
+        s_storage.version = BREW_PROFILE_STORE_VERSION;
+        persist_updated_blob = true;
+    }
+
+    if (s_storage.snapshot.profileCount > BREW_PROFILE_STORE_MAX_PROFILES)
+    {
+        ESP_LOGW(TAG, "Stored profile count %u exceeds max, truncating", (unsigned)s_storage.snapshot.profileCount);
+        s_storage.snapshot.profileCount = BREW_PROFILE_STORE_MAX_PROFILES;
+        persist_updated_blob = true;
+    }
+    for (uint32_t i = 0; i < s_storage.snapshot.profileCount; ++i)
+    {
+        if (s_storage.snapshot.profiles[i].phaseCount > BREW_PROFILE_STORE_MAX_PHASES)
+        {
+            ESP_LOGW(TAG, "Profile %u phase count %u exceeds max, truncating", (unsigned)i,
+                     (unsigned)s_storage.snapshot.profiles[i].phaseCount);
+            s_storage.snapshot.profiles[i].phaseCount = BREW_PROFILE_STORE_MAX_PHASES;
+            persist_updated_blob = true;
+        }
+        s_storage.snapshot.profiles[i].name[sizeof(s_storage.snapshot.profiles[i].name) - 1] = '\0';
+        for (uint32_t p = 0; p < s_storage.snapshot.profiles[i].phaseCount; ++p)
+        {
+            s_storage.snapshot.profiles[i].phases[p].name[sizeof(s_storage.snapshot.profiles[i].phases[p].name) - 1] = '\0';
+        }
+    }
+
+    if (s_storage.activeIndex < 0 || (uint32_t)s_storage.activeIndex >= s_storage.snapshot.profileCount)
+    {
+        if (s_storage.activeIndex != BREW_PROFILE_STORE_ACTIVE_NONE)
+        {
+            ESP_LOGW(TAG, "Active profile index %d out of range, clearing selection", (int)s_storage.activeIndex);
+            persist_updated_blob = true;
+        }
+        s_storage.activeIndex = BREW_PROFILE_STORE_ACTIVE_NONE;
+    }
+
+    if (persist_updated_blob)
+    {
+        esp_err_t save_err = nvs_set_blob(handle, BREW_PROFILE_STORE_KEY, &s_storage, sizeof(s_storage));
         if (save_err == ESP_OK)
         {
             save_err = nvs_commit(handle);
         }
         if (save_err != ESP_OK)
         {
-            ESP_LOGE(TAG, "Failed to persist default profiles: %s", esp_err_to_name(save_err));
+            ESP_LOGE(TAG, "Failed to persist profiles: %s", esp_err_to_name(save_err));
             nvs_close(handle);
             vSemaphoreDelete(s_mutex);
             s_mutex = NULL;
             return save_err;
-        }
-        err = ESP_OK;
-    }
-    else if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to read profiles: %s", esp_err_to_name(err));
-        nvs_close(handle);
-        vSemaphoreDelete(s_mutex);
-        s_mutex = NULL;
-        return err;
-    }
-    else
-    {
-        if (s_storage.snapshot.profileCount > BREW_PROFILE_STORE_MAX_PROFILES)
-        {
-            ESP_LOGW(TAG, "Stored profile count %u exceeds max, truncating", (unsigned)s_storage.snapshot.profileCount);
-            s_storage.snapshot.profileCount = BREW_PROFILE_STORE_MAX_PROFILES;
-        }
-        for (uint32_t i = 0; i < s_storage.snapshot.profileCount; ++i)
-        {
-            if (s_storage.snapshot.profiles[i].phaseCount > BREW_PROFILE_STORE_MAX_PHASES)
-            {
-                ESP_LOGW(TAG, "Profile %u phase count %u exceeds max, truncating", (unsigned)i,
-                         (unsigned)s_storage.snapshot.profiles[i].phaseCount);
-                s_storage.snapshot.profiles[i].phaseCount = BREW_PROFILE_STORE_MAX_PHASES;
-            }
-            s_storage.snapshot.profiles[i].name[sizeof(s_storage.snapshot.profiles[i].name) - 1] = '\0';
-            for (uint32_t p = 0; p < s_storage.snapshot.profiles[i].phaseCount; ++p)
-            {
-                s_storage.snapshot.profiles[i].phases[p].name[sizeof(s_storage.snapshot.profiles[i].phases[p].name) - 1] = '\0';
-            }
         }
     }
 
@@ -284,6 +351,43 @@ esp_err_t BrewProfileStore_UpdateProfile(uint32_t index, const BrewProfileConfig
     }
     copy_profile(&s_storage.snapshot.profiles[index], profile);
     err = save_locked();
+    xSemaphoreGive(s_mutex);
+    return err;
+}
+
+esp_err_t BrewProfileStore_GetActiveProfile(int32_t *index)
+{
+    if (!index)
+        return ESP_ERR_INVALID_ARG;
+    if (!s_initialized)
+        return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+        return ESP_ERR_TIMEOUT;
+    *index = s_storage.activeIndex;
+    xSemaphoreGive(s_mutex);
+    return ESP_OK;
+}
+
+esp_err_t BrewProfileStore_SetActiveProfile(int32_t index)
+{
+    if (!s_initialized)
+        return ESP_ERR_INVALID_STATE;
+    if (index != BREW_PROFILE_STORE_ACTIVE_NONE && index < 0)
+        return ESP_ERR_INVALID_ARG;
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(1000)) != pdTRUE)
+        return ESP_ERR_TIMEOUT;
+    if (index != BREW_PROFILE_STORE_ACTIVE_NONE && (uint32_t)index >= s_storage.snapshot.profileCount)
+    {
+        xSemaphoreGive(s_mutex);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_storage.activeIndex == index)
+    {
+        xSemaphoreGive(s_mutex);
+        return ESP_OK;
+    }
+    s_storage.activeIndex = index;
+    esp_err_t err = save_locked();
     xSemaphoreGive(s_mutex);
     return err;
 }
