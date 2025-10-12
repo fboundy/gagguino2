@@ -35,6 +35,12 @@ static esp_err_t validate_profile(const BrewProfileConfig *profile)
         ESP_LOGE(TAG, "Profile name is invalid");
         return ESP_ERR_INVALID_ARG;
     }
+    size_t desc_len = strnlen(profile->description, sizeof(profile->description));
+    if (desc_len >= sizeof(profile->description))
+    {
+        ESP_LOGE(TAG, "Profile description is too long");
+        return ESP_ERR_INVALID_ARG;
+    }
     if (profile->phaseCount == 0 || profile->phaseCount > BREW_PROFILE_STORE_MAX_PHASES)
     {
         ESP_LOGE(TAG, "Profile phase count %u out of range", (unsigned)profile->phaseCount);
@@ -118,6 +124,7 @@ static void copy_profile(BrewProfileConfig *dst, const BrewProfileConfig *src)
 {
     memset(dst, 0, sizeof(*dst));
     strlcpy(dst->name, src->name, sizeof(dst->name));
+    strlcpy(dst->description, src->description, sizeof(dst->description));
     dst->phaseCount = src->phaseCount;
     for (uint32_t i = 0; i < dst->phaseCount && i < BREW_PROFILE_STORE_MAX_PHASES; ++i)
     {
@@ -132,6 +139,10 @@ static void load_default_locked(void)
     s_storage.activeIndex = BREW_PROFILE_STORE_ACTIVE_NONE;
     BrewProfileConfig def = {0};
     strlcpy(def.name, BREW_PROFILE_DEFAULT.name, sizeof(def.name));
+    if (BREW_PROFILE_DEFAULT.description)
+    {
+        strlcpy(def.description, BREW_PROFILE_DEFAULT.description, sizeof(def.description));
+    }
     def.phaseCount = BREW_PROFILE_DEFAULT.phaseCount;
     if (def.phaseCount > BREW_PROFILE_STORE_MAX_PHASES)
     {
@@ -256,6 +267,7 @@ esp_err_t BrewProfileStore_Init(void)
             persist_updated_blob = true;
         }
         s_storage.snapshot.profiles[i].name[sizeof(s_storage.snapshot.profiles[i].name) - 1] = '\0';
+        s_storage.snapshot.profiles[i].description[sizeof(s_storage.snapshot.profiles[i].description) - 1] = '\0';
         for (uint32_t p = 0; p < s_storage.snapshot.profiles[i].phaseCount; ++p)
         {
             s_storage.snapshot.profiles[i].phases[p].name[sizeof(s_storage.snapshot.profiles[i].phases[p].name) - 1] = '\0';

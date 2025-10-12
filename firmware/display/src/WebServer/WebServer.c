@@ -74,7 +74,7 @@ static const char INDEX_HTML[] =
     "label{display:block;margin-top:8px;font-weight:bold;}\n"
     "label input,label textarea{display:block;margin-top:4px;}\n"
     "input[type=\"text\"],textarea{width:100%;padding:8px;box-sizing:border-box;border:1px solid #ccc;border-radius:4px;}\n"
-    "textarea{min-height:180px;font-family:monospace;}\n"
+    "textarea{min-height:120px;font-family:inherit;}\n"
     "button{margin-top:12px;padding:8px 16px;border:none;border-radius:4px;background:#1976d2;color:#fff;cursor:pointer;}\n"
     "button:hover{background:#125a9c;}\n"
     "button:disabled{background:#9e9e9e;cursor:default;}\n"
@@ -124,7 +124,8 @@ static const char INDEX_HTML[] =
     "<div class=\"card hidden\" id=\"editor-card\">\n"
     "  <h2 id=\"editor-title\">Edit Profile</h2>\n"
     "  <form id=\"editor-form\">\n"
-    "    <label>Name<input name=\"name\" type=\"text\" required></label>\n"
+    "    <label>Name<input name=\"name\" type=\"text\" required maxlength=\"127\"></label>\n"
+    "    <label>Description<textarea name=\"description\" maxlength=\"255\" placeholder=\"Describe this profile\"></textarea></label>\n"
     "    <div class=\"phase-editor\">\n"
     "      <div class=\"phase-editor-header\">\n"
     "        <h3>Phases</h3>\n"
@@ -146,6 +147,7 @@ static const char INDEX_HTML[] =
     "const editorCard = document.getElementById('editor-card');\n"
     "const editorTitle = document.getElementById('editor-title');\n"
     "const editorForm = document.getElementById('editor-form');\n"
+    "const descriptionInput = editorForm.elements.namedItem('description');\n"
     "const cancelEditBtn = document.getElementById('cancel-edit');\n"
     "const addProfileButton = document.getElementById('add-profile-button');\n"
     "const phaseList = document.getElementById('phase-list');\n"
@@ -158,6 +160,7 @@ static const char INDEX_HTML[] =
     "const pumpLabels = { power: 'Pump Power (%)', pressure: 'Pump Pressure (bar)' };\n"
     "const defaultPhaseValues = { durationMode: 'time', durationValue: 30, pumpMode: 'power', pumpValue: 95, temperatureC: 92 };\n"
     "const MAX_PHASES = 12;\n"
+    "const MAX_DESCRIPTION_LENGTH = 255;\n"
     "\n"
     "function sanitizeNumber(value, fallback) {\n"
     "  const num = Number(value);\n"
@@ -210,7 +213,8 @@ static const char INDEX_HTML[] =
     "    return;\n"
     "  }\n"
     "  const profile = state.profiles[state.activeIndex];\n"
-    "  activeProfileEl.textContent = profile.name;\n"
+    "  const description = typeof profile.description === 'string' ? profile.description.trim() : '';\n"
+    "  activeProfileEl.textContent = description ? `${profile.name} — ${description}` : profile.name;\n"
     "}\n"
     "\n"
     "function createActionButton(label, handler, options = {}) {\n"
@@ -430,14 +434,17 @@ static const char INDEX_HTML[] =
     "  state.editingIndex = index;\n"
     "  editorCard.classList.remove('hidden');\n"
     "  const nameInput = editorForm.elements.namedItem('name');\n"
+    "  const descriptionField = descriptionInput;\n"
     "  if (index === -1) {\n"
     "    editorTitle.textContent = 'Add Profile';\n"
     "    nameInput.value = '';\n"
+    "    if (descriptionField) descriptionField.value = '';\n"
     "    state.editingPhases = [createNewPhase(0)];\n"
     "  } else {\n"
     "    const profile = state.profiles[index];\n"
     "    editorTitle.textContent = `Edit: ${profile.name}`;\n"
     "    nameInput.value = profile.name || '';\n"
+    "    if (descriptionField) descriptionField.value = typeof profile.description === 'string' ? profile.description : '';\n"
     "    const phases = Array.isArray(profile.phases) ? profile.phases : [];\n"
     "    state.editingPhases = phases.length ? phases.map((phase, idx) => clonePhase(phase, idx)) : [createNewPhase(0)];\n"
     "  }\n"
@@ -450,6 +457,7 @@ static const char INDEX_HTML[] =
     "  state.editingPhases = [];\n"
     "  editorCard.classList.add('hidden');\n"
     "  editorForm.reset();\n"
+    "  if (descriptionInput) descriptionInput.value = '';\n"
     "  phaseList.innerHTML = '';\n"
     "  phaseEmpty.classList.add('hidden');\n"
     "  addPhaseButton.disabled = false;\n"
@@ -483,9 +491,13 @@ static const char INDEX_HTML[] =
     "    title.textContent = profile.name;\n"
     "    info.appendChild(title);\n"
     "    const phaseCount = Array.isArray(profile.phases) ? profile.phases.length : (typeof profile.phaseCount === 'number' ? profile.phaseCount : 0);\n"
-    "    const desc = document.createElement('p');\n"
-    "    desc.textContent = `${phaseCount} phase${phaseCount === 1 ? '' : 's'}`;\n"
-    "    info.appendChild(desc);\n"
+    "    const summary = document.createElement('p');\n"
+    "    const profileDescription = typeof profile.description === 'string' ? profile.description.trim() : '';\n"
+    "    const summaryParts = [];\n"
+    "    if (profileDescription) summaryParts.push(profileDescription);\n"
+    "    summaryParts.push(`${phaseCount} phase${phaseCount === 1 ? '' : 's'}`);\n"
+    "    summary.textContent = summaryParts.join(' · ');\n"
+    "    info.appendChild(summary);\n"
     "    const actions = document.createElement('div');\n"
     "    actions.className = 'profile-row-actions';\n"
     "    const activateBtn = createActionButton(state.activeIndex === index ? 'Active' : 'Activate', () => setActive(index), { disabled: state.activeIndex === index });\n"
@@ -523,8 +535,13 @@ static const char INDEX_HTML[] =
     "  event.preventDefault();\n"
     "  const form = event.target;\n"
     "  const name = form.name.value.trim();\n"
+    "  const description = form.description ? form.description.value.trim() : '';\n"
     "  if (!name) {\n"
     "    showMessage('Name is required', true);\n"
+    "    return;\n"
+    "  }\n"
+    "  if (description.length > MAX_DESCRIPTION_LENGTH) {\n"
+    "    showMessage(`Description must be ${MAX_DESCRIPTION_LENGTH} characters or fewer`, true);\n"
     "    return;\n"
     "  }\n"
     "  if (state.editingPhases.length === 0) {\n"
@@ -568,7 +585,7 @@ static const char INDEX_HTML[] =
     "      temperatureC: Number(phase.temperatureC)\n"
     "    });\n"
     "  }\n"
-    "  const payload = { name, phases };\n"
+    "  const payload = { name, description, phases };\n"
     "  try {\n"
     "    let response;\n"
     "    if (state.editingIndex === -1) {\n"
@@ -731,6 +748,7 @@ static esp_err_t parse_profile_json(const char *json, BrewProfileConfig *out, ch
         goto cleanup;
     }
     cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
+    cJSON *description = cJSON_GetObjectItemCaseSensitive(root, "description");
     cJSON *phases = cJSON_GetObjectItemCaseSensitive(root, "phases");
     if (!cJSON_IsString(name) || !name->valuestring)
     {
@@ -738,6 +756,24 @@ static esp_err_t parse_profile_json(const char *json, BrewProfileConfig *out, ch
             strlcpy(errbuf, "Profile name must be a string", errlen);
         result = ESP_ERR_INVALID_ARG;
         goto cleanup;
+    }
+    if (description && !cJSON_IsNull(description) && (!cJSON_IsString(description) || !description->valuestring))
+    {
+        if (errbuf && errlen)
+            strlcpy(errbuf, "Description must be a string", errlen);
+        result = ESP_ERR_INVALID_ARG;
+        goto cleanup;
+    }
+    if (description && cJSON_IsString(description) && description->valuestring)
+    {
+        size_t desc_len = strlen(description->valuestring);
+        if (desc_len >= BREW_PROFILE_DESCRIPTION_MAX_LEN)
+        {
+            if (errbuf && errlen)
+                snprintf(errbuf, errlen, "Description must be fewer than %u characters", BREW_PROFILE_DESCRIPTION_MAX_LEN);
+            result = ESP_ERR_INVALID_ARG;
+            goto cleanup;
+        }
     }
     if (!cJSON_IsArray(phases))
     {
@@ -763,6 +799,10 @@ static esp_err_t parse_profile_json(const char *json, BrewProfileConfig *out, ch
     }
     memset(out, 0, sizeof(*out));
     strlcpy(out->name, name->valuestring, sizeof(out->name));
+    if (description && cJSON_IsString(description) && description->valuestring)
+    {
+        strlcpy(out->description, description->valuestring, sizeof(out->description));
+    }
     out->phaseCount = (uint32_t)phase_count;
     for (uint32_t i = 0; i < out->phaseCount; ++i)
     {
@@ -919,6 +959,7 @@ static esp_err_t handle_get_profiles(httpd_req_t *req)
         if (!profile_obj)
             goto error;
         cJSON_AddStringToObject(profile_obj, "name", profile->name);
+        cJSON_AddStringToObject(profile_obj, "description", profile->description);
         cJSON_AddNumberToObject(profile_obj, "phaseCount", profile->phaseCount);
         cJSON *phases = cJSON_CreateArray();
         if (!phases)
