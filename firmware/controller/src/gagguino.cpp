@@ -127,7 +127,7 @@ constexpr float PRESSURE_SETPOINT_DEFAULT = 9.0f;
 constexpr float PRESSURE_SETPOINT_MIN = 0.0f;
 constexpr float PRESSURE_SETPOINT_MAX = 12.0f;
 constexpr float PRESSURE_LIMIT_TOL = 0.1f;
-constexpr float PUMP_PRESSURE_RAMP_RATE = 50.0f;    // % per second when ramping up in pressure mode
+constexpr float PUMP_PRESSURE_RAMP_RATE = 20.0f;    // % per second when ramping up in pressure mode
 constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;    // Max dt (s) considered for ramp calculations
 
 const bool debugPrint = true;
@@ -362,8 +362,19 @@ static void updateTempPID() {
     // Active target picks between brew and steam setpoints
     setTemp = steamFlag ? steamSetpoint : brewSetpoint;
 
-    heatPower = calcPID(pGainTemp, iGainTemp, dGainTemp, setTemp, currentTemp, dt, pvFiltTemp,
-                        iStateTemp, windupGuardTemp, dTauTemp);
+    float effectivePGain = pGainTemp;
+    float effectiveIGain = iGainTemp;
+    float effectiveDGain = dGainTemp;
+
+    if (currentTemp > setTemp) {
+        effectivePGain = 0.0f;
+        effectiveIGain = 0.0f;
+        effectiveDGain = 0.0f;
+    }
+
+    heatPower =
+        calcPID(effectivePGain, effectiveIGain, effectiveDGain, setTemp, currentTemp, dt,
+                 pvFiltTemp, iStateTemp, windupGuardTemp, dTauTemp);
 
     if (heatPower > 100.0f) heatPower = 100.0f;
     if (heatPower < 0.0f) heatPower = 0.0f;
