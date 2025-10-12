@@ -191,6 +191,7 @@ float iStateTemp = 0.0f, heatPower = 0.0f;
 // Live-tunable PID parameters (default to constexprs above)
 float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
       dTauTemp = DTAU_TEMP, windupGuardTemp = WINDUP_GUARD_TEMP;
+float pidPTerm = 0.0f, pidITerm = 0.0f, pidDTerm = 0.0f;
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;             // HA switch default ON at boot
@@ -315,6 +316,9 @@ static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
         if (iTerm < -guard) iTerm = -guard;
         u = pTerm + iTerm + dTerm;
     }
+    pidPTerm = pTerm;
+    pidITerm = iTerm;
+    pidDTerm = dTerm;
     return u;
 }
 
@@ -356,6 +360,9 @@ static void updateTempPID() {
         // Pause PID calculations when heater is disabled
         heatPower = 0.0f;
         heatCycles = PWM_CYCLE;
+        pidPTerm = 0.0f;
+        pidITerm = 0.0f;
+        pidDTerm = 0.0f;
         return;
     }
 
@@ -578,6 +585,9 @@ static void sendEspNowPacket() {
     pkt.brewSetpointC = brewSetpoint;
     pkt.pressureSetpointBar = pressureSetpointBar;
     pkt.pumpPressureMode = pumpPressureModeEnabled ? 1 : 0;
+    pkt.pidPTerm = pidPTerm;
+    pkt.pidITerm = pidITerm;
+    pkt.pidDTerm = pidDTerm;
     const uint8_t* dest = g_haveDisplayPeer ? g_displayMac : nullptr;
     esp_err_t err = esp_now_send(dest, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
     if (err != ESP_OK) {

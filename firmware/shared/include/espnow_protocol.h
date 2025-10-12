@@ -52,6 +52,9 @@ typedef struct __attribute__((packed)) EspNowPacket
     float pressureSetpointBar; //!< Target brew pressure in bar
     uint8_t pumpPressureMode;  //!< 1 if pressure limiting mode is active
     uint8_t reserved[3];       //!< Reserved for future use / alignment
+    float pidPTerm;            //!< Proportional contribution of the temperature PID
+    float pidITerm;            //!< Integral contribution of the temperature PID
+    float pidDTerm;            //!< Derivative contribution of the temperature PID
 } EspNowPacket;
 
 // Control payload mirrored between Home Assistant, the display and the
