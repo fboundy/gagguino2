@@ -97,6 +97,9 @@ void app_main(void)
 /********************* Demo *********************/
     Lvgl_Example1();
 
+    // Ensure the heater is active on startup.
+    MQTT_SetHeaterState(true);
+
     // Alternative demos:
     // lv_demo_widgets();
     // lv_demo_keypad_encoder();
