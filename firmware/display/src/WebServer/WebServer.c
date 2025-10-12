@@ -411,7 +411,7 @@ static const char INDEX_HTML[] =
     "async function deleteProfile(index) {\n"
     "  const profile = state.profiles[index];\n"
     "  const name = profile && profile.name ? profile.name : 'this profile';\n"
-    "  if (!confirm(`Delete "${name}"?`)) {\n"
+    "  if (!confirm(`Delete \"' + name + '\"?`)) {\n"
     "    return;\n"
     "  }\n"
     "  try {\n"
