@@ -175,6 +175,7 @@ static bool s_pump_pressure_mode = false;
 static bool s_heater = false;
 static bool s_steam = false;
 static bool s_steam_hw_flag = false;
+static bool s_ignore_legacy_heater_state = false;
 
 typedef enum
 {
@@ -813,6 +814,13 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         else if (strcmp(topic, TOPIC_HEATER) == 0)
         {
             bool hv = parse_bool_str(payload);
+            if (s_ignore_legacy_heater_state && event->retain && !hv)
+            {
+                ESP_LOGI(TAG_MQTT, "Standby exit: ignoring legacy heater -> %s", payload);
+                s_ignore_legacy_heater_state = false;
+                break;
+            }
+            s_ignore_legacy_heater_state = false;
             if (control_bootstrap_ignore_bool(CONTROL_BOOT_HEATER, event->retain, hv, s_control.heater))
             {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: heater -> %s", payload);
@@ -1571,6 +1579,7 @@ void Wireless_SetStandbyMode(bool standby)
 
     s_standby_suppressed = false;
     s_mqtt_enabled = true;
+    s_ignore_legacy_heater_state = true;
     MQTT_SetHeaterState(true);
     MQTT_SetSteamState(s_steam_hw_flag);
     MQTT_Start();
