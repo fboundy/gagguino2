@@ -1351,7 +1351,7 @@ static void heater_switch_event_cb(lv_event_t *e)
 
   lv_obj_t *sw = lv_event_get_target(e);
   bool enabled = lv_obj_has_state(sw, LV_STATE_CHECKED);
-  MQTT_SetHeaterState(enabled);
+  MQTT_SetHeaterState(enabled, false);
   update_heater_controls(enabled);
 }
 

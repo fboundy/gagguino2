@@ -211,6 +211,7 @@ static bool s_mqtt_connected = false;
 static esp_mqtt_client_handle_t s_mqtt = NULL;
 static bool s_mqtt_enabled = true;
 static bool s_standby_suppressed = false;
+static bool s_control_publish_pending = false;
 
 static bool s_wifi_ready = false;
 static uint8_t s_sta_channel = 0;
@@ -713,10 +714,10 @@ static inline void publish_pid_discovery(void) {}
 static inline void reset_pid_discovery_flags(void) {}
 #endif
 
-static void publish_control_state(void)
+static bool publish_control_state(void)
 {
     if (!s_mqtt_connected)
-        return;
+        return false;
     publish_bool_topic(TOPIC_HEATER, s_control.heater);
     publish_bool_topic(TOPIC_STEAM, s_control.steam);
     publish_float(TOPIC_BREW_STATE, s_control.brewSetpoint, 1);
@@ -733,11 +734,15 @@ static void publish_control_state(void)
     esp_mqtt_client_publish(s_mqtt, TOPIC_PUMP_MODE_STATE, buf, 0, 1, true);
     publish_float(TOPIC_PRESSURE_SETPOINT_STATE, s_control.pressureSetpoint, 1);
     publish_bool_topic(TOPIC_PUMP_PRESSURE_MODE_STATE, s_control.pumpPressureMode);
+    return true;
 }
 
 static void handle_control_change(void)
 {
-    publish_control_state();
+    if (!publish_control_state())
+        s_control_publish_pending = true;
+    else
+        s_control_publish_pending = false;
     schedule_control_send();
 }
 
@@ -770,6 +775,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
 #endif
         publish_pid_discovery();
+        if (s_control_publish_pending && publish_control_state())
+        {
+            s_control_publish_pending = false;
+        }
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGW(TAG_MQTT, "Disconnected");
@@ -1568,7 +1577,7 @@ void Wireless_SetStandbyMode(bool standby)
         s_mqtt_enabled = false;
         if (s_control.heater)
         {
-            MQTT_SetHeaterState(false);
+            MQTT_SetHeaterState(false, false);
         }
         MQTT_Stop();
         return;
@@ -1580,7 +1589,7 @@ void Wireless_SetStandbyMode(bool standby)
     s_standby_suppressed = false;
     s_mqtt_enabled = true;
     s_ignore_legacy_heater_state = true;
-    MQTT_SetHeaterState(true);
+    MQTT_SetHeaterState(true, false);
     MQTT_SetSteamState(s_steam_hw_flag);
     MQTT_Start();
 }
@@ -1599,9 +1608,9 @@ float MQTT_GetShotVolume(void) { return s_shot_volume; }
 uint32_t MQTT_GetZcCount(void) { return s_zc_count; }
 bool MQTT_GetHeaterState(void) { return s_heater; }
 
-void MQTT_SetHeaterState(bool heater)
+void MQTT_SetHeaterState(bool heater, bool force_publish)
 {
-    if (s_control.heater == heater)
+    if (!force_publish && s_control.heater == heater)
         return;
     s_control.heater = heater;
     s_heater = heater;

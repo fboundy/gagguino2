@@ -98,7 +98,7 @@ void app_main(void)
     Lvgl_Example1();
 
     // Ensure the heater is active on startup.
-    MQTT_SetHeaterState(true);
+    MQTT_SetHeaterState(true, true);
 
     // Alternative demos:
     // lv_demo_widgets();
