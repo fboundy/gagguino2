@@ -174,6 +174,7 @@ static float s_pressure_setpoint = NAN;
 static bool s_pump_pressure_mode = false;
 static bool s_heater = false;
 static bool s_steam = false;
+static bool s_steam_hw_flag = false;
 
 typedef enum
 {
@@ -209,7 +210,6 @@ static bool s_mqtt_connected = false;
 static esp_mqtt_client_handle_t s_mqtt = NULL;
 static bool s_mqtt_enabled = true;
 static bool s_standby_suppressed = false;
-static bool s_restore_heater_on_exit = false;
 
 static bool s_wifi_ready = false;
 static uint8_t s_sta_channel = 0;
@@ -255,6 +255,7 @@ static void control_apply_defaults(void)
     s_control = CONTROL_DEFAULTS;
     s_heater = s_control.heater;
     s_steam = s_control.steam;
+    s_steam_hw_flag = s_steam;
     s_brew_setpoint = s_control.brewSetpoint;
     s_steam_setpoint = s_control.steamSetpoint;
     s_pid_p = s_control.pidP;
@@ -830,6 +831,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
             s_control.steam = sv;
             s_steam = s_control.steam;
+            s_steam_hw_flag = sv;
         }
         else if (strcmp(topic, TOPIC_BREW_STATE) == 0)
         {
@@ -1480,6 +1482,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
         s_shot_time = pkt->shotTimeMs / 1000.0f;
         s_heater = pkt->heaterSwitch != 0;
         s_steam = pkt->steamFlag != 0;
+        s_steam_hw_flag = s_steam;
         s_brew_setpoint = pkt->brewSetpointC;
         s_steam_setpoint = pkt->steamSetpointC;
         s_pressure_setpoint = pkt->pressureSetpointBar;
@@ -1555,7 +1558,6 @@ void Wireless_SetStandbyMode(bool standby)
             return;
         s_standby_suppressed = true;
         s_mqtt_enabled = false;
-        s_restore_heater_on_exit = s_control.heater;
         if (s_control.heater)
         {
             MQTT_SetHeaterState(false);
@@ -1569,12 +1571,8 @@ void Wireless_SetStandbyMode(bool standby)
 
     s_standby_suppressed = false;
     s_mqtt_enabled = true;
-    bool restore = s_restore_heater_on_exit;
-    s_restore_heater_on_exit = false;
-    if (restore)
-    {
-        MQTT_SetHeaterState(true);
-    }
+    MQTT_SetHeaterState(true);
+    MQTT_SetSteamState(s_steam_hw_flag);
     MQTT_Start();
 }
 
