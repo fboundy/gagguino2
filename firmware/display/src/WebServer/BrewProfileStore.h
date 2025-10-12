@@ -12,7 +12,6 @@ extern "C" {
 #define BREW_PROFILE_STORE_MAX_PROFILES 8U
 #define BREW_PROFILE_STORE_MAX_PHASES   12U
 #define BREW_PROFILE_NAME_MAX_LEN       128U
-#define BREW_PROFILE_DESCRIPTION_MAX_LEN 256U
 #define BREW_PHASE_NAME_MAX_LEN         128U
 
 typedef struct
@@ -28,7 +27,6 @@ typedef struct
 typedef struct
 {
     char name[BREW_PROFILE_NAME_MAX_LEN];
-    char description[BREW_PROFILE_DESCRIPTION_MAX_LEN + 1U];
     uint32_t phaseCount;
     BrewPhaseConfig phases[BREW_PROFILE_STORE_MAX_PHASES];
 } BrewProfileConfig;
