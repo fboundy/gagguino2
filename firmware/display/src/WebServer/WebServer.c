@@ -125,6 +125,7 @@ static const char INDEX_HTML[] =
     "  <h2 id=\"editor-title\">Edit Profile</h2>\n"
     "  <form id=\"editor-form\">\n"
     "    <label>Name<input name=\"name\" type=\"text\" required></label>\n"
+    "    <label>Description<textarea name=\"description\" maxlength=\"256\"></textarea></label>\n"
     "    <div class=\"phase-editor\">\n"
     "      <div class=\"phase-editor-header\">\n"
     "        <h3>Phases</h3>\n"
@@ -146,6 +147,7 @@ static const char INDEX_HTML[] =
     "const editorCard = document.getElementById('editor-card');\n"
     "const editorTitle = document.getElementById('editor-title');\n"
     "const editorForm = document.getElementById('editor-form');\n"
+    "const descriptionInput = editorForm.elements.namedItem('description');\n"
     "const cancelEditBtn = document.getElementById('cancel-edit');\n"
     "const addProfileButton = document.getElementById('add-profile-button');\n"
     "const phaseList = document.getElementById('phase-list');\n"
@@ -430,6 +432,7 @@ static const char INDEX_HTML[] =
     "  state.editingIndex = index;\n"
     "  editorCard.classList.remove('hidden');\n"
     "  const nameInput = editorForm.elements.namedItem('name');\n"
+    "  descriptionInput.value = '';\n"
     "  if (index === -1) {\n"
     "    editorTitle.textContent = 'Add Profile';\n"
     "    nameInput.value = '';\n"
@@ -438,6 +441,7 @@ static const char INDEX_HTML[] =
     "    const profile = state.profiles[index];\n"
     "    editorTitle.textContent = `Edit: ${profile.name}`;\n"
     "    nameInput.value = profile.name || '';\n"
+    "    descriptionInput.value = typeof profile.description === 'string' ? profile.description : '';\n"
     "    const phases = Array.isArray(profile.phases) ? profile.phases : [];\n"
     "    state.editingPhases = phases.length ? phases.map((phase, idx) => clonePhase(phase, idx)) : [createNewPhase(0)];\n"
     "  }\n"
@@ -483,9 +487,15 @@ static const char INDEX_HTML[] =
     "    title.textContent = profile.name;\n"
     "    info.appendChild(title);\n"
     "    const phaseCount = Array.isArray(profile.phases) ? profile.phases.length : (typeof profile.phaseCount === 'number' ? profile.phaseCount : 0);\n"
-    "    const desc = document.createElement('p');\n"
-    "    desc.textContent = `${phaseCount} phase${phaseCount === 1 ? '' : 's'}`;\n"
-    "    info.appendChild(desc);\n"
+    "    const description = typeof profile.description === 'string' ? profile.description.trim() : '';\n"
+    "    if (description) {\n"
+    "      const desc = document.createElement('p');\n"
+    "      desc.textContent = description;\n"
+    "      info.appendChild(desc);\n"
+    "    }\n"
+    "    const details = document.createElement('p');\n"
+    "    details.textContent = `${phaseCount} phase${phaseCount === 1 ? '' : 's'}`;\n"
+    "    info.appendChild(details);\n"
     "    const actions = document.createElement('div');\n"
     "    actions.className = 'profile-row-actions';\n"
     "    const activateBtn = createActionButton(state.activeIndex === index ? 'Active' : 'Activate', () => setActive(index), { disabled: state.activeIndex === index });\n"
@@ -506,7 +516,10 @@ static const char INDEX_HTML[] =
     "    const response = await fetch('/api/profiles');\n"
     "    if (!response.ok) throw new Error('Failed to load profiles');\n"
     "    const data = await response.json();\n"
-    "    state.profiles = Array.isArray(data.profiles) ? data.profiles : [];\n"
+    "    state.profiles = Array.isArray(data.profiles) ? data.profiles.map((profile) => ({\n"
+    "      ...profile,\n"
+    "      description: typeof profile.description === 'string' ? profile.description : ''\n"
+    "    })) : [];\n"
     "    if (Number.isInteger(data.activeIndex)) {\n"
     "      state.activeIndex = data.activeIndex;\n"
     "    } else {\n"
@@ -523,8 +536,13 @@ static const char INDEX_HTML[] =
     "  event.preventDefault();\n"
     "  const form = event.target;\n"
     "  const name = form.name.value.trim();\n"
+    "  const description = form.description.value.trim();\n"
     "  if (!name) {\n"
     "    showMessage('Name is required', true);\n"
+    "    return;\n"
+    "  }\n"
+    "  if (description.length > 256) {\n"
+    "    showMessage('Description must be 256 characters or fewer', true);\n"
     "    return;\n"
     "  }\n"
     "  if (state.editingPhases.length === 0) {\n"
@@ -568,7 +586,7 @@ static const char INDEX_HTML[] =
     "      temperatureC: Number(phase.temperatureC)\n"
     "    });\n"
     "  }\n"
-    "  const payload = { name, phases };\n"
+    "  const payload = { name, description, phases };\n"
     "  try {\n"
     "    let response;\n"
     "    if (state.editingIndex === -1) {\n"
@@ -731,11 +749,19 @@ static esp_err_t parse_profile_json(const char *json, BrewProfileConfig *out, ch
         goto cleanup;
     }
     cJSON *name = cJSON_GetObjectItemCaseSensitive(root, "name");
+    cJSON *description = cJSON_GetObjectItemCaseSensitive(root, "description");
     cJSON *phases = cJSON_GetObjectItemCaseSensitive(root, "phases");
     if (!cJSON_IsString(name) || !name->valuestring)
     {
         if (errbuf && errlen)
             strlcpy(errbuf, "Profile name must be a string", errlen);
+        result = ESP_ERR_INVALID_ARG;
+        goto cleanup;
+    }
+    if (description && !cJSON_IsString(description))
+    {
+        if (errbuf && errlen)
+            strlcpy(errbuf, "Profile description must be a string", errlen);
         result = ESP_ERR_INVALID_ARG;
         goto cleanup;
     }
@@ -763,6 +789,19 @@ static esp_err_t parse_profile_json(const char *json, BrewProfileConfig *out, ch
     }
     memset(out, 0, sizeof(*out));
     strlcpy(out->name, name->valuestring, sizeof(out->name));
+    if (description && description->valuestring)
+    {
+        size_t desc_len = strlen(description->valuestring);
+        if (desc_len > BREW_PROFILE_DESCRIPTION_MAX_LEN)
+        {
+            if (errbuf && errlen)
+                snprintf(errbuf, errlen, "Description must be %u characters or fewer",
+                         BREW_PROFILE_DESCRIPTION_MAX_LEN);
+            result = ESP_ERR_INVALID_ARG;
+            goto cleanup;
+        }
+        strlcpy(out->description, description->valuestring, sizeof(out->description));
+    }
     out->phaseCount = (uint32_t)phase_count;
     for (uint32_t i = 0; i < out->phaseCount; ++i)
     {
@@ -919,6 +958,7 @@ static esp_err_t handle_get_profiles(httpd_req_t *req)
         if (!profile_obj)
             goto error;
         cJSON_AddStringToObject(profile_obj, "name", profile->name);
+        cJSON_AddStringToObject(profile_obj, "description", profile->description);
         cJSON_AddNumberToObject(profile_obj, "phaseCount", profile->phaseCount);
         cJSON *phases = cJSON_CreateArray();
         if (!phases)
