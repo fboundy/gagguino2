@@ -350,7 +350,7 @@ static uint8_t apply_steam_request(bool steam)
 // -----------------------------------------------------------------------------
 // Forward declarations
 // -----------------------------------------------------------------------------
-static void publish_control_state(void);
+static bool publish_control_state(void);
 static void schedule_control_send(void);
 static void send_control_packet(void);
 static void ensure_espnow_started(void);
