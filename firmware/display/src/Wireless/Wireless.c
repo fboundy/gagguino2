@@ -664,10 +664,10 @@ static bool publish_pid_sensor_discovery(const char *name, const char *suffix, c
 
     char payload[512];
     int written = snprintf(payload, sizeof payload,
-                           "{\"name\":\"%s\",\"uniq_id\":\"%s_%s\",\"stat_t\":\"%s\",""
-                           "\"dev_cla\":\"temperature\",\"unit_of_meas\":\"%s\",\"stat_cla\":\"measurement\",""
-                           "\"avty_t\":\"%s\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",""
-                           "\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\",\"manufacturer\":\"Custom\",""
+                           "{\"name\":\"%s\",\"uniq_id\":\"%s_%s\",\"stat_t\":\"%s\","
+                           "\"dev_cla\":\"temperature\",\"unit_of_meas\":\"%s\",\"stat_cla\":\"measurement\","
+                           "\"avty_t\":\"%s\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\","
+                           "\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\",\"manufacturer\":\"Custom\","
                            "\"model\":\"Gagguino\",\"sw_version\":\"%s\"}}",
                            name, dev_id, suffix, state_topic, unit, availability, dev_id, version);
 
