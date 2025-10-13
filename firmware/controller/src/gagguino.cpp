@@ -471,7 +471,7 @@ static void applyPumpPower() {
 
     if (pumpPressureModeEnabled) {
         float limit = clampf(pressureSetpointBar, PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX);
-        float sensed = fmaxf(lastPress, pressNow);
+        float sensed = pressNow;
         if (limit <= 0.0f) {
             applied = 0.0f;
         } else if (sensed > (limit + PRESSURE_LIMIT_TOL)) {
