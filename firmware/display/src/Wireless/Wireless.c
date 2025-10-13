@@ -598,6 +598,9 @@ static bool s_dtau_discovery_published = false;
 static bool s_pressure_setpoint_discovery_published = false;
 static bool s_pump_power_discovery_published = false;
 static bool s_pump_pressure_mode_discovery_published = false;
+static bool s_pid_p_term_discovery_published = false;
+static bool s_pid_i_term_discovery_published = false;
+static bool s_pid_d_term_discovery_published = false;
 
 static bool publish_pid_number_discovery(const char *name, const char *suffix, const char *cmd_topic,
                                          const char *state_topic, float min, float max, float step,
@@ -632,6 +635,49 @@ static bool publish_pid_number_discovery(const char *name, const char *suffix, c
         {
             *published_flag = true;
             ESP_LOGI(TAG_MQTT, "Published %s discovery with min=%.3g max=%.3g", name, min, max);
+            return true;
+        }
+        ESP_LOGW(TAG_MQTT, "Failed to publish %s discovery: %d", name, res);
+    }
+    else
+    {
+        ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+    }
+
+    return false;
+}
+
+static bool publish_pid_sensor_discovery(const char *name, const char *suffix, const char *state_topic,
+                                         const char *unit, bool *published_flag)
+{
+    if (!s_mqtt || *published_flag)
+        return false;
+
+    char dev_id[64];
+    snprintf(dev_id, sizeof dev_id, "%s-%s", GAG_TOPIC_ROOT, GAGGIA_ID);
+
+    char topic[128];
+    snprintf(topic, sizeof topic, "homeassistant/sensor/%s_%s/config", dev_id, suffix);
+
+    const char *availability = MQTT_STATUS;
+    const char *version = VERSION;
+
+    char payload[512];
+    int written = snprintf(payload, sizeof payload,
+                           "{\"name\":\"%s\",\"uniq_id\":\"%s_%s\",\"stat_t\":\"%s\",""
+                           "\"dev_cla\":\"temperature\",\"unit_of_meas\":\"%s\",\"stat_cla\":\"measurement\",""
+                           "\"avty_t\":\"%s\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\",""
+                           "\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\",\"manufacturer\":\"Custom\",""
+                           "\"model\":\"Gagguino\",\"sw_version\":\"%s\"}}",
+                           name, dev_id, suffix, state_topic, unit, availability, dev_id, version);
+
+    if (written > 0 && written < (int)sizeof(payload))
+    {
+        int res = esp_mqtt_client_publish(s_mqtt, topic, payload, 0, 1, true);
+        if (res >= 0)
+        {
+            *published_flag = true;
+            ESP_LOGI(TAG_MQTT, "Published %s discovery", name);
             return true;
         }
         ESP_LOGW(TAG_MQTT, "Failed to publish %s discovery: %d", name, res);
@@ -698,6 +744,12 @@ static void publish_pid_discovery(void)
                                  &s_pid_g_discovery_published);
     publish_pid_number_discovery("PID dTau", "pid_dtau", TOPIC_DTAU_CMD, TOPIC_DTAU_STATE, 0.0f, 2.0f, 0.05f,
                                  &s_dtau_discovery_published);
+    publish_pid_sensor_discovery("PID P Term", "pid_p_term", TOPIC_PID_P_TERM_STATE, "°C",
+                                 &s_pid_p_term_discovery_published);
+    publish_pid_sensor_discovery("PID I Term", "pid_i_term", TOPIC_PID_I_TERM_STATE, "°C",
+                                 &s_pid_i_term_discovery_published);
+    publish_pid_sensor_discovery("PID D Term", "pid_d_term", TOPIC_PID_D_TERM_STATE, "°C",
+                                 &s_pid_d_term_discovery_published);
     publish_pid_number_discovery("Pressure Setpoint", "pressure_setpoint", TOPIC_PRESSURE_SETPOINT_CMD,
                                  TOPIC_PRESSURE_SETPOINT_STATE, CONTROL_PRESSURE_MIN, CONTROL_PRESSURE_MAX, 0.5f,
                                  &s_pressure_setpoint_discovery_published);
@@ -714,6 +766,9 @@ static inline void reset_pid_discovery_flags(void)
     s_pid_d_discovery_published = false;
     s_pid_g_discovery_published = false;
     s_dtau_discovery_published = false;
+    s_pid_p_term_discovery_published = false;
+    s_pid_i_term_discovery_published = false;
+    s_pid_d_term_discovery_published = false;
     s_pressure_setpoint_discovery_published = false;
     s_pump_power_discovery_published = false;
     s_pump_pressure_mode_discovery_published = false;
