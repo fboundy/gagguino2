@@ -294,7 +294,7 @@ static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
     if (err > 0) {
         iSum += err * dt;
     } else {
-        isum = 0;
+        iSum = 0;
     }
 
     // 3) Derivative on measurement with 1st-order filter (dirty derivative)
