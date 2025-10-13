@@ -101,7 +101,7 @@ constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 // Ki: 0.3-0.5 [out/(degC*s)] -> start at 0.35
 // Kd: 50-70 [out*s/degC] -> start at 60
 // guard: +/-8-+/-12% integral clamp on 0-100% heater
-constexpr float P_GAIN_TEMP = 8.0f, I_GAIN_TEMP = 0.60f, D_GAIN_TEMP = 10.5f, DTAU_TEMP = 0.8f,
+constexpr float P_GAIN_TEMP = 6.0f, I_GAIN_TEMP = 0.05f, D_GAIN_TEMP = 8.5, DTAU_TEMP = 0.8f,
                 WINDUP_GUARD_TEMP = 25.0f;
 
 // Derivative filter time constant (seconds), exposed to HA
@@ -127,8 +127,8 @@ constexpr float PRESSURE_SETPOINT_DEFAULT = 9.0f;
 constexpr float PRESSURE_SETPOINT_MIN = 0.0f;
 constexpr float PRESSURE_SETPOINT_MAX = 12.0f;
 constexpr float PRESSURE_LIMIT_TOL = 0.1f;
-constexpr float PUMP_PRESSURE_RAMP_RATE = 20.0f;    // % per second when ramping up in pressure mode
-constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;    // Max dt (s) considered for ramp calculations
+constexpr float PUMP_PRESSURE_RAMP_RATE = 20.0f;   // % per second when ramping up in pressure mode
+constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;  // Max dt (s) considered for ramp calculations
 constexpr float PUMP_PRESSURE_INITIAL_CLAMP = 40.0f;  // Max % for first second when pump engages
 constexpr unsigned long PUMP_PRESSURE_CLAMP_DURATION_MS = 1000;
 
@@ -203,7 +203,7 @@ bool pumpPressureModeEnabled = false;  // When true limit pump power to pressure
 float lastPumpApplied = 0.0f;          // Actual power sent to dimmer after ramp/limits
 float lastPumpRequested = 0.0f;        // Last requested pump power
 unsigned long pumpPressureClampUntilMs = 0;
-unsigned long lastPumpApplyMs = 0;     // Timestamp of last pump power application
+unsigned long lastPumpApplyMs = 0;  // Timestamp of last pump power application
 
 // Pressure
 int rawPress = 0;
@@ -291,7 +291,11 @@ static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
     float err = sp - pv;
 
     // 2) Integral
-    iSum += err * dt;
+    if (err > 0) {
+        iSum += err * dt;
+    } else {
+        isum = 0;
+    }
 
     // 3) Derivative on measurement with 1st-order filter (dirty derivative)
     //    LPF on pv: pvFilt' = (pv - pvFilt)/dTau
@@ -383,9 +387,8 @@ static void updateTempPID() {
         effectiveDGain = 0.0f;
     }
 
-    heatPower =
-        calcPID(effectivePGain, effectiveIGain, effectiveDGain, setTemp, currentTemp, dt,
-                 pvFiltTemp, iStateTemp, windupGuardTemp, dTauTemp);
+    heatPower = calcPID(effectivePGain, effectiveIGain, effectiveDGain, setTemp, currentTemp, dt,
+                        pvFiltTemp, iStateTemp, windupGuardTemp, dTauTemp);
 
     if (heatPower > 100.0f) heatPower = 100.0f;
     if (heatPower < 0.0f) heatPower = 0.0f;
