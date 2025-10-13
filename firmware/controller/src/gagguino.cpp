@@ -131,8 +131,8 @@ constexpr float PUMP_PRESSURE_RAMP_RATE = 20.0f;   // % per second when ramping 
 constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;  // Max dt (s) considered for ramp calculations
 constexpr float PUMP_PRESSURE_INITIAL_CLAMP = 40.0f;  // Max % for first second when pump engages
 constexpr unsigned long PUMP_PRESSURE_CLAMP_DURATION_MS = 1000;
-constexpr float PUMP_PRESSURE_D_GAIN = 6.0f;  // % reduction per (bar/s) of rising pressure
-constexpr float PUMP_PRESSURE_D_TAU = 0.12f;  // Low-pass filter constant for derivative (s)
+constexpr float PUMP_PRESSURE_D_GAIN = 6.0f;      // % reduction per (bar/s) of rising pressure
+constexpr float PUMP_PRESSURE_D_TAU = 0.12f;      // Low-pass filter constant for derivative (s)
 constexpr float PUMP_PRESSURE_D_MAX_RATE = 6.0f;  // Limit on derivative magnitude (bar/s)
 constexpr float PUMP_PRESSURE_APPROACH_MARGIN = 1.0f;  // Start tapering pump 1 bar before limit
 
@@ -472,7 +472,7 @@ static void applyPumpPower() {
 
     if (pumpPressureModeEnabled) {
         float limit = clampf(pressureSetpointBar, PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX);
-        float sensed = fmaxf(lastPress, pressNow);
+        float sensed = pressNow;
         if (limit <= 0.0f) {
             applied = 0.0f;
         } else if (sensed > (limit + PRESSURE_LIMIT_TOL)) {
