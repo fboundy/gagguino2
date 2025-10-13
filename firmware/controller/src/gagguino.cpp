@@ -129,6 +129,8 @@ constexpr float PRESSURE_SETPOINT_MAX = 12.0f;
 constexpr float PRESSURE_LIMIT_TOL = 0.1f;
 constexpr float PUMP_PRESSURE_RAMP_RATE = 20.0f;    // % per second when ramping up in pressure mode
 constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;    // Max dt (s) considered for ramp calculations
+constexpr float PUMP_PRESSURE_INITIAL_CLAMP = 40.0f;  // Max % for first second when pump engages
+constexpr unsigned long PUMP_PRESSURE_CLAMP_DURATION_MS = 1000;
 
 const bool debugPrint = true;
 }  // namespace
@@ -198,6 +200,8 @@ float pumpPower = PUMP_POWER_DEFAULT;  // Default pump power (%), overridden by 
 float pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;  // Target brew pressure in bar
 bool pumpPressureModeEnabled = false;  // When true limit pump power to pressure setpoint
 float lastPumpApplied = 0.0f;          // Actual power sent to dimmer after ramp/limits
+float lastPumpRequested = 0.0f;        // Last requested pump power
+unsigned long pumpPressureClampUntilMs = 0;
 unsigned long lastPumpApplyMs = 0;     // Timestamp of last pump power application
 
 // Pressure
@@ -417,6 +421,18 @@ static void applyPumpPower() {
     float requested = clampf(pumpPower, 0.0f, 100.0f);
     float applied = requested;
 
+    unsigned long nowMs = millis();
+
+    if (!pumpPressureModeEnabled) {
+        pumpPressureClampUntilMs = 0;
+    } else {
+        if (requested > 0.0f && lastPumpRequested <= 0.0f) {
+            pumpPressureClampUntilMs = nowMs + PUMP_PRESSURE_CLAMP_DURATION_MS;
+        } else if (requested <= 0.0f) {
+            pumpPressureClampUntilMs = 0;
+        }
+    }
+
     if (pumpPressureModeEnabled) {
         float limit = clampf(pressureSetpointBar, PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX);
         float sensed = lastPress;
@@ -433,7 +449,6 @@ static void applyPumpPower() {
         }
     }
 
-    unsigned long nowMs = millis();
     if (pumpPressureModeEnabled) {
         float dt = 0.0f;
         if (lastPumpApplyMs == 0) {
@@ -451,8 +466,19 @@ static void applyPumpPower() {
 
     applied = clampf(applied, 0.0f, 100.0f);
 
+    if (pumpPressureModeEnabled && pumpPressureClampUntilMs != 0) {
+        if (nowMs < pumpPressureClampUntilMs) {
+            if (applied > PUMP_PRESSURE_INITIAL_CLAMP) {
+                applied = PUMP_PRESSURE_INITIAL_CLAMP;
+            }
+        } else {
+            pumpPressureClampUntilMs = 0;
+        }
+    }
+
     lastPumpApplyMs = nowMs;
     lastPumpApplied = applied;
+    lastPumpRequested = requested;
 
     int percent = static_cast<int>(lroundf(applied));
     pumpDimmer.setPower(percent);
