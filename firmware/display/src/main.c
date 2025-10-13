@@ -55,7 +55,7 @@ static TickType_t last_zc_change_tick = 0;
 static uint32_t last_zc_count = 0;
 static bool standby_mode = false;
 
-#define LCD_INACTIVITY_TIMEOUT  pdMS_TO_TICKS(300000)  /* 5 min inactivity window */
+#define LCD_INACTIVITY_TIMEOUT pdMS_TO_TICKS(900000) /* 15 min inactivity window */
 #define LCD_STANDBY_BACKLIGHT_LEVEL 5
 
 /**
@@ -63,10 +63,10 @@ static bool standby_mode = false;
  */
 void Driver_Init(void)
 {
-    Flash_Searching();   // Detect storage devices
-    I2C_Init();          // Initialize I2C bus for sensors
-    EXIO_Init();         // Example: initialize external IO expander
-    Battery_Init();      // Setup battery monitoring
+    Flash_Searching(); // Detect storage devices
+    I2C_Init();        // Initialize I2C bus for sensors
+    EXIO_Init();       // Example: initialize external IO expander
+    Battery_Init();    // Setup battery monitoring
 }
 
 /**
@@ -82,19 +82,19 @@ void app_main(void)
     ESP_LOGI("BOOT", "Delaying %d ms to let serial start", boot_delay_ms);
     vTaskDelay(pdMS_TO_TICKS(boot_delay_ms));
 
-    Wireless_Init();  // Configure Wi-Fi/BLE modules
+    Wireless_Init(); // Configure Wi-Fi/BLE modules
     esp_err_t web_err = WebServer_Init();
     if (web_err != ESP_OK)
     {
         ESP_LOGE("WEB", "Web server init failed: %s", esp_err_to_name(web_err));
     }
-    Driver_Init();    // Initialize hardware drivers
+    Driver_Init(); // Initialize hardware drivers
 
-    LCD_Init();      // Prepare LCD display
-    Touch_Init();    // Initialize touch controller
-    SD_Init();       // Mount SD card
-    LVGL_Init();     // Initialize graphics library
-/********************* Demo *********************/
+    LCD_Init();   // Prepare LCD display
+    Touch_Init(); // Initialize touch controller
+    SD_Init();    // Mount SD card
+    LVGL_Init();  // Initialize graphics library
+                  /********************* Demo *********************/
     Lvgl_Example1();
 
     // Ensure the heater is active on startup.
@@ -115,20 +115,23 @@ void app_main(void)
     last_zc_change_tick = start_tick;
     last_zc_count = MQTT_GetZcCount();
 
-    while (1) {
+    while (1)
+    {
         // Run lv_timer_handler every 250 ms
         vTaskDelay(pdMS_TO_TICKS(250));
         lv_timer_handler();
 
         TickType_t now = xTaskGetTickCount();
         bool heater_on = MQTT_GetHeaterState();
-        if (heater_on) {
+        if (heater_on)
+        {
             last_heater_on_tick = now;
         }
 
         uint32_t current_zc = MQTT_GetZcCount();
         bool zc_changed = (current_zc != last_zc_count);
-        if (zc_changed) {
+        if (zc_changed)
+        {
             last_zc_count = current_zc;
             last_zc_change_tick = now;
         }
@@ -137,15 +140,20 @@ void app_main(void)
         bool heater_inactive = !heater_on && (now - last_heater_on_tick) >= LCD_INACTIVITY_TIMEOUT;
         bool zc_inactive = (now - last_zc_change_tick) >= LCD_INACTIVITY_TIMEOUT;
 
-        if (!standby_mode) {
-            if (touch_inactive && (heater_inactive || zc_inactive)) {
+        if (!standby_mode)
+        {
+            if (touch_inactive && (heater_inactive || zc_inactive))
+            {
                 LVGL_EnterStandby();
                 Wireless_SetStandbyMode(true);
                 Set_Backlight(LCD_STANDBY_BACKLIGHT_LEVEL);
                 standby_mode = true;
             }
-        } else {
-            if (!touch_inactive) {
+        }
+        else
+        {
+            if (!touch_inactive)
+            {
                 LVGL_ExitStandby();
                 Wireless_SetStandbyMode(false);
                 Set_Backlight(LCD_Backlight);
