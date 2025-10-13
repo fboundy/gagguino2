@@ -49,10 +49,9 @@ typedef struct __attribute__((packed)) EspNowPacket
     float pressureBar;         //!< Brew pressure in bar
     float steamSetpointC;      //!< Steam temperature setpoint in °C
     float brewSetpointC;       //!< Brew temperature setpoint in °C
-    float pressureSetpointBar;        //!< Target brew pressure in bar
-    uint8_t pumpPressureMode;         //!< 1 if pressure limiting mode is active
-    uint16_t pumpPowerAppliedDeciPct; //!< Actual pump power (0.1% resolution)
-    uint8_t reserved;                 //!< Reserved for future use / alignment
+    float pressureSetpointBar; //!< Target brew pressure in bar
+    uint8_t pumpPressureMode;  //!< 1 if pressure limiting mode is active
+    uint8_t reserved[3];       //!< Reserved for future use / alignment
     float pidPTerm;            //!< Proportional contribution of the temperature PID
     float pidITerm;            //!< Integral contribution of the temperature PID
     float pidDTerm;            //!< Derivative contribution of the temperature PID

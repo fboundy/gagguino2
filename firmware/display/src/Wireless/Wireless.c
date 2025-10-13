@@ -1518,11 +1518,6 @@ static void publish_sensor_to_mqtt(const EspNowPacket *pkt)
 {
     if (!s_mqtt_connected)
         return;
-    float pump_power = pkt->pumpPowerAppliedDeciPct / 10.0f;
-    if (pump_power < 0.0f)
-        pump_power = 0.0f;
-    else if (pump_power > 100.0f)
-        pump_power = 100.0f;
     publish_float(TOPIC_CURTEMP, pkt->currentTempC, 1);
     publish_float(TOPIC_SETTEMP, pkt->setTempC, 1);
     publish_float(TOPIC_PRESSURE, pkt->pressureBar, 1);
@@ -1533,7 +1528,6 @@ static void publish_sensor_to_mqtt(const EspNowPacket *pkt)
     publish_float(TOPIC_BREW_STATE, pkt->brewSetpointC, 1);
     publish_float(TOPIC_STEAM_STATE, pkt->steamSetpointC, 1);
     publish_float(TOPIC_PRESSURE_SETPOINT_STATE, pkt->pressureSetpointBar, 1);
-    publish_float(TOPIC_PUMP_POWER_STATE, pump_power, 1);
     publish_float(TOPIC_PID_P_TERM_STATE, pkt->pidPTerm, 2);
     publish_float(TOPIC_PID_I_TERM_STATE, pkt->pidITerm, 2);
     publish_float(TOPIC_PID_D_TERM_STATE, pkt->pidDTerm, 2);
@@ -1576,11 +1570,6 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
         s_brew_setpoint = pkt->brewSetpointC;
         s_steam_setpoint = pkt->steamSetpointC;
         s_pressure_setpoint = pkt->pressureSetpointBar;
-        s_pump_power = pkt->pumpPowerAppliedDeciPct / 10.0f;
-        if (s_pump_power < 0.0f)
-            s_pump_power = 0.0f;
-        else if (s_pump_power > 100.0f)
-            s_pump_power = 100.0f;
         s_pump_pressure_mode = pkt->pumpPressureMode != 0;
         publish_sensor_to_mqtt(pkt);
         if (info)
