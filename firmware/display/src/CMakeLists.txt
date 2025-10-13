@@ -14,10 +14,12 @@ set(app_sources
     ${DEMO_MAIN_DIR}/LVGL_UI/LVGL_UI.c
     ${DEMO_MAIN_DIR}/Wireless/Wireless.c
     ${DEMO_MAIN_DIR}/Buzzer/Buzzer.c
-    ${DEMO_MAIN_DIR}/fonts/mdi_icons_24.c    
+    ${DEMO_MAIN_DIR}/fonts/mdi_icons_24.c
     ${DEMO_MAIN_DIR}/fonts/mdi_icons_40.c
     ${DEMO_MAIN_DIR}/fonts/mdi_icons_80.c
     ${DEMO_MAIN_DIR}/Battery/Battery.c
+    ${DEMO_MAIN_DIR}/WebServer/WebServer.c
+    ${DEMO_MAIN_DIR}/WebServer/BrewProfileStore.c
 )
 
 idf_component_register(
@@ -37,6 +39,7 @@ idf_component_register(
         ${DEMO_MAIN_DIR}/Buzzer
         ${DEMO_MAIN_DIR}/Battery
         ${DEMO_MAIN_DIR}/fonts
+        ${DEMO_MAIN_DIR}/WebServer
         ${CMAKE_SOURCE_DIR}/../shared/include
     REQUIRES
         lvgl__lvgl
@@ -45,7 +48,10 @@ idf_component_register(
         esp_netif
         esp_event
         nvs_flash
+        mdns
         driver
         esp_lcd
         mqtt
+        esp_http_server
+        json
 )

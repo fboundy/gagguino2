@@ -9,11 +9,13 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "freertos/timers.h"
+#include "mdns.h"
 #include "mqtt_client.h"
 #include "secrets.h"
 #include "mqtt_topics.h"
 #include "espnow_protocol.h"
 #include "version.h"
+#include "WebServer.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -174,6 +176,8 @@ static float s_pressure_setpoint = NAN;
 static bool s_pump_pressure_mode = false;
 static bool s_heater = false;
 static bool s_steam = false;
+static bool s_steam_hw_flag = false;
+static bool s_ignore_legacy_heater_state = false;
 
 // Cached MQTT payloads to avoid re-publishing unchanged state mirrors.
 static char s_pub_curtemp[32];
@@ -235,11 +239,13 @@ static bool s_mqtt_connected = false;
 static esp_mqtt_client_handle_t s_mqtt = NULL;
 static bool s_mqtt_enabled = true;
 static bool s_standby_suppressed = false;
-static bool s_restore_heater_on_exit = false;
+static bool s_control_publish_pending = false;
 
 static bool s_wifi_ready = false;
 static uint8_t s_sta_channel = 0;
 static bool s_sta_channel_valid = false;
+static bool s_mdns_initialized = false;
+static bool s_mdns_service_registered = false;
 
 static bool s_espnow_active = false;
 static bool s_espnow_handshake = false;
@@ -279,6 +285,7 @@ static void control_apply_defaults(void)
     s_control = CONTROL_DEFAULTS;
     s_heater = s_control.heater;
     s_steam = s_control.steam;
+    s_steam_hw_flag = s_steam;
     s_brew_setpoint = s_control.brewSetpoint;
     s_steam_setpoint = s_control.steamSetpoint;
     s_pid_p = s_control.pidP;
@@ -371,7 +378,7 @@ static uint8_t apply_steam_request(bool steam)
 // -----------------------------------------------------------------------------
 // Forward declarations
 // -----------------------------------------------------------------------------
-static void publish_control_state(void);
+static bool publish_control_state(void);
 static void schedule_control_send(void);
 static void send_control_packet(void);
 static void ensure_espnow_started(void);
@@ -380,6 +387,66 @@ static void espnow_timeout_cb(TimerHandle_t xTimer);
 static void espnow_ping_cb(TimerHandle_t xTimer);
 static void Wireless_Task(void *arg);
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int data_len);
+static void start_mdns_service(void);
+static void stop_mdns_service(void);
+
+static void start_mdns_service(void)
+{
+    if (!s_mdns_initialized)
+    {
+        esp_err_t err = mdns_init();
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG_WIFI, "mDNS init failed: %s", esp_err_to_name(err));
+            return;
+        }
+        s_mdns_initialized = true;
+    }
+
+    esp_err_t err = mdns_hostname_set("gaggia");
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG_WIFI, "Failed to set mDNS hostname: %s", esp_err_to_name(err));
+    }
+
+    err = mdns_instance_name_set("Gaggia Espresso Display");
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG_WIFI, "Failed to set mDNS instance name: %s", esp_err_to_name(err));
+    }
+
+    if (!s_mdns_service_registered)
+    {
+        mdns_txt_item_t service_txt_data[] = {
+            {"path", "/"},
+        };
+        err = mdns_service_add("Gaggia Web", "_http", "_tcp", 80, service_txt_data, 1);
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG_WIFI, "Failed to add mDNS HTTP service: %s", esp_err_to_name(err));
+        }
+        else
+        {
+            s_mdns_service_registered = true;
+        }
+    }
+}
+
+static void stop_mdns_service(void)
+{
+    if (!s_mdns_initialized || !s_mdns_service_registered)
+        return;
+
+    esp_err_t err = mdns_service_remove("_http", "_tcp");
+    if (err != ESP_OK)
+    {
+        ESP_LOGW(TAG_WIFI, "Failed to remove mDNS service: %s", esp_err_to_name(err));
+    }
+    else
+    {
+        s_mdns_service_registered = false;
+    }
+}
 
 // -----------------------------------------------------------------------------
 // Wi-Fi initialisation and event handling
@@ -391,6 +458,12 @@ static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG_WIFI, "Got IP: %d.%d.%d.%d", IP2STR(&event->ip_info.ip));
         s_wifi_ready = true;
+        esp_err_t err = WebServer_Start();
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG_WIFI, "Failed to start web server: %s", esp_err_to_name(err));
+        }
+        start_mdns_service();
     }
 }
 
@@ -426,6 +499,7 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         s_wifi_ready = false;
         s_sta_channel_valid = false;
         s_last_espnow_channel = 0;
+        stop_mdns_service();
         stop_espnow();
         esp_wifi_connect();
         break;
@@ -713,10 +787,10 @@ static inline void publish_pid_discovery(void) {}
 static inline void reset_pid_discovery_flags(void) {}
 #endif
 
-static void publish_control_state(void)
+static bool publish_control_state(void)
 {
     if (!s_mqtt_connected)
-        return;
+        return false;
     publish_bool_topic(TOPIC_HEATER, s_control.heater);
     publish_bool_topic(TOPIC_STEAM, s_control.steam);
     publish_float(TOPIC_BREW_STATE, s_control.brewSetpoint, 1);
@@ -733,11 +807,15 @@ static void publish_control_state(void)
     esp_mqtt_client_publish(s_mqtt, TOPIC_PUMP_MODE_STATE, buf, 0, 1, true);
     publish_float(TOPIC_PRESSURE_SETPOINT_STATE, s_control.pressureSetpoint, 1);
     publish_bool_topic(TOPIC_PUMP_PRESSURE_MODE_STATE, s_control.pumpPressureMode);
+    return true;
 }
 
 static void handle_control_change(void)
 {
-    publish_control_state();
+    if (!publish_control_state())
+        s_control_publish_pending = true;
+    else
+        s_control_publish_pending = false;
     schedule_control_send();
 }
 
@@ -771,6 +849,10 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
 #endif
         publish_pid_discovery();
+        if (s_control_publish_pending && publish_control_state())
+        {
+            s_control_publish_pending = false;
+        }
         break;
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGW(TAG_MQTT, "Disconnected");
@@ -816,6 +898,13 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         else if (strcmp(topic, TOPIC_HEATER) == 0)
         {
             bool hv = parse_bool_str(payload);
+            if (s_ignore_legacy_heater_state && event->retain && !hv)
+            {
+                ESP_LOGI(TAG_MQTT, "Standby exit: ignoring legacy heater -> %s", payload);
+                s_ignore_legacy_heater_state = false;
+                break;
+            }
+            s_ignore_legacy_heater_state = false;
             if (control_bootstrap_ignore_bool(CONTROL_BOOT_HEATER, event->retain, hv, s_control.heater))
             {
                 ESP_LOGI(TAG_MQTT, "Bootstrap skip: heater -> %s", payload);
@@ -834,6 +923,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             }
             s_control.steam = sv;
             s_steam = s_control.steam;
+            s_steam_hw_flag = sv;
         }
         else if (strcmp(topic, TOPIC_BREW_STATE) == 0)
         {
@@ -1496,6 +1586,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
         s_shot_time = pkt->shotTimeMs / 1000.0f;
         s_heater = pkt->heaterSwitch != 0;
         s_steam = pkt->steamFlag != 0;
+        s_steam_hw_flag = s_steam;
         s_brew_setpoint = pkt->brewSetpointC;
         s_steam_setpoint = pkt->steamSetpointC;
         s_pressure_setpoint = pkt->pressureSetpointBar;
@@ -1571,10 +1662,9 @@ void Wireless_SetStandbyMode(bool standby)
             return;
         s_standby_suppressed = true;
         s_mqtt_enabled = false;
-        s_restore_heater_on_exit = s_control.heater;
         if (s_control.heater)
         {
-            MQTT_SetHeaterState(false);
+            MQTT_SetHeaterState(false, false);
         }
         MQTT_Stop();
         return;
@@ -1585,12 +1675,9 @@ void Wireless_SetStandbyMode(bool standby)
 
     s_standby_suppressed = false;
     s_mqtt_enabled = true;
-    bool restore = s_restore_heater_on_exit;
-    s_restore_heater_on_exit = false;
-    if (restore)
-    {
-        MQTT_SetHeaterState(true);
-    }
+    s_ignore_legacy_heater_state = true;
+    MQTT_SetHeaterState(true, false);
+    MQTT_SetSteamState(s_steam_hw_flag);
     MQTT_Start();
 }
 
@@ -1608,9 +1695,9 @@ float MQTT_GetShotVolume(void) { return s_shot_volume; }
 uint32_t MQTT_GetZcCount(void) { return s_zc_count; }
 bool MQTT_GetHeaterState(void) { return s_heater; }
 
-void MQTT_SetHeaterState(bool heater)
+void MQTT_SetHeaterState(bool heater, bool force_publish)
 {
-    if (s_control.heater == heater)
+    if (!force_publish && s_control.heater == heater)
         return;
     s_control.heater = heater;
     s_heater = heater;

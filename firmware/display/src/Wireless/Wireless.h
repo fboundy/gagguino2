@@ -29,7 +29,7 @@ float MQTT_GetShotTime(void);
 float MQTT_GetShotVolume(void);
 uint32_t MQTT_GetZcCount(void);
 bool MQTT_GetHeaterState(void);
-void MQTT_SetHeaterState(bool state);
+void MQTT_SetHeaterState(bool state, bool force_publish);
 bool MQTT_GetSteamState(void);
 void MQTT_SetSteamState(bool state);
 void MQTT_SetPumpPressureMode(bool enabled);
