@@ -131,6 +131,9 @@ constexpr float PUMP_PRESSURE_RAMP_RATE = 20.0f;   // % per second when ramping 
 constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;  // Max dt (s) considered for ramp calculations
 constexpr float PUMP_PRESSURE_INITIAL_CLAMP = 40.0f;  // Max % for first second when pump engages
 constexpr unsigned long PUMP_PRESSURE_CLAMP_DURATION_MS = 1000;
+constexpr float PUMP_PRESSURE_D_GAIN = 6.0f;  // % reduction per (bar/s) of rising pressure
+constexpr float PUMP_PRESSURE_D_TAU = 0.12f;  // Low-pass filter constant for derivative (s)
+constexpr float PUMP_PRESSURE_D_MAX_RATE = 12.0f;  // Limit on derivative magnitude (bar/s)
 
 const bool debugPrint = true;
 }  // namespace
@@ -204,6 +207,9 @@ float lastPumpApplied = 0.0f;          // Actual power sent to dimmer after ramp
 float lastPumpRequested = 0.0f;        // Last requested pump power
 unsigned long pumpPressureClampUntilMs = 0;
 unsigned long lastPumpApplyMs = 0;  // Timestamp of last pump power application
+float pumpPressureDerivFiltered = 0.0f;  // Filtered derivative of sensed pressure
+float pumpPressureLastSensed = 0.0f;
+bool pumpPressureDerivInitialized = false;
 
 // Pressure
 int rawPress = 0;
@@ -441,15 +447,26 @@ static void applyPumpPower() {
     float applied = requested;
 
     unsigned long nowMs = millis();
+    float dtSec = 0.0f;
 
     if (!pumpPressureModeEnabled) {
         pumpPressureClampUntilMs = 0;
+        pumpPressureDerivInitialized = false;
+        pumpPressureDerivFiltered = 0.0f;
     } else {
         if (requested > 0.0f && lastPumpRequested <= 0.0f) {
             pumpPressureClampUntilMs = nowMs + PUMP_PRESSURE_CLAMP_DURATION_MS;
         } else if (requested <= 0.0f) {
             pumpPressureClampUntilMs = 0;
+            pumpPressureDerivInitialized = false;
+            pumpPressureDerivFiltered = 0.0f;
         }
+        if (lastPumpApplyMs == 0) {
+            dtSec = PRESS_CYCLE / 1000.0f;
+        } else {
+            dtSec = (nowMs - lastPumpApplyMs) / 1000.0f;
+        }
+        dtSec = clampf(dtSec, 0.0f, PUMP_PRESSURE_RAMP_MAX_DT);
     }
 
     if (pumpPressureModeEnabled) {
@@ -466,17 +483,27 @@ static void applyPumpPower() {
                 applied = 0.0f;
             }
         }
-    }
 
-    if (pumpPressureModeEnabled) {
-        float dt = 0.0f;
-        if (lastPumpApplyMs == 0) {
-            dt = PRESS_CYCLE / 1000.0f;  // assume at least one pressure cycle
+        if (!pumpPressureDerivInitialized) {
+            pumpPressureLastSensed = sensed;
+            pumpPressureDerivFiltered = 0.0f;
+            pumpPressureDerivInitialized = true;
+        } else if (dtSec > 0.0f) {
+            float rawDeriv = (sensed - pumpPressureLastSensed) / dtSec;
+            rawDeriv = clampf(rawDeriv, -PUMP_PRESSURE_D_MAX_RATE, PUMP_PRESSURE_D_MAX_RATE);
+            float alpha = dtSec / (PUMP_PRESSURE_D_TAU + dtSec);
+            pumpPressureDerivFiltered += alpha * (rawDeriv - pumpPressureDerivFiltered);
+            if (pumpPressureDerivFiltered > 0.0f) {
+                float reduction = pumpPressureDerivFiltered * PUMP_PRESSURE_D_GAIN;
+                if (reduction > applied) reduction = applied;
+                applied -= reduction;
+            }
+            pumpPressureLastSensed = sensed;
         } else {
-            dt = (nowMs - lastPumpApplyMs) / 1000.0f;
+            pumpPressureLastSensed = sensed;
         }
-        dt = clampf(dt, 0.0f, PUMP_PRESSURE_RAMP_MAX_DT);
-        float maxIncrease = PUMP_PRESSURE_RAMP_RATE * dt;
+
+        float maxIncrease = PUMP_PRESSURE_RAMP_RATE * dtSec;
         float allowed = lastPumpApplied + maxIncrease;
         if (applied > allowed) {
             applied = allowed;
@@ -602,6 +629,9 @@ static void revertToSafeDefaults() {
     pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;
     pumpPressureModeEnabled = false;
     applyPumpPower();
+    pumpPressureDerivInitialized = false;
+    pumpPressureDerivFiltered = 0.0f;
+    pumpPressureLastSensed = 0.0f;
     pumpMode = ESPNOW_PUMP_MODE_NORMAL;
     steamDispFlag = false;
     steamResetPending = false;
