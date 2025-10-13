@@ -59,6 +59,9 @@ static char TOPIC_PIDG_STATE[128];
 static char TOPIC_PIDG_CMD[128];
 static char TOPIC_DTAU_STATE[128];
 static char TOPIC_DTAU_CMD[128];
+static char TOPIC_PID_P_TERM_STATE[128];
+static char TOPIC_PID_I_TERM_STATE[128];
+static char TOPIC_PID_D_TERM_STATE[128];
 
 static char TOPIC_PUMP_POWER_STATE[128];
 static char TOPIC_PUMP_POWER_CMD[128];
@@ -97,6 +100,12 @@ static inline void build_topics(void)
     snprintf(TOPIC_PIDG_CMD, sizeof TOPIC_PIDG_CMD, "%s/%s/pid_guard/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_DTAU_STATE, sizeof TOPIC_DTAU_STATE, "%s/%s/pid_dtau/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_DTAU_CMD, sizeof TOPIC_DTAU_CMD, "%s/%s/pid_dtau/set", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PID_P_TERM_STATE, sizeof TOPIC_PID_P_TERM_STATE, "%s/%s/pid_p_term/state", GAG_TOPIC_ROOT,
+             GAGGIA_ID);
+    snprintf(TOPIC_PID_I_TERM_STATE, sizeof TOPIC_PID_I_TERM_STATE, "%s/%s/pid_i_term/state", GAG_TOPIC_ROOT,
+             GAGGIA_ID);
+    snprintf(TOPIC_PID_D_TERM_STATE, sizeof TOPIC_PID_D_TERM_STATE, "%s/%s/pid_d_term/state", GAG_TOPIC_ROOT,
+             GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_STATE, sizeof TOPIC_PUMP_POWER_STATE, "%s/%s/pump_power/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_CMD, sizeof TOPIC_PUMP_POWER_CMD, "%s/%s/pump_power/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_MODE_STATE, sizeof TOPIC_PUMP_MODE_STATE, "%s/%s/pump_mode/state", GAG_TOPIC_ROOT, GAGGIA_ID);
@@ -1464,6 +1473,9 @@ static void publish_sensor_to_mqtt(const EspNowPacket *pkt)
     publish_float(TOPIC_BREW_STATE, pkt->brewSetpointC, 1);
     publish_float(TOPIC_STEAM_STATE, pkt->steamSetpointC, 1);
     publish_float(TOPIC_PRESSURE_SETPOINT_STATE, pkt->pressureSetpointBar, 1);
+    publish_float(TOPIC_PID_P_TERM_STATE, pkt->pidPTerm, 2);
+    publish_float(TOPIC_PID_I_TERM_STATE, pkt->pidITerm, 2);
+    publish_float(TOPIC_PID_D_TERM_STATE, pkt->pidDTerm, 2);
     publish_bool_topic(TOPIC_PUMP_PRESSURE_MODE_STATE, pkt->pumpPressureMode != 0);
 }
 
