@@ -134,6 +134,7 @@ constexpr unsigned long PUMP_PRESSURE_CLAMP_DURATION_MS = 1000;
 constexpr float PUMP_PRESSURE_D_GAIN = 6.0f;  // % reduction per (bar/s) of rising pressure
 constexpr float PUMP_PRESSURE_D_TAU = 0.12f;  // Low-pass filter constant for derivative (s)
 constexpr float PUMP_PRESSURE_D_MAX_RATE = 12.0f;  // Limit on derivative magnitude (bar/s)
+constexpr float PUMP_PRESSURE_APPROACH_MARGIN = 1.0f;  // Start tapering pump 1 bar before limit
 
 const bool debugPrint = true;
 }  // namespace
@@ -503,6 +504,22 @@ static void applyPumpPower() {
             pumpPressureLastSensed = sensed;
         }
 
+        if (limit > 0.0f && PUMP_PRESSURE_APPROACH_MARGIN > 0.0f) {
+            float dynamicMargin = fminf(PUMP_PRESSURE_APPROACH_MARGIN, 0.5f * limit);
+            if (dynamicMargin > 0.0f) {
+                float reduceStart = limit - dynamicMargin;
+                if (sensed >= reduceStart) {
+                    float headroom = limit - sensed;
+                    float scale = headroom / dynamicMargin;
+                    scale = clampf(scale, 0.0f, 1.0f);
+                    float conservative = requested * scale;
+                    if (applied > conservative) {
+                        applied = conservative;
+                    }
+                }
+            }
+        }
+
         float maxIncrease = PUMP_PRESSURE_RAMP_RATE * dtSec;
         float allowed = lastPumpApplied + maxIncrease;
         if (applied > allowed) {
@@ -653,6 +670,11 @@ static void sendEspNowPacket() {
     pkt.brewSetpointC = brewSetpoint;
     pkt.pressureSetpointBar = pressureSetpointBar;
     pkt.pumpPressureMode = pumpPressureModeEnabled ? 1 : 0;
+    float appliedPump = clampf(lastPumpApplied, 0.0f, 100.0f);
+    uint16_t appliedDeciPct = static_cast<uint16_t>(lroundf(appliedPump * 10.0f));
+    if (appliedDeciPct > 1000) appliedDeciPct = 1000;
+    pkt.pumpPowerAppliedDeciPct = appliedDeciPct;
+    pkt.reserved = 0;
     pkt.pidPTerm = pidPTerm;
     pkt.pidITerm = pidITerm;
     pkt.pidDTerm = pidDTerm;
