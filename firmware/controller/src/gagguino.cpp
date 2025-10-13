@@ -400,18 +400,27 @@ static void updateTempPWM() {
     if (!heaterEnabled) {
         digitalWrite(HEAT_PIN, LOW);
         heaterState = false;
-        return;
-    }
-    if (currentTime - lastPwmTime >= (unsigned long)heatCycles) {
-        digitalWrite(HEAT_PIN, HIGH);
-        heaterState = true;
-    }
-    if (currentTime - lastPwmTime >= PWM_CYCLE) {
-        digitalWrite(HEAT_PIN, LOW);
-        heaterState = false;
         lastPwmTime = currentTime;
         nLoop = 0;
+        return;
     }
+    unsigned long elapsed = currentTime - lastPwmTime;
+    if (elapsed >= PWM_CYCLE) {
+        unsigned long cyclesElapsed = elapsed / PWM_CYCLE;
+        lastPwmTime += cyclesElapsed * PWM_CYCLE;
+        elapsed = currentTime - lastPwmTime;
+        nLoop = 0;
+    }
+
+    float clampedPower = heatPower;
+    if (clampedPower < 0.0f) clampedPower = 0.0f;
+    if (clampedPower > 100.0f) clampedPower = 100.0f;
+    unsigned long onWindow = (unsigned long)(clampedPower * PWM_CYCLE / 100.0f);
+    if (onWindow > PWM_CYCLE) onWindow = PWM_CYCLE;
+
+    bool shouldHeat = elapsed < onWindow && onWindow > 0;
+    digitalWrite(HEAT_PIN, shouldHeat ? HIGH : LOW);
+    heaterState = shouldHeat;
     nLoop++;
 }
 
