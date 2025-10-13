@@ -101,7 +101,7 @@ constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 // Ki: 0.3-0.5 [out/(degC*s)] -> start at 0.35
 // Kd: 50-70 [out*s/degC] -> start at 60
 // guard: +/-8-+/-12% integral clamp on 0-100% heater
-constexpr float P_GAIN_TEMP = 6.0f, I_GAIN_TEMP = 0.05f, D_GAIN_TEMP = 8.5, DTAU_TEMP = 0.8f,
+constexpr float P_GAIN_TEMP = 8.0f, I_GAIN_TEMP = 0.40f, D_GAIN_TEMP = 17.0, DTAU_TEMP = 0.8f,
                 WINDUP_GUARD_TEMP = 25.0f;
 
 // Derivative filter time constant (seconds), exposed to HA
@@ -384,7 +384,7 @@ static void updateTempPID() {
     if (currentTemp > setTemp) {
         effectivePGain = 0.0f;
         effectiveIGain = 0.0f;
-        effectiveDGain = 0.0f;
+        // effectiveDGain = 0.0f;
     }
 
     heatPower = calcPID(effectivePGain, effectiveIGain, effectiveDGain, setTemp, currentTemp, dt,
