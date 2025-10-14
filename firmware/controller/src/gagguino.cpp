@@ -518,7 +518,8 @@ static void applyPumpPower() {
     lastPumpApplyMs = nowMs;
     lastPumpApplied = applied;
     lastPumpRequested = requested;
-    pumpPower = applied;
+    // Surface the PID-derived power when pressure control is active so the HA sensor follows the actual output.
+    pumpPower = pumpPressureModeEnabled ? applied : requested;
 
     int percent = static_cast<int>(lroundf(applied));
     pumpDimmer.setPower(percent);

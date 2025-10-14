@@ -1,2 +1,2 @@
 #pragma once
-#define VERSION "7.2-patch"
+#define VERSION "7.2-dev"
