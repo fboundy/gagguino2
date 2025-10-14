@@ -231,7 +231,7 @@ volatile unsigned long pulseCount = 0;
 volatile unsigned long zcCount = 0;
 volatile unsigned long lastZcCount = 0;
 volatile int64_t lastZcTime = 0;  // microsecond timestamp
-int vol = 0, preFlowVol = 0, shotVol = 0;
+float vol = 0.0f, preFlowVol = 0.0f, shotVol = 0.0f;
 bool prevSteamFlag = false, ac = false;
 int acCount = 0;
 bool shotFlag = false, preFlow = false, steamFlag = false, steamDispFlag = false,
@@ -348,13 +348,13 @@ static void checkShotStartStop() {
         shotFlag = true;
         pulseCount = 0;
         preFlow = true;
-        preFlowVol = 0;
+        preFlowVol = 0.0f;
     }
     unsigned long lastZcTimeMs = lastZcTime / 1000;
     if ((steamFlag && !prevSteamFlag) ||
         (currentTime - lastZcTimeMs >= SHOT_RESET && shotFlag && currentTime > lastZcTimeMs)) {
         pulseCount = 0;
-        shotVol = 0;
+        shotVol = 0.0f;
         shotTime = 0;
         lastPulseTime = esp_timer_get_time();
         shotFlag = false;
@@ -591,7 +591,7 @@ static void updatePreFlow() {
  */
 static void updateVols() {
     unsigned long pulses = pulseCount;
-    vol = static_cast<int>(pulses * FLOW_CAL);
+    vol = pulses * FLOW_CAL;
     shotVol = (preFlow || !shotFlag) ? 0.0f : (vol - preFlowVol);
 }
 
@@ -645,7 +645,7 @@ static void sendEspNowPacket() {
     pkt.steamFlag = steamFlag ? 1 : 0;
     pkt.heaterSwitch = heaterEnabled ? 1 : 0;
     pkt.shotTimeMs = shotFlag ? static_cast<uint32_t>(shotTime * 1000.0f) : 0;
-    pkt.shotVolumeMl = static_cast<float>(shotVol);
+    pkt.shotVolumeMl = shotVol;
     pkt.setTempC = setTemp;
     pkt.currentTempC = currentTemp;
     pkt.pressureBar = pressNow;

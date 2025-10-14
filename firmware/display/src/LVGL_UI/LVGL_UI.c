@@ -11,6 +11,8 @@
 #include "version.h"
 #include "Battery.h"
 
+#define STANDBY_CLOCK_FONT_SIZE_PX 80  // Standby clock target text size (px)
+
 /* Fallback symbol definitions for environments where newer LVGL symbols are
  * not provided. These values correspond to Font Awesome code points and allow
  * the project to compile even with older LVGL releases. */
@@ -848,7 +850,7 @@ static void Status_create(lv_obj_t *parent)
   lv_obj_align(row_bottom, LV_ALIGN_CENTER, 0, (H * 5) / 100);
 
   /* left: shot time, right: shot volume */
-  MAKE_FIELD(row_bottom, 0, MDI_CLOCK, shot_time_icon, shot_time_label, shot_time_units_label, "0.0", "s");
+  MAKE_FIELD(row_bottom, 0, MDI_CLOCK, shot_time_icon, shot_time_label, shot_time_units_label, "0", "s");
   MAKE_FIELD(row_bottom, 1, MDI_BEAKER, shot_volume_icon, shot_volume_label, shot_volume_units_label, "0.0", "ml");
 
   /* ----------------- Top row @ 70% ----------------- */
@@ -1153,7 +1155,9 @@ void example1_increase_lvgl_tick(lv_timer_t *t)
   }
   if (shot_time_label)
   {
-    snprintf(buf, sizeof buf, "%.1f", shot_time);
+    float clamped_time = LV_MAX(shot_time, 0.0f);
+    int shot_seconds = (int)floorf(clamped_time);
+    snprintf(buf, sizeof buf, "%d", shot_seconds);
     lv_label_set_text(shot_time_label, buf);
   }
   if (shot_volume_label)
@@ -1600,7 +1604,7 @@ void LVGL_EnterStandby(void)
     lv_obj_add_style(standby_time_label, &style_title, 0);
     lv_obj_set_style_text_font(standby_time_label, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(standby_time_label, lv_color_white(), 0);
-    const uint16_t zoom = (uint16_t)((80 * LV_IMG_ZOOM_NONE + 24) / 48);
+    const uint16_t zoom = (uint16_t)((STANDBY_CLOCK_FONT_SIZE_PX * LV_IMG_ZOOM_NONE + 24) / 48);
     lv_obj_set_style_transform_zoom(standby_time_label, zoom, 0);
     lv_obj_align(standby_time_label, LV_ALIGN_CENTER, 0, 0);
   }
