@@ -44,6 +44,7 @@ static char TOPIC_SETTEMP[128];
 static char TOPIC_PRESSURE[128];
 static char TOPIC_SHOTVOL[128];
 static char TOPIC_SHOT[128];
+static char TOPIC_SHOT_TIME[128];
 static char TOPIC_ZC_COUNT_STATE[128];
 static char TOPIC_BREW_STATE[128];
 static char TOPIC_BREW_SET_CMD[128];
@@ -86,6 +87,7 @@ static inline void build_topics(void)
     snprintf(TOPIC_PRESSURE, sizeof TOPIC_PRESSURE, "%s/%s/pressure/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_SHOTVOL, sizeof TOPIC_SHOTVOL, "%s/%s/shot_volume/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_SHOT, sizeof TOPIC_SHOT, "%s/%s/shot/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_SHOT_TIME, sizeof TOPIC_SHOT_TIME, "%s/%s/shot_time/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_ZC_COUNT_STATE, sizeof TOPIC_ZC_COUNT_STATE, "%s/%s/zc_count/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_BREW_STATE, sizeof TOPIC_BREW_STATE, "%s/%s/brew_setpoint/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_BREW_SET_CMD, sizeof TOPIC_BREW_SET_CMD, "%s/%s/brew_setpoint/set", GAG_TOPIC_ROOT, GAGGIA_ID);
@@ -189,6 +191,32 @@ static bool s_heater = false;
 static bool s_steam = false;
 static bool s_steam_hw_flag = false;
 static bool s_ignore_legacy_heater_state = false;
+
+// Cached MQTT payloads to avoid re-publishing unchanged state mirrors.
+static char s_pub_curtemp[32];
+static bool s_pub_curtemp_valid = false;
+static char s_pub_settemp[32];
+static bool s_pub_settemp_valid = false;
+static char s_pub_pressure[32];
+static bool s_pub_pressure_valid = false;
+static char s_pub_shot_volume[32];
+static bool s_pub_shot_volume_valid = false;
+static char s_pub_shot_time_legacy[32];
+static bool s_pub_shot_time_legacy_valid = false;
+static char s_pub_shot_time[32];
+static bool s_pub_shot_time_valid = false;
+static char s_pub_brew_setpoint[32];
+static bool s_pub_brew_setpoint_valid = false;
+static char s_pub_steam_setpoint[32];
+static bool s_pub_steam_setpoint_valid = false;
+static char s_pub_pressure_setpoint_payload[32];
+static bool s_pub_pressure_setpoint_valid = false;
+static bool s_pub_heater = false;
+static bool s_pub_heater_valid = false;
+static bool s_pub_steam = false;
+static bool s_pub_steam_valid = false;
+static bool s_pub_pump_pressure_mode = false;
+static bool s_pub_pump_pressure_mode_valid = false;
 
 typedef enum
 {
@@ -563,6 +591,9 @@ static void mqtt_subscribe_all(void)
     // State mirrors for retained bootstrap
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_HEATER, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_STEAM, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_SHOTVOL, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_SHOT, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_SHOT_TIME, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_BREW_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_STEAM_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_ZC_COUNT_STATE, 1);
@@ -592,6 +623,48 @@ static void publish_bool_topic(const char *topic, bool value)
     if (!s_mqtt)
         return;
     esp_mqtt_client_publish(s_mqtt, topic, value ? "ON" : "OFF", 0, 1, true);
+}
+
+static void publish_float_if_changed(const char *topic, float value, uint8_t decimals, char *last_payload,
+                                     size_t payload_len, bool *valid)
+{
+    if (!s_mqtt)
+        return;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%.*f", decimals, value);
+    if (*valid && strncmp(buf, last_payload, payload_len) == 0)
+        return;
+    esp_mqtt_client_publish(s_mqtt, topic, buf, 0, 1, true);
+    strncpy(last_payload, buf, payload_len);
+    last_payload[payload_len - 1] = '\0';
+    *valid = true;
+}
+
+static void publish_bool_topic_if_changed(const char *topic, bool value, bool *last, bool *valid)
+{
+    if (!s_mqtt)
+        return;
+    if (*valid && *last == value)
+        return;
+    esp_mqtt_client_publish(s_mqtt, topic, value ? "ON" : "OFF", 0, 1, true);
+    *last = value;
+    *valid = true;
+}
+
+static void reset_sensor_publish_cache(void)
+{
+    s_pub_curtemp_valid = false;
+    s_pub_settemp_valid = false;
+    s_pub_pressure_valid = false;
+    s_pub_shot_volume_valid = false;
+    s_pub_shot_time_legacy_valid = false;
+    s_pub_shot_time_valid = false;
+    s_pub_brew_setpoint_valid = false;
+    s_pub_steam_setpoint_valid = false;
+    s_pub_pressure_setpoint_valid = false;
+    s_pub_heater_valid = false;
+    s_pub_steam_valid = false;
+    s_pub_pump_pressure_mode_valid = false;
 }
 
 #if defined(MQTT_STATUS) && defined(GAGGIA_ID)
@@ -908,6 +981,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         s_mqtt_connected = true;
         control_bootstrap_reset();
         mqtt_subscribe_all();
+        reset_sensor_publish_cache();
 #ifdef MQTT_STATUS
         esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
 #endif
@@ -921,6 +995,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         ESP_LOGW(TAG_MQTT, "Disconnected");
         s_mqtt_connected = false;
         reset_pid_discovery_flags();
+        reset_sensor_publish_cache();
         break;
     case MQTT_EVENT_DATA:
     {
@@ -949,7 +1024,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         {
             s_shot_volume = strtof(payload, NULL);
         }
-        else if (strcmp(topic, TOPIC_SHOT) == 0)
+        else if (strcmp(topic, TOPIC_SHOT) == 0 || strcmp(topic, TOPIC_SHOT_TIME) == 0)
         {
             s_shot_time = strtof(payload, NULL);
         }
@@ -1595,24 +1670,29 @@ static void publish_sensor_to_mqtt(const EspNowPacket *pkt)
                               fabsf(previous_pump_power - s_pump_power_actual) >= CONTROL_PUMP_POWER_TOLERANCE;
     if (!s_mqtt_connected)
         return;
-    publish_float(TOPIC_CURTEMP, pkt->currentTempC, 1);
-    publish_float(TOPIC_SETTEMP, pkt->setTempC, 1);
-    publish_float(TOPIC_PRESSURE, pkt->pressureBar, 1);
-    publish_float(TOPIC_SHOTVOL, pkt->shotVolumeMl, 1);
-    publish_float(TOPIC_SHOT, pkt->shotTimeMs / 1000.0f, 1);
-    publish_bool_topic(TOPIC_HEATER, pkt->heaterSwitch != 0);
-    publish_bool_topic(TOPIC_STEAM, pkt->steamFlag != 0);
-    publish_float(TOPIC_BREW_STATE, pkt->brewSetpointC, 1);
-    publish_float(TOPIC_STEAM_STATE, pkt->steamSetpointC, 1);
-    publish_float(TOPIC_PRESSURE_SETPOINT_STATE, pkt->pressureSetpointBar, 1);
-    publish_float(TOPIC_PID_P_TERM_STATE, pkt->pidPTerm, 2);
-    publish_float(TOPIC_PID_I_TERM_STATE, pkt->pidITerm, 2);
-    publish_float(TOPIC_PID_D_TERM_STATE, pkt->pidDTerm, 2);
-    publish_bool_topic(TOPIC_PUMP_PRESSURE_MODE_STATE, pkt->pumpPressureMode != 0);
-    if (pump_power_changed)
-    {
-        publish_float(TOPIC_PUMP_POWER_OUTPUT_STATE, pkt->pumpPowerPercent, 1);
-    }
+    publish_float_if_changed(TOPIC_CURTEMP, pkt->currentTempC, 1, s_pub_curtemp, sizeof(s_pub_curtemp),
+                             &s_pub_curtemp_valid);
+    publish_float_if_changed(TOPIC_SETTEMP, pkt->setTempC, 1, s_pub_settemp, sizeof(s_pub_settemp),
+                             &s_pub_settemp_valid);
+    publish_float_if_changed(TOPIC_PRESSURE, pkt->pressureBar, 1, s_pub_pressure, sizeof(s_pub_pressure),
+                             &s_pub_pressure_valid);
+    publish_float_if_changed(TOPIC_SHOTVOL, pkt->shotVolumeMl, 1, s_pub_shot_volume,
+                             sizeof(s_pub_shot_volume), &s_pub_shot_volume_valid);
+    publish_float_if_changed(TOPIC_SHOT, pkt->shotTimeMs / 1000.0f, 1, s_pub_shot_time_legacy,
+                             sizeof(s_pub_shot_time_legacy), &s_pub_shot_time_legacy_valid);
+    publish_float_if_changed(TOPIC_SHOT_TIME, pkt->shotTimeMs / 1000.0f, 1, s_pub_shot_time,
+                             sizeof(s_pub_shot_time), &s_pub_shot_time_valid);
+    publish_bool_topic_if_changed(TOPIC_HEATER, pkt->heaterSwitch != 0, &s_pub_heater, &s_pub_heater_valid);
+    publish_bool_topic_if_changed(TOPIC_STEAM, pkt->steamFlag != 0, &s_pub_steam, &s_pub_steam_valid);
+    publish_float_if_changed(TOPIC_BREW_STATE, pkt->brewSetpointC, 1, s_pub_brew_setpoint,
+                             sizeof(s_pub_brew_setpoint), &s_pub_brew_setpoint_valid);
+    publish_float_if_changed(TOPIC_STEAM_STATE, pkt->steamSetpointC, 1, s_pub_steam_setpoint,
+                             sizeof(s_pub_steam_setpoint), &s_pub_steam_setpoint_valid);
+    publish_float_if_changed(TOPIC_PRESSURE_SETPOINT_STATE, pkt->pressureSetpointBar, 1,
+                             s_pub_pressure_setpoint_payload, sizeof(s_pub_pressure_setpoint_payload),
+                             &s_pub_pressure_setpoint_valid);
+    publish_bool_topic_if_changed(TOPIC_PUMP_PRESSURE_MODE_STATE, pkt->pumpPressureMode != 0,
+                                  &s_pub_pump_pressure_mode, &s_pub_pump_pressure_mode_valid);
 }
 
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int data_len)
