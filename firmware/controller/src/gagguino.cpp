@@ -202,7 +202,8 @@ float pidPTerm = 0.0f, pidITerm = 0.0f, pidDTerm = 0.0f;
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;             // HA switch default ON at boot
-float pumpPower = PUMP_POWER_DEFAULT;  // Default pump power (%), overridden by display
+float pumpPowerCommand = PUMP_POWER_DEFAULT;  // Requested pump power (%), overridden by display
+float pumpPower = PUMP_POWER_DEFAULT;         // Last applied pump power (%) reported to sensors
 float pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;  // Target brew pressure in bar
 bool pumpPressureModeEnabled = false;  // When true limit pump power to pressure setpoint
 float lastPumpApplied = 0.0f;          // Actual power sent to dimmer after ramp/limits
@@ -442,10 +443,10 @@ static inline float clampf(float v, float lo, float hi) {
 }
 
 /**
- * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
+ * @brief Apply PWM to the pump triac dimmer based on the requested pump power.
  */
 static void applyPumpPower() {
-    float requested = clampf(pumpPower, 0.0f, 100.0f);
+    float requested = clampf(pumpPowerCommand, 0.0f, 100.0f);
     float applied = requested;
 
     unsigned long nowMs = millis();
@@ -517,6 +518,7 @@ static void applyPumpPower() {
     lastPumpApplyMs = nowMs;
     lastPumpApplied = applied;
     lastPumpRequested = requested;
+    pumpPower = applied;
 
     int percent = static_cast<int>(lroundf(applied));
     pumpDimmer.setPower(percent);
@@ -617,7 +619,7 @@ static void revertToSafeDefaults() {
         heaterEnabled = true;
         LOG("ESP-NOW: Heater default -> ON");
     }
-    pumpPower = PUMP_POWER_DEFAULT;
+    pumpPowerCommand = PUMP_POWER_DEFAULT;
     pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;
     pumpPressureModeEnabled = false;
     applyPumpPower();
@@ -724,8 +726,8 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     }
 
     float newPump = clampf(pkt.pumpPowerPercent, 0.0f, 100.0f);
-    if (fabsf(newPump - pumpPower) > 0.1f) {
-        pumpPower = newPump;
+    if (fabsf(newPump - pumpPowerCommand) > 0.1f) {
+        pumpPowerCommand = newPump;
         applyPumpPower();
     }
 
