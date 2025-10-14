@@ -647,6 +647,7 @@ static void sendEspNowPacket() {
     pkt.brewSetpointC = brewSetpoint;
     pkt.pressureSetpointBar = pressureSetpointBar;
     pkt.pumpPressureMode = pumpPressureModeEnabled ? 1 : 0;
+    pkt.pumpPowerPercent = pumpPower;
     pkt.pidPTerm = pidPTerm;
     pkt.pidITerm = pidITerm;
     pkt.pidDTerm = pidDTerm;

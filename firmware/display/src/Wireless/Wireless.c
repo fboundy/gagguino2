@@ -207,6 +207,8 @@ static char s_pub_steam_setpoint[32];
 static bool s_pub_steam_setpoint_valid = false;
 static char s_pub_pressure_setpoint_payload[32];
 static bool s_pub_pressure_setpoint_valid = false;
+static char s_pub_pump_power[32];
+static bool s_pub_pump_power_valid = false;
 static bool s_pub_heater = false;
 static bool s_pub_heater_valid = false;
 static bool s_pub_steam = false;
@@ -657,6 +659,7 @@ static void reset_sensor_publish_cache(void)
     s_pub_brew_setpoint_valid = false;
     s_pub_steam_setpoint_valid = false;
     s_pub_pressure_setpoint_valid = false;
+    s_pub_pump_power_valid = false;
     s_pub_heater_valid = false;
     s_pub_steam_valid = false;
     s_pub_pump_pressure_mode_valid = false;
@@ -1614,6 +1617,8 @@ static void publish_sensor_to_mqtt(const EspNowPacket *pkt)
     publish_float_if_changed(TOPIC_PRESSURE_SETPOINT_STATE, pkt->pressureSetpointBar, 1,
                              s_pub_pressure_setpoint_payload, sizeof(s_pub_pressure_setpoint_payload),
                              &s_pub_pressure_setpoint_valid);
+    publish_float_if_changed(TOPIC_PUMP_POWER_STATE, pkt->pumpPowerPercent, 1, s_pub_pump_power,
+                             sizeof(s_pub_pump_power), &s_pub_pump_power_valid);
     publish_bool_topic_if_changed(TOPIC_PUMP_PRESSURE_MODE_STATE, pkt->pumpPressureMode != 0,
                                   &s_pub_pump_pressure_mode, &s_pub_pump_pressure_mode_valid);
 }
@@ -1655,6 +1660,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
         s_steam_setpoint = pkt->steamSetpointC;
         s_pressure_setpoint = pkt->pressureSetpointBar;
         s_pump_pressure_mode = pkt->pumpPressureMode != 0;
+        s_pump_power = pkt->pumpPowerPercent;
         publish_sensor_to_mqtt(pkt);
         if (info)
         {
