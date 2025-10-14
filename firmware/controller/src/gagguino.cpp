@@ -651,6 +651,9 @@ static void sendEspNowPacket() {
     pkt.pidPTerm = pidPTerm;
     pkt.pidITerm = pidITerm;
     pkt.pidDTerm = pidDTerm;
+    pkt.zcCount = zcCount;
+    pkt.pulseCount = pulseCount;
+    pkt.acCount = static_cast<uint32_t>(acCount);
     const uint8_t* dest = g_haveDisplayPeer ? g_displayMac : nullptr;
     esp_err_t err = esp_now_send(dest, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
     if (err != ESP_OK) {
