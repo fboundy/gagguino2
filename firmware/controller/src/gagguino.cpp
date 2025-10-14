@@ -35,7 +35,7 @@
 
 #include <cstdarg>
 
-#include "espnow_packet.h"
+#include "espnow_protocol.h"
 #include "secrets.h"  // WIFI_*
 #include "version.h"
 #define STARTUP_WAIT 1000
