@@ -66,6 +66,7 @@ static char TOPIC_PID_D_TERM_STATE[128];
 
 static char TOPIC_PUMP_POWER_STATE[128];
 static char TOPIC_PUMP_POWER_CMD[128];
+static char TOPIC_PUMP_POWER_OUTPUT_STATE[128];
 static char TOPIC_PRESSURE_SETPOINT_STATE[128];
 static char TOPIC_PRESSURE_SETPOINT_CMD[128];
 static char TOPIC_PUMP_MODE_STATE[128];
@@ -110,6 +111,8 @@ static inline void build_topics(void)
              GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_STATE, sizeof TOPIC_PUMP_POWER_STATE, "%s/%s/pump_power/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_CMD, sizeof TOPIC_PUMP_POWER_CMD, "%s/%s/pump_power/set", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PUMP_POWER_OUTPUT_STATE, sizeof TOPIC_PUMP_POWER_OUTPUT_STATE,
+             "%s/%s/pump_power/output_state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_MODE_STATE, sizeof TOPIC_PUMP_MODE_STATE, "%s/%s/pump_mode/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_MODE_CMD, sizeof TOPIC_PUMP_MODE_CMD, "%s/%s/pump_mode/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PRESSURE_SETPOINT_STATE, sizeof TOPIC_PRESSURE_SETPOINT_STATE, "%s/%s/pressure_setpoint/state", GAG_TOPIC_ROOT,
@@ -180,6 +183,7 @@ static float s_pid_d = NAN;
 static float s_pid_guard = NAN;
 static float s_dtau = NAN;
 static float s_pump_power = NAN;
+static float s_pump_power_actual = NAN;
 static uint8_t s_pump_mode = ESPNOW_PUMP_MODE_NORMAL;
 static float s_pressure_setpoint = NAN;
 static bool s_pump_pressure_mode = false;
@@ -305,6 +309,7 @@ static void control_apply_defaults(void)
     s_pid_guard = s_control.pidGuard;
     s_dtau = s_control.dTau,
     s_pump_power = s_control.pumpPower;
+    s_pump_power_actual = NAN;
     s_pump_mode = s_control.pumpMode;
     s_pressure_setpoint = s_control.pressureSetpoint;
     s_pump_pressure_mode = s_control.pumpPressureMode;
@@ -673,6 +678,7 @@ static bool s_pid_g_discovery_published = false;
 static bool s_dtau_discovery_published = false;
 static bool s_pressure_setpoint_discovery_published = false;
 static bool s_pump_power_discovery_published = false;
+static bool s_pump_power_output_discovery_published = false;
 static bool s_pump_pressure_mode_discovery_published = false;
 static bool s_pid_p_term_discovery_published = false;
 static bool s_pid_i_term_discovery_published = false;
@@ -766,6 +772,70 @@ static bool publish_pid_sensor_discovery(const char *name, const char *suffix, c
     return false;
 }
 
+static bool publish_sensor_discovery(const char *name, const char *suffix, const char *state_topic,
+                                     const char *unit, const char *device_class, const char *state_class,
+                                     bool *published_flag)
+{
+    if (!s_mqtt || *published_flag)
+        return false;
+
+    char dev_id[64];
+    snprintf(dev_id, sizeof dev_id, "%s-%s", GAG_TOPIC_ROOT, GAGGIA_ID);
+
+    char topic[128];
+    snprintf(topic, sizeof topic, "homeassistant/sensor/%s_%s/config", dev_id, suffix);
+
+    const char *availability = MQTT_STATUS;
+    const char *version = VERSION;
+
+    char payload[512];
+    int written = snprintf(payload, sizeof payload,
+                           "{\"name\":\"%s\",\"uniq_id\":\"%s_%s\",\"stat_t\":\"%s\",",
+                           name, dev_id, suffix, state_topic);
+    if (written <= 0 || written >= (int)sizeof(payload))
+    {
+        ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+        return false;
+    }
+
+    if (unit && *unit)
+    {
+        written += snprintf(payload + written, sizeof(payload) - written, "\"unit_of_meas\":\"%s\",", unit);
+    }
+    if (device_class && *device_class)
+    {
+        written += snprintf(payload + written, sizeof(payload) - written, "\"dev_cla\":\"%s\",", device_class);
+    }
+    if (state_class && *state_class)
+    {
+        written += snprintf(payload + written, sizeof(payload) - written, "\"stat_cla\":\"%s\",", state_class);
+    }
+
+    written += snprintf(payload + written, sizeof(payload) - written,
+                        "\"avty_t\":\"%s\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\"," 
+                        "\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\",\"manufacturer\":\"Custom\"," 
+                        "\"model\":\"Gagguino\",\"sw_version\":\"%s\"}}",
+                        availability, dev_id, version);
+
+    if (written > 0 && written < (int)sizeof(payload))
+    {
+        int res = esp_mqtt_client_publish(s_mqtt, topic, payload, 0, 1, true);
+        if (res >= 0)
+        {
+            *published_flag = true;
+            ESP_LOGI(TAG_MQTT, "Published %s discovery", name);
+            return true;
+        }
+        ESP_LOGW(TAG_MQTT, "Failed to publish %s discovery: %d", name, res);
+    }
+    else
+    {
+        ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+    }
+
+    return false;
+}
+
 static bool publish_switch_discovery(const char *name, const char *suffix, const char *cmd_topic,
                                      const char *state_topic, bool *published_flag)
 {
@@ -831,6 +901,8 @@ static void publish_pid_discovery(void)
                                  &s_pressure_setpoint_discovery_published);
     publish_pid_number_discovery("Pump Power", "pump_power", TOPIC_PUMP_POWER_CMD, TOPIC_PUMP_POWER_STATE, 40.0f, 95.0f,
                                  5.0f, &s_pump_power_discovery_published);
+    publish_sensor_discovery("Pump Power Output", "pump_power_output", TOPIC_PUMP_POWER_OUTPUT_STATE, "%", NULL,
+                              "measurement", &s_pump_power_output_discovery_published);
     publish_switch_discovery("Pump Pressure Mode", "pump_pressure_mode", TOPIC_PUMP_PRESSURE_MODE_CMD,
                              TOPIC_PUMP_PRESSURE_MODE_STATE, &s_pump_pressure_mode_discovery_published);
 }
@@ -847,6 +919,7 @@ static inline void reset_pid_discovery_flags(void)
     s_pid_d_term_discovery_published = false;
     s_pressure_setpoint_discovery_published = false;
     s_pump_power_discovery_published = false;
+    s_pump_power_output_discovery_published = false;
     s_pump_pressure_mode_discovery_published = false;
 }
 #else
@@ -1594,6 +1667,10 @@ static void schedule_control_send(void)
 
 static void publish_sensor_to_mqtt(const EspNowPacket *pkt)
 {
+    float previous_pump_power = s_pump_power_actual;
+    s_pump_power_actual = pkt->pumpPowerPercent;
+    bool pump_power_changed = isnanf(previous_pump_power) ||
+                              fabsf(previous_pump_power - s_pump_power_actual) >= CONTROL_PUMP_POWER_TOLERANCE;
     if (!s_mqtt_connected)
         return;
     publish_float_if_changed(TOPIC_CURTEMP, pkt->currentTempC, 1, s_pub_curtemp, sizeof(s_pub_curtemp),
