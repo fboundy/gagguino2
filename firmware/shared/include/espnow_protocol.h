@@ -56,6 +56,9 @@ typedef struct __attribute__((packed)) EspNowPacket
     float pidPTerm;            //!< Proportional contribution of the temperature PID
     float pidITerm;            //!< Integral contribution of the temperature PID
     float pidDTerm;            //!< Derivative contribution of the temperature PID
+    uint32_t zcCount;          //!< Zero-cross count since boot
+    uint32_t pulseCount;       //!< Flow meter pulse count since boot
+    uint32_t acCount;          //!< AC sense count accumulated while steaming
 } EspNowPacket;
 
 // Control payload mirrored between Home Assistant, the display and the
