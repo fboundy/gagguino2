@@ -126,14 +126,16 @@ constexpr float PUMP_POWER_DEFAULT = 95.0f;
 constexpr float PRESSURE_SETPOINT_DEFAULT = 9.0f;
 constexpr float PRESSURE_SETPOINT_MIN = 0.0f;
 constexpr float PRESSURE_SETPOINT_MAX = 12.0f;
-constexpr float PRESSURE_LIMIT_TOL = 0.25f;
 constexpr float PUMP_PRESSURE_RAMP_RATE = 20.0f;   // % per second when ramping up in pressure mode
 constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;  // Max dt (s) considered for ramp calculations
 constexpr float PUMP_PRESSURE_INITIAL_CLAMP = 40.0f;  // Max % for first second when pump engages
 constexpr unsigned long PUMP_PRESSURE_CLAMP_DURATION_MS = 1000;
-constexpr float PUMP_PRESSURE_D_GAIN = 6.0f;      // % reduction per (bar/s) of rising pressure
-constexpr float PUMP_PRESSURE_D_TAU = 0.12f;      // Low-pass filter constant for derivative (s)
-constexpr float PUMP_PRESSURE_D_MAX_RATE = 6.0f;  // Limit on derivative magnitude (bar/s)
+constexpr float PUMP_PRESSURE_KP = 5.0f;
+constexpr float PUMP_PRESSURE_KI = 1.0f;
+constexpr float PUMP_PRESSURE_KD = 10.0f;
+constexpr float PUMP_PRESSURE_I_GUARD = 25.0f;
+constexpr float PUMP_PRESSURE_OUTPUT_SCALE = 0.6f;
+constexpr float PUMP_PRESSURE_OUTPUT_OFFSET = 35.0f;
 
 const bool debugPrint = true;
 }  // namespace
@@ -207,9 +209,9 @@ float lastPumpApplied = 0.0f;          // Actual power sent to dimmer after ramp
 float lastPumpRequested = 0.0f;        // Last requested pump power
 unsigned long pumpPressureClampUntilMs = 0;
 unsigned long lastPumpApplyMs = 0;       // Timestamp of last pump power application
-float pumpPressureDerivFiltered = 0.0f;  // Filtered derivative of sensed pressure
-float pumpPressureLastSensed = 0.0f;
-bool pumpPressureDerivInitialized = false;
+float pumpPressurePvFilt = 0.0f;
+float pumpPressureISum = 0.0f;
+bool pumpPressurePidInitialized = false;
 
 // Pressure
 int rawPress = 0;
@@ -451,15 +453,15 @@ static void applyPumpPower() {
 
     if (!pumpPressureModeEnabled) {
         pumpPressureClampUntilMs = 0;
-        pumpPressureDerivInitialized = false;
-        pumpPressureDerivFiltered = 0.0f;
+        pumpPressurePidInitialized = false;
+        pumpPressureISum = 0.0f;
     } else {
         if (requested > 0.0f && lastPumpRequested <= 0.0f) {
             pumpPressureClampUntilMs = nowMs + PUMP_PRESSURE_CLAMP_DURATION_MS;
         } else if (requested <= 0.0f) {
             pumpPressureClampUntilMs = 0;
-            pumpPressureDerivInitialized = false;
-            pumpPressureDerivFiltered = 0.0f;
+            pumpPressurePidInitialized = false;
+            pumpPressureISum = 0.0f;
         }
         if (lastPumpApplyMs == 0) {
             dtSec = PRESS_CYCLE / 1000.0f;
@@ -472,35 +474,25 @@ static void applyPumpPower() {
     if (pumpPressureModeEnabled) {
         float limit = clampf(pressureSetpointBar, PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX);
         float sensed = pressNow;
-        if (limit <= 0.0f) {
-            applied = 0.0f;
-        } else if (sensed > (limit + PRESSURE_LIMIT_TOL)) {
-            if (sensed > 0.1f) {
-                float ratio = (limit + PRESSURE_LIMIT_TOL) / sensed;
-                ratio = clampf(ratio, 0.0f, 1.0f);
-                applied = requested * ratio;
-            } else {
-                applied = 0.0f;
-            }
+        if (!pumpPressurePidInitialized) {
+            pumpPressurePvFilt = sensed;
+            pumpPressureISum = 0.0f;
+            pumpPressurePidInitialized = true;
         }
 
-        if (!pumpPressureDerivInitialized) {
-            pumpPressureLastSensed = sensed;
-            pumpPressureDerivFiltered = 0.0f;
-            pumpPressureDerivInitialized = true;
+        if (limit <= 0.0f || requested <= 0.0f) {
+            applied = 0.0f;
+            pumpPressureISum = 0.0f;
+            pumpPressurePidInitialized = false;
         } else if (dtSec > 0.0f) {
-            float rawDeriv = (sensed - pumpPressureLastSensed) / dtSec;
-            rawDeriv = clampf(rawDeriv, -PUMP_PRESSURE_D_MAX_RATE, PUMP_PRESSURE_D_MAX_RATE);
-            float alpha = dtSec / (PUMP_PRESSURE_D_TAU + dtSec);
-            pumpPressureDerivFiltered += alpha * (rawDeriv - pumpPressureDerivFiltered);
-            if (pumpPressureDerivFiltered > 0.0f) {
-                float reduction = pumpPressureDerivFiltered * PUMP_PRESSURE_D_GAIN;
-                if (reduction > applied) reduction = applied;
-                applied -= reduction;
-            }
-            pumpPressureLastSensed = sensed;
+            float pidOut =
+                calcPID(PUMP_PRESSURE_KP, PUMP_PRESSURE_KI, PUMP_PRESSURE_KD, limit, sensed, dtSec,
+                        pumpPressurePvFilt, pumpPressureISum, PUMP_PRESSURE_I_GUARD);
+            if (pidOut > 100.0f) pidOut = 100.0f;
+            if (pidOut < 0.0f) pidOut = 0.0f;
+            applied = pidOut * PUMP_PRESSURE_OUTPUT_SCALE + PUMP_PRESSURE_OUTPUT_OFFSET;
         } else {
-            pumpPressureLastSensed = sensed;
+            applied = lastPumpApplied;
         }
 
         float maxIncrease = PUMP_PRESSURE_RAMP_RATE * dtSec;
@@ -629,9 +621,9 @@ static void revertToSafeDefaults() {
     pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;
     pumpPressureModeEnabled = false;
     applyPumpPower();
-    pumpPressureDerivInitialized = false;
-    pumpPressureDerivFiltered = 0.0f;
-    pumpPressureLastSensed = 0.0f;
+    pumpPressurePidInitialized = false;
+    pumpPressureISum = 0.0f;
+    pumpPressurePvFilt = 0.0f;
     pumpMode = ESPNOW_PUMP_MODE_NORMAL;
     steamDispFlag = false;
     steamResetPending = false;
