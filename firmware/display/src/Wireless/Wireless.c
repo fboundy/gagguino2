@@ -276,7 +276,6 @@ static bool s_use_espnow = false;
 static time_t s_espnow_last_rx = 0;
 static uint32_t s_control_revision = 0;
 static bool s_control_dirty = false;
-static uint8_t s_last_espnow_channel = 0;
 
 static esp_now_peer_info_t s_broadcast_peer = {0};
 static esp_now_peer_info_t s_controller_peer = {0};
@@ -519,19 +518,20 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         {
             s_sta_channel = event->channel;
         }
-        s_last_espnow_channel = s_sta_channel;
         ensure_espnow_started();
         break;
     }
     case WIFI_EVENT_STA_DISCONNECTED:
-        ESP_LOGW(TAG_WIFI, "STA disconnected");
+    {
+        wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)data;
+        ESP_LOGW(TAG_WIFI, "STA disconnected (reason=%u)", (unsigned)event->reason);
         s_wifi_ready = false;
         s_sta_channel_valid = false;
-        s_last_espnow_channel = 0;
         stop_mdns_service();
         stop_espnow();
         esp_wifi_connect();
         break;
+    }
     default:
         break;
     }
@@ -1586,16 +1586,6 @@ static void ensure_espnow_started(void)
     }
 
     esp_now_register_recv_cb(espnow_recv_cb);
-
-    if (s_last_espnow_channel != s_sta_channel)
-    {
-        esp_err_t err = esp_wifi_set_channel(s_sta_channel, WIFI_SECOND_CHAN_NONE);
-        if (err != ESP_OK)
-        {
-            ESP_LOGW(TAG_ESPNOW, "Failed to set channel %u: %d", (unsigned)s_sta_channel, err);
-        }
-        s_last_espnow_channel = s_sta_channel;
-    }
 
     memset(&s_broadcast_peer, 0, sizeof(s_broadcast_peer));
     memcpy(s_broadcast_peer.peer_addr, s_broadcast_addr, ESP_NOW_ETH_ALEN);
