@@ -25,15 +25,6 @@
 #define ESPNOW_CONTROL_FLAG_STEAM 0x02
 #define ESPNOW_CONTROL_FLAG_PUMP_PRESSURE 0x04
 
-// Pump operating modes understood by the controller. The display always sends
-// one of these values in EspNowControlPacket::pumpMode.
-typedef enum
-{
-    ESPNOW_PUMP_MODE_NORMAL = 0,
-    ESPNOW_PUMP_MODE_PREINFUSE = 1,
-    ESPNOW_PUMP_MODE_MANUAL = 2,
-} EspNowPumpMode;
-
 // Packet describing brew/steam state for ESP-NOW transport. This struct must
 // remain byte-for-byte compatible with the legacy implementation so that both
 // ends can cast the payload directly.
@@ -65,10 +56,9 @@ typedef struct __attribute__((packed)) EspNowPacket
 // controller. The first byte must always be ESPNOW_CONTROL_PACKET.
 typedef struct __attribute__((packed)) EspNowControlPacket
 {
-    uint8_t type;      //!< Constant ESPNOW_CONTROL_PACKET
-    uint8_t flags;     //!< Bitmask of ESPNOW_CONTROL_FLAG_*
-    uint8_t pumpMode;  //!< EspNowPumpMode value
-    uint8_t reserved;  //!< Reserved for future use / alignment
+    uint8_t type;        //!< Constant ESPNOW_CONTROL_PACKET
+    uint8_t flags;       //!< Bitmask of ESPNOW_CONTROL_FLAG_*
+    uint8_t reserved[2]; //!< Reserved for future use / alignment
     uint32_t revision; //!< Monotonic revision to detect stale commands
     float brewSetpointC;
     float steamSetpointC;

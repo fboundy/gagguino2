@@ -66,6 +66,7 @@
 #include <cstdarg>
 
 #include "espnow_protocol.h"
+#include "gag_constants.h"
 #include "secrets.h"  // WIFI_*
 #include "version.h"
 #define STARTUP_WAIT 1000
@@ -112,18 +113,19 @@ constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP
 
 // Simple handshake bytes for ESP-NOW link-up (values defined in shared/espnow_protocol.h)
 
-constexpr unsigned long DISPLAY_TIMEOUT_MS = 5000;      // ms without ACK before fallback
+constexpr unsigned long DISPLAY_TIMEOUT_MS =
+    GAG_ESPNOW_LINK_TIMEOUT_MS;                         // ms without ACK before fallback
 constexpr unsigned long ESPNOW_CHANNEL_HOLD_MS = 1100;  // dwell time per channel when scanning
 constexpr uint8_t ESPNOW_FIRST_CHANNEL = 1;
 constexpr uint8_t ESPNOW_LAST_CHANNEL = 13;
 constexpr uint8_t ESPNOW_BROADCAST_ADDR[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // Brew & Steam setpoint limits
-constexpr float BREW_MIN = 90.0f, BREW_MAX = 100.0f;
-constexpr float STEAM_MIN_C = 145.0f, STEAM_MAX_C = 155.0f;
+constexpr float BREW_MIN = GAG_BREW_SETPOINT_MIN_C, BREW_MAX = GAG_BREW_SETPOINT_MAX_C;
+constexpr float STEAM_MIN_C = GAG_STEAM_SETPOINT_MIN_C, STEAM_MAX_C = GAG_STEAM_SETPOINT_MAX_C;
 
 // Default steam setpoint (within limits)
-constexpr float STEAM_DEFAULT = 152.0f;
+constexpr float STEAM_DEFAULT = GAG_STEAM_SETPOINT_DEFAULT_C;
 
 constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 // Default PID params (overridable via ESP-NOW control packets)
@@ -132,8 +134,9 @@ constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 // Ki: 0.3-0.5 [out/(degC*s)] -> start at 0.35
 // Kd: 50-70 [out*s/degC] -> start at 60
 // guard: +/-8-+/-12% integral clamp on 0-100% heater
-constexpr float P_GAIN_TEMP = 8.0f, I_GAIN_TEMP = 0.40f, D_GAIN_TEMP = 17.0, DTAU_TEMP = 0.8f,
-                WINDUP_GUARD_TEMP = 25.0f;
+constexpr float P_GAIN_TEMP = GAG_PID_P_DEFAULT, I_GAIN_TEMP = GAG_PID_I_DEFAULT,
+                D_GAIN_TEMP = GAG_PID_D_DEFAULT, DTAU_TEMP = GAG_PID_DTAU_DEFAULT,
+                WINDUP_GUARD_TEMP = GAG_PID_GUARD_DEFAULT;
 
 // Derivative filter time constant (seconds), exposed to HA
 
@@ -153,10 +156,10 @@ constexpr unsigned ZC_MIN = 4;
 constexpr unsigned long ZC_WAIT = 2000, ZC_OFF = 1000, SHOT_RESET = 60000;
 constexpr unsigned long AC_WAIT = 100;
 constexpr int STEAM_MIN = 20;
-constexpr float PUMP_POWER_DEFAULT = 95.0f;
-constexpr float PRESSURE_SETPOINT_DEFAULT = 9.0f;
-constexpr float PRESSURE_SETPOINT_MIN = 0.0f;
-constexpr float PRESSURE_SETPOINT_MAX = 12.0f;
+constexpr float PUMP_POWER_DEFAULT = GAG_PUMP_POWER_DEFAULT_PERCENT;
+constexpr float PRESSURE_SETPOINT_DEFAULT = GAG_PRESSURE_SETPOINT_DEFAULT_BAR;
+constexpr float PRESSURE_SETPOINT_MIN = GAG_PRESSURE_SETPOINT_MIN_BAR;
+constexpr float PRESSURE_SETPOINT_MAX = GAG_PRESSURE_SETPOINT_MAX_BAR;
 constexpr float PUMP_PRESSURE_RAMP_RATE = 20.0f;   // % per second when ramping up in pressure mode
 constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;  // Max dt (s) considered for ramp calculations
 constexpr float PUMP_PRESSURE_INITIAL_CLAMP = 40.0f;  // Max % for first second when pump engages
@@ -225,9 +228,9 @@ static void syncClock() {
 
 // Temps / PID
 float currentTemp = 0.0f, lastTemp = 0.0f, pvFiltTemp = 0.0f;
-float brewSetpoint = 92.0f;           // HA-controllable (90?99)
-float steamSetpoint = STEAM_DEFAULT;  // HA-controllable (145?155)
-float setTemp = brewSetpoint;         // active target (brew or steam)
+float brewSetpoint = GAG_BREW_SETPOINT_DEFAULT_C;  // HA-controllable (90?99)
+float steamSetpoint = STEAM_DEFAULT;               // HA-controllable (145?155)
+float setTemp = brewSetpoint;                      // active target (brew or steam)
 float iStateTemp = 0.0f, heatPower = 0.0f;
 // Live-tunable PID parameters (default to constexprs above)
 float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
@@ -283,7 +286,6 @@ static uint8_t g_displayMac[ESP_NOW_ETH_ALEN] = {0};
 static bool g_haveDisplayPeer = false;
 static uint32_t g_lastControlRevision = 0;
 static unsigned long g_lastDisplayAckMs = 0;
-static EspNowPumpMode pumpMode = ESPNOW_PUMP_MODE_NORMAL;
 static bool g_espnowCoreInit = false;
 static bool g_espnowBroadcastPeerAdded = false;
 static esp_now_peer_info_t g_broadcastPeerInfo{};
@@ -662,7 +664,6 @@ static void revertToSafeDefaults() {
     pumpPressurePidInitialized = false;
     pumpPressureISum = 0.0f;
     pumpPressurePvFilt = 0.0f;
-    pumpMode = ESPNOW_PUMP_MODE_NORMAL;
     steamDispFlag = false;
     steamResetPending = false;
     steamFlag = steamDispFlag || steamHwFlag;
@@ -704,12 +705,11 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
 
     LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f "
         "pidP=%.2f pidI=%.2f pidGuard=%.2f "
-        "pidD=%.2f pump=%.1f mode=%u pressSet=%.1f pressMode=%d",
+        "pidD=%.2f pump=%.1f pressSet=%.1f pressMode=%d",
         static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
         (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
         pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.dTau, pkt.pumpPowerPercent,
-        static_cast<unsigned>(pkt.pumpMode), pkt.pressureSetpointBar,
-        (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_PRESSURE) ? 1 : 0);
+        pkt.pressureSetpointBar, (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_PRESSURE) ? 1 : 0);
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
     if (hv != heaterEnabled) {
@@ -775,8 +775,6 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     if (fabsf(newPressureSetpoint - pressureSetpointBar) > 0.1f) {
         pressureSetpointBar = newPressureSetpoint;
     }
-
-    pumpMode = static_cast<EspNowPumpMode>(pkt.pumpMode);
 
     float newPressureSet =
         clampf(pkt.pressureSetpointBar, PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX);
