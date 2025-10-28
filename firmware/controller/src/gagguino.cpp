@@ -250,6 +250,8 @@ unsigned long lastPumpApplyMs = 0;  // Timestamp of last pump power application
 float pumpPressurePvFilt = 0.0f;
 float pumpPressureISum = 0.0f;
 bool pumpPressurePidInitialized = false;
+bool pumpRelayEnabled = false;
+bool valveRelayEnabled = false;
 
 // Pressure
 int rawPress = 0;
@@ -660,10 +662,14 @@ static void revertToSafeDefaults() {
     pumpPowerCommand = PUMP_POWER_DEFAULT;
     pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;
     pumpPressureModeEnabled = false;
+    pumpRelayEnabled = false;
+    valveRelayEnabled = false;
     applyPumpPower();
     pumpPressurePidInitialized = false;
     pumpPressureISum = 0.0f;
     pumpPressurePvFilt = 0.0f;
+    digitalWrite(BREW_PIN, LOW);
+    digitalWrite(VALVE_PIN, LOW);
     steamDispFlag = false;
     steamResetPending = false;
     steamFlag = steamDispFlag || steamHwFlag;
@@ -705,11 +711,13 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
 
     LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f "
         "pidP=%.2f pidI=%.2f pidGuard=%.2f "
-        "pidD=%.2f pump=%.1f pressSet=%.1f pressMode=%d",
+        "pidD=%.2f dTau=%.2f pump=%.1f pressSet=%.1f pressMode=%d pumpRelay=%d valveRelay=%d",
         static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
         (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
         pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.dTau, pkt.pumpPowerPercent,
-        pkt.pressureSetpointBar, (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_PRESSURE) ? 1 : 0);
+        pkt.pressureSetpointBar, (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_PRESSURE) ? 1 : 0,
+        (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_RELAY) ? 1 : 0,
+        (pkt.flags & ESPNOW_CONTROL_FLAG_VALVE_RELAY) ? 1 : 0);
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
     if (hv != heaterEnabled) {
@@ -789,6 +797,20 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
         pumpPressureModeEnabled = newPressureMode;
         LOG("ESP-NOW: Pump pressure mode -> %s", pumpPressureModeEnabled ? "ON" : "OFF");
         applyPumpPower();
+    }
+
+    bool newPumpRelay = (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_RELAY) != 0;
+    if (newPumpRelay != pumpRelayEnabled) {
+        pumpRelayEnabled = newPumpRelay;
+        digitalWrite(BREW_PIN, pumpRelayEnabled ? HIGH : LOW);
+        LOG("ESP-NOW: Pump relay -> %s", pumpRelayEnabled ? "ON" : "OFF");
+    }
+
+    bool newValveRelay = (pkt.flags & ESPNOW_CONTROL_FLAG_VALVE_RELAY) != 0;
+    if (newValveRelay != valveRelayEnabled) {
+        valveRelayEnabled = newValveRelay;
+        digitalWrite(VALVE_PIN, valveRelayEnabled ? HIGH : LOW);
+        LOG("ESP-NOW: Valve relay -> %s", valveRelayEnabled ? "ON" : "OFF");
     }
 
     if (mac) {
@@ -1092,9 +1114,15 @@ void setup() {
     pinMode(ZC_PIN, INPUT);
     pinMode(AC_SENS, INPUT_PULLUP);
     pinMode(PUMP_PIN, OUTPUT);
+    pinMode(BREW_PIN, OUTPUT);
+    pinMode(VALVE_PIN, OUTPUT);
     pumpDimmer.begin(NORMAL_MODE, OFF);
     digitalWrite(HEAT_PIN, LOW);
+    digitalWrite(BREW_PIN, LOW);
+    digitalWrite(VALVE_PIN, LOW);
     heaterState = false;
+    pumpRelayEnabled = false;
+    valveRelayEnabled = false;
     applyPumpPower();
     max31865.begin(MAX31865_2WIRE);
 

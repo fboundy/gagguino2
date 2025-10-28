@@ -72,6 +72,10 @@ static char TOPIC_PRESSURE_SETPOINT_STATE[128];
 static char TOPIC_PRESSURE_SETPOINT_CMD[128];
 static char TOPIC_PUMP_PRESSURE_MODE_STATE[128];
 static char TOPIC_PUMP_PRESSURE_MODE_CMD[128];
+static char TOPIC_PUMP_RELAY_STATE[128];
+static char TOPIC_PUMP_RELAY_CMD[128];
+static char TOPIC_VALVE_RELAY_STATE[128];
+static char TOPIC_VALVE_RELAY_CMD[128];
 
 static inline void build_topics(void)
 {
@@ -118,6 +122,10 @@ static inline void build_topics(void)
              "%s/%s/pump_pressure_mode/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_PRESSURE_MODE_CMD, sizeof TOPIC_PUMP_PRESSURE_MODE_CMD, "%s/%s/pump_pressure_mode/set", GAG_TOPIC_ROOT,
              GAGGIA_ID);
+    snprintf(TOPIC_PUMP_RELAY_STATE, sizeof TOPIC_PUMP_RELAY_STATE, "%s/%s/pump_relay/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PUMP_RELAY_CMD, sizeof TOPIC_PUMP_RELAY_CMD, "%s/%s/pump_relay/set", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_VALVE_RELAY_STATE, sizeof TOPIC_VALVE_RELAY_STATE, "%s/%s/valve_relay/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_VALVE_RELAY_CMD, sizeof TOPIC_VALVE_RELAY_CMD, "%s/%s/valve_relay/set", GAG_TOPIC_ROOT, GAGGIA_ID);
 }
 
 static inline bool parse_bool_str(const char *s)
@@ -142,6 +150,8 @@ typedef struct
     float dTau;
     float pumpPower;
     float pressureSetpoint;
+    bool pumpRelay;
+    bool valveRelay;
     bool pumpPressureMode;
 } ControlState;
 
@@ -157,7 +167,8 @@ static const ControlState CONTROL_DEFAULTS = {
     .dTau = GAG_PID_DTAU_DEFAULT,
     .pumpPower = GAG_PUMP_POWER_DEFAULT_PERCENT,
     .pressureSetpoint = GAG_PRESSURE_SETPOINT_DEFAULT_BAR,
-    .pumpMode = ESPNOW_PUMP_MODE_NORMAL,
+    .pumpRelay = false,
+    .valveRelay = false,
     .pumpPressureMode = false,
 };
 
@@ -181,6 +192,8 @@ static float s_dtau = NAN;
 static float s_pump_power = NAN;
 static float s_pressure_setpoint = NAN;
 static bool s_pump_pressure_mode = false;
+static bool s_pump_relay = false;
+static bool s_valve_relay = false;
 static bool s_heater = false;
 static bool s_steam = false;
 static bool s_steam_hw_flag = false;
@@ -234,7 +247,9 @@ typedef enum
     CONTROL_BOOT_PUMP_POWER = 1u << 9,
     CONTROL_BOOT_PRESSURE_SETPOINT = 1u << 10,
     CONTROL_BOOT_PUMP_PRESSURE_MODE = 1u << 11,
-    CONTROL_BOOT_ALL = (1u << 12) - 1,
+    CONTROL_BOOT_PUMP_RELAY = 1u << 12,
+    CONTROL_BOOT_VALVE_RELAY = 1u << 13,
+    CONTROL_BOOT_ALL = (1u << 14) - 1,
 } ControlBootstrapBit;
 
 static bool s_control_bootstrap_active = false;
@@ -314,6 +329,8 @@ static void control_apply_defaults(void)
     s_pump_power = s_control.pumpPower;
     s_pressure_setpoint = s_control.pressureSetpoint;
     s_pump_pressure_mode = s_control.pumpPressureMode;
+    s_pump_relay = s_control.pumpRelay;
+    s_valve_relay = s_control.valveRelay;
     s_set_temp = s_control.brewSetpoint;
     s_control_bootstrap_active = false;
     s_control_bootstrap_mask = 0;
@@ -586,6 +603,8 @@ static void mqtt_subscribe_all(void)
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_PRESSURE_MODE_CMD, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_RELAY_CMD, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_VALVE_RELAY_CMD, 1);
     // State mirrors for retained bootstrap
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_HEATER, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_STEAM, 1);
@@ -606,6 +625,8 @@ static void mqtt_subscribe_all(void)
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_PRESSURE_MODE_STATE, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_RELAY_STATE, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_VALVE_RELAY_STATE, 1);
 }
 
 static void publish_float(const char *topic, float value, uint8_t decimals)
@@ -707,6 +728,8 @@ static bool s_dtau_discovery_published = false;
 static bool s_pressure_setpoint_discovery_published = false;
 static bool s_pump_power_discovery_published = false;
 static bool s_pump_pressure_mode_discovery_published = false;
+static bool s_pump_relay_discovery_published = false;
+static bool s_valve_relay_discovery_published = false;
 static bool s_pid_p_term_discovery_published = false;
 static bool s_pid_i_term_discovery_published = false;
 static bool s_pid_d_term_discovery_published = false;
@@ -932,6 +955,10 @@ static void publish_all_discovery(void)
 {
     publish_switch_discovery("Heater", "heater", TOPIC_HEATER_SET, TOPIC_HEATER, &s_heater_switch_discovery_published);
     publish_switch_discovery("Steam", "steam", TOPIC_STEAM_SET, TOPIC_STEAM, &s_steam_switch_discovery_published);
+    publish_switch_discovery("Pump Relay", "pump_relay", TOPIC_PUMP_RELAY_CMD, TOPIC_PUMP_RELAY_STATE,
+                             &s_pump_relay_discovery_published);
+    publish_switch_discovery("Valve Relay", "valve_relay", TOPIC_VALVE_RELAY_CMD, TOPIC_VALVE_RELAY_STATE,
+                             &s_valve_relay_discovery_published);
     publish_number_discovery("Brew Setpoint", "brew_setpoint", TOPIC_BREW_SET_CMD, TOPIC_BREW_STATE,
                              BREW_SETPOINT_MIN_C, BREW_SETPOINT_MAX_C, 0.5f, "°C",
                              &s_brew_setpoint_discovery_published);
@@ -963,6 +990,8 @@ static void reset_discovery_flags(void)
 {
     s_heater_switch_discovery_published = false;
     s_steam_switch_discovery_published = false;
+    s_pump_relay_discovery_published = false;
+    s_valve_relay_discovery_published = false;
     s_brew_setpoint_discovery_published = false;
     s_steam_setpoint_discovery_published = false;
     s_current_temp_discovery_published = false;
@@ -1007,6 +1036,8 @@ static bool publish_control_state(void)
     publish_float(TOPIC_PUMP_POWER_STATE, s_control.pumpPower, 1);
     publish_float(TOPIC_PRESSURE_SETPOINT_STATE, s_control.pressureSetpoint, 1);
     publish_bool_topic(TOPIC_PUMP_PRESSURE_MODE_STATE, s_control.pumpPressureMode);
+    publish_bool_topic(TOPIC_PUMP_RELAY_STATE, s_control.pumpRelay);
+    publish_bool_topic(TOPIC_VALVE_RELAY_STATE, s_control.valveRelay);
     return true;
 }
 
@@ -1277,6 +1308,28 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             s_control.pumpPressureMode = v;
             s_pump_pressure_mode = s_control.pumpPressureMode;
         }
+        else if (strcmp(topic, TOPIC_PUMP_RELAY_STATE) == 0)
+        {
+            bool v = parse_bool_str(payload);
+            if (control_bootstrap_ignore_bool(CONTROL_BOOT_PUMP_RELAY, event->retain, v, s_control.pumpRelay))
+            {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pump_relay -> %s", payload);
+                break;
+            }
+            s_control.pumpRelay = v;
+            s_pump_relay = s_control.pumpRelay;
+        }
+        else if (strcmp(topic, TOPIC_VALVE_RELAY_STATE) == 0)
+        {
+            bool v = parse_bool_str(payload);
+            if (control_bootstrap_ignore_bool(CONTROL_BOOT_VALVE_RELAY, event->retain, v, s_control.valveRelay))
+            {
+                ESP_LOGI(TAG_MQTT, "Bootstrap skip: valve_relay -> %s", payload);
+                break;
+            }
+            s_control.valveRelay = v;
+            s_valve_relay = s_control.valveRelay;
+        }
         else if (strcmp(topic, TOPIC_HEATER_SET) == 0)
         {
             bool hv = parse_bool_str(payload);
@@ -1434,6 +1487,30 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 s_control.pumpPressureMode = v;
                 s_pump_pressure_mode = v;
                 log_control_bool("pump_pressure_mode", v);
+                handle_control_change();
+            }
+        }
+        else if (strcmp(topic, TOPIC_PUMP_RELAY_CMD) == 0)
+        {
+            bool v = parse_bool_str(payload);
+            control_bootstrap_complete();
+            if (v != s_control.pumpRelay)
+            {
+                s_control.pumpRelay = v;
+                s_pump_relay = v;
+                log_control_bool("pump_relay", v);
+                handle_control_change();
+            }
+        }
+        else if (strcmp(topic, TOPIC_VALVE_RELAY_CMD) == 0)
+        {
+            bool v = parse_bool_str(payload);
+            control_bootstrap_complete();
+            if (v != s_control.valveRelay)
+            {
+                s_control.valveRelay = v;
+                s_valve_relay = v;
+                log_control_bool("valve_relay", v);
                 handle_control_change();
             }
         }
@@ -1658,6 +1735,10 @@ static void send_control_packet(void)
         pkt.flags |= ESPNOW_CONTROL_FLAG_STEAM;
     if (s_control.pumpPressureMode)
         pkt.flags |= ESPNOW_CONTROL_FLAG_PUMP_PRESSURE;
+    if (s_control.pumpRelay)
+        pkt.flags |= ESPNOW_CONTROL_FLAG_PUMP_RELAY;
+    if (s_control.valveRelay)
+        pkt.flags |= ESPNOW_CONTROL_FLAG_VALVE_RELAY;
 
     esp_err_t err = esp_now_send(s_controller_peer.peer_addr, (const uint8_t *)&pkt, sizeof(pkt));
     if (err != ESP_OK)
@@ -1669,13 +1750,13 @@ static void send_control_packet(void)
         s_control_dirty = false;
         ESP_LOGI(TAG_ESPNOW,
                  "Control sent rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f pidP=%.2f pidI=%.2f "
-                 "pidGuard=%.2f pidD=%.2f dTau=%0.2f pump=%.1f pressSet=%.1f pressMode=%d",
+                 "pidGuard=%.2f pidD=%.2f dTau=%0.2f pump=%.1f pressSet=%.1f pressMode=%d pumpRelay=%d valveRelay=%d",
                  (unsigned)revision, s_control.heater, s_control.steam,
                  (double)s_control.brewSetpoint, (double)s_control.steamSetpoint,
                  (double)s_control.pidP, (double)s_control.pidI, (double)s_control.pidGuard,
                  (double)s_control.pidD, (double)s_control.dTau, (double)s_control.pumpPower,
                  (double)s_control.pressureSetpoint,
-                 s_control.pumpPressureMode ? 1 : 0);
+                 s_control.pumpPressureMode ? 1 : 0, s_control.pumpRelay ? 1 : 0, s_control.valveRelay ? 1 : 0);
     }
 }
 
@@ -1860,6 +1941,8 @@ float MQTT_GetSetTemp(void) { return s_set_temp; }
 float MQTT_GetCurrentPressure(void) { return s_pressure; }
 float MQTT_GetSetPressure(void) { return s_pressure_setpoint; }
 bool MQTT_GetPumpPressureMode(void) { return s_pump_pressure_mode; }
+bool MQTT_GetPumpRelayState(void) { return s_pump_relay; }
+bool MQTT_GetValveRelayState(void) { return s_valve_relay; }
 float MQTT_GetPumpPower(void) { return s_pump_power; }
 float MQTT_GetShotTime(void) { return s_shot_time; }
 float MQTT_GetShotVolume(void) { return s_shot_volume; }
@@ -1898,6 +1981,26 @@ void MQTT_SetPumpPressureMode(bool enabled)
     s_control.pumpPressureMode = enabled;
     s_pump_pressure_mode = enabled;
     log_control_bool("pump_pressure_mode", enabled);
+    handle_control_change();
+}
+
+void MQTT_SetPumpRelayState(bool enabled)
+{
+    if (s_control.pumpRelay == enabled)
+        return;
+    s_control.pumpRelay = enabled;
+    s_pump_relay = enabled;
+    log_control_bool("pump_relay", enabled);
+    handle_control_change();
+}
+
+void MQTT_SetValveRelayState(bool enabled)
+{
+    if (s_control.valveRelay == enabled)
+        return;
+    s_control.valveRelay = enabled;
+    s_valve_relay = enabled;
+    log_control_bool("valve_relay", enabled);
     handle_control_change();
 }
 

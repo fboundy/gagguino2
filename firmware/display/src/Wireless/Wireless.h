@@ -24,6 +24,8 @@ float MQTT_GetSetTemp(void);
 float MQTT_GetCurrentPressure(void);
 float MQTT_GetSetPressure(void);
 bool MQTT_GetPumpPressureMode(void);
+bool MQTT_GetPumpRelayState(void);
+bool MQTT_GetValveRelayState(void);
 float MQTT_GetPumpPower(void);
 float MQTT_GetShotTime(void);
 float MQTT_GetShotVolume(void);
@@ -35,6 +37,8 @@ void MQTT_SetHeaterState(bool state, bool force_publish);
 bool MQTT_GetSteamState(void);
 void MQTT_SetSteamState(bool state);
 void MQTT_SetPumpPressureMode(bool enabled);
+void MQTT_SetPumpRelayState(bool enabled);
+void MQTT_SetValveRelayState(bool enabled);
 void MQTT_SetPressureSetpoint(float pressure);
 void MQTT_SetPumpPower(float power);
 
