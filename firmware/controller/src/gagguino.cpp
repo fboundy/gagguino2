@@ -133,7 +133,10 @@ constexpr unsigned long PUMP_PRESSURE_CLAMP_DURATION_MS = 1000;
 constexpr float PUMP_PRESSURE_KP = 5.0f;
 constexpr float PUMP_PRESSURE_KI = 1.0f;
 constexpr float PUMP_PRESSURE_KD = 10.0f;
-constexpr float PUMP_PRESSURE_I_GUARD = 25.0f;
+// Allow the integral term to drive the PID output across the full pump range.
+// The previous guard of 25 limited the controller to ~60% pump power, which
+// prevented pressure mode from ever reaching typical 9-10 bar setpoints.
+constexpr float PUMP_PRESSURE_I_GUARD = 80.0f;
 constexpr float PUMP_PRESSURE_OUTPUT_SCALE = 0.6f;
 constexpr float PUMP_PRESSURE_OUTPUT_OFFSET = 35.0f;
 
