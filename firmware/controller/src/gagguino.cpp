@@ -240,6 +240,8 @@ float pumpPowerCommand = PUMP_POWER_DEFAULT;  // Requested pump power (%), overr
 float pumpPower = PUMP_POWER_DEFAULT;         // Last applied pump power (%) reported to sensors
 float pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;  // Target brew pressure in bar
 bool pumpPressureModeEnabled = false;  // When true limit pump power to pressure setpoint
+bool pumpRelayEnabled = false;         // Brew pump relay state (HA-controlled)
+bool valveRelayEnabled = false;        // 3-way valve relay state (HA-controlled)
 float lastPumpApplied = 0.0f;          // Actual power sent to dimmer after ramp/limits
 float lastPumpRequested = 0.0f;        // Last requested pump power
 unsigned long pumpPressureClampUntilMs = 0;
@@ -470,6 +472,11 @@ static void updateTempPWM() {
     nLoop++;
 }
 
+static void updateRelayOutputs() {
+    digitalWrite(BREW_PIN, pumpRelayEnabled ? HIGH : LOW);
+    digitalWrite(VALVE_PIN, valveRelayEnabled ? HIGH : LOW);
+}
+
 static inline float clampf(float v, float lo, float hi) {
     if (v < lo) return lo;
     if (v > hi) return hi;
@@ -663,6 +670,12 @@ static void revertToSafeDefaults() {
     pumpPressureISum = 0.0f;
     pumpPressurePvFilt = 0.0f;
     pumpMode = ESPNOW_PUMP_MODE_NORMAL;
+    if (pumpRelayEnabled || valveRelayEnabled) {
+        LOG("ESP-NOW: Resetting relays to defaults");
+    }
+    pumpRelayEnabled = false;
+    valveRelayEnabled = false;
+    updateRelayOutputs();
     steamDispFlag = false;
     steamResetPending = false;
     steamFlag = steamDispFlag || steamHwFlag;
@@ -704,12 +717,14 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
 
     LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f "
         "pidP=%.2f pidI=%.2f pidGuard=%.2f "
-        "pidD=%.2f pump=%.1f mode=%u pressSet=%.1f pressMode=%d",
+        "pidD=%.2f pump=%.1f mode=%u pressSet=%.1f pressMode=%d pumpRelay=%d valveRelay=%d",
         static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
         (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
         pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.dTau, pkt.pumpPowerPercent,
         static_cast<unsigned>(pkt.pumpMode), pkt.pressureSetpointBar,
-        (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_PRESSURE) ? 1 : 0);
+        (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_PRESSURE) ? 1 : 0,
+        (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_RELAY) ? 1 : 0,
+        (pkt.flags & ESPNOW_CONTROL_FLAG_VALVE_RELAY) ? 1 : 0);
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
     if (hv != heaterEnabled) {
@@ -791,6 +806,20 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
         pumpPressureModeEnabled = newPressureMode;
         LOG("ESP-NOW: Pump pressure mode -> %s", pumpPressureModeEnabled ? "ON" : "OFF");
         applyPumpPower();
+    }
+
+    bool newPumpRelay = (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_RELAY) != 0;
+    if (newPumpRelay != pumpRelayEnabled) {
+        pumpRelayEnabled = newPumpRelay;
+        updateRelayOutputs();
+        LOG("ESP-NOW: Pump relay -> %s", pumpRelayEnabled ? "ON" : "OFF");
+    }
+
+    bool newValveRelay = (pkt.flags & ESPNOW_CONTROL_FLAG_VALVE_RELAY) != 0;
+    if (newValveRelay != valveRelayEnabled) {
+        valveRelayEnabled = newValveRelay;
+        updateRelayOutputs();
+        LOG("ESP-NOW: Valve relay -> %s", valveRelayEnabled ? "ON" : "OFF");
     }
 
     if (mac) {
@@ -1089,6 +1118,8 @@ void setup() {
 
     pinMode(MAX_CS, OUTPUT);
     pinMode(HEAT_PIN, OUTPUT);
+    pinMode(BREW_PIN, OUTPUT);
+    pinMode(VALVE_PIN, OUTPUT);
     pinMode(PRESS_PIN, INPUT);
     pinMode(FLOW_PIN, INPUT_PULLUP);
     pinMode(ZC_PIN, INPUT);
@@ -1096,6 +1127,9 @@ void setup() {
     pinMode(PUMP_PIN, OUTPUT);
     pumpDimmer.begin(NORMAL_MODE, OFF);
     digitalWrite(HEAT_PIN, LOW);
+    pumpRelayEnabled = false;
+    valveRelayEnabled = false;
+    updateRelayOutputs();
     heaterState = false;
     applyPumpPower();
     max31865.begin(MAX31865_2WIRE);

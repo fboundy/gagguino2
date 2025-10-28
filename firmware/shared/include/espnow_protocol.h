@@ -24,6 +24,8 @@
 #define ESPNOW_CONTROL_FLAG_HEATER 0x01
 #define ESPNOW_CONTROL_FLAG_STEAM 0x02
 #define ESPNOW_CONTROL_FLAG_PUMP_PRESSURE 0x04
+#define ESPNOW_CONTROL_FLAG_PUMP_RELAY 0x08
+#define ESPNOW_CONTROL_FLAG_VALVE_RELAY 0x10
 
 // Pump operating modes understood by the controller. The display always sends
 // one of these values in EspNowControlPacket::pumpMode.
