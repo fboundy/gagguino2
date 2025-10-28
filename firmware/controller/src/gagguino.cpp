@@ -119,7 +119,7 @@ constexpr uint8_t ESPNOW_LAST_CHANNEL = 13;
 constexpr uint8_t ESPNOW_BROADCAST_ADDR[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // Brew & Steam setpoint limits
-constexpr float BREW_MIN = 87.0f, BREW_MAX = 97.0f;
+constexpr float BREW_MIN = 90.0f, BREW_MAX = 100.0f;
 constexpr float STEAM_MIN_C = 145.0f, STEAM_MAX_C = 155.0f;
 
 // Default steam setpoint (within limits)
