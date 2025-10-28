@@ -13,6 +13,7 @@
 #include "mqtt_client.h"
 #include "secrets.h"
 #include "mqtt_topics.h"
+#include "gag_constants.h"
 #include "espnow_protocol.h"
 #include "version.h"
 #include "WebServer.h"
@@ -25,7 +26,6 @@
 #include <strings.h>
 #include <time.h>
 
-#define ESPNOW_TIMEOUT_MS 5000
 #define ESPNOW_PING_PERIOD_MS 1000
 
 static const char *TAG_WIFI = "WiFi";
@@ -155,15 +155,15 @@ typedef struct
 static const ControlState CONTROL_DEFAULTS = {
     .heater = true,
     .steam = false,
-    .brewSetpoint = 92.0f,
-    .steamSetpoint = 152.0f,
-    .pidP = 8.0f,
-    .pidI = 0.4,
-    .pidD = 17.0f,
-    .pidGuard = 25.0f,
-    .dTau = 0.8f,
-    .pumpPower = 95.0f,
-    .pressureSetpoint = 9.0f,
+    .brewSetpoint = GAG_BREW_SETPOINT_DEFAULT_C,
+    .steamSetpoint = GAG_STEAM_SETPOINT_DEFAULT_C,
+    .pidP = GAG_PID_P_DEFAULT,
+    .pidI = GAG_PID_I_DEFAULT,
+    .pidD = GAG_PID_D_DEFAULT,
+    .pidGuard = GAG_PID_GUARD_DEFAULT,
+    .dTau = GAG_PID_DTAU_DEFAULT,
+    .pumpPower = GAG_PUMP_POWER_DEFAULT_PERCENT,
+    .pressureSetpoint = GAG_PRESSURE_SETPOINT_DEFAULT_BAR,
     .pumpMode = ESPNOW_PUMP_MODE_NORMAL,
     .pumpPressureMode = false,
 };
@@ -292,12 +292,12 @@ static const uint8_t s_broadcast_addr[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xF
 #define CONTROL_PID_TOLERANCE 0.005f
 #define CONTROL_PUMP_POWER_TOLERANCE 0.05f
 #define CONTROL_PRESSURE_TOLERANCE 0.05f
-#define CONTROL_PRESSURE_MIN 0.0f
-#define CONTROL_PRESSURE_MAX 12.0f
-#define BREW_SETPOINT_MIN_C 87.0f
-#define BREW_SETPOINT_MAX_C 97.0f
-#define STEAM_SETPOINT_MIN_C 145.0f
-#define STEAM_SETPOINT_MAX_C 155.0f
+#define CONTROL_PRESSURE_MIN GAG_PRESSURE_SETPOINT_MIN_BAR
+#define CONTROL_PRESSURE_MAX GAG_PRESSURE_SETPOINT_MAX_BAR
+#define BREW_SETPOINT_MIN_C GAG_BREW_SETPOINT_MIN_C
+#define BREW_SETPOINT_MAX_C GAG_BREW_SETPOINT_MAX_C
+#define STEAM_SETPOINT_MIN_C GAG_STEAM_SETPOINT_MIN_C
+#define STEAM_SETPOINT_MAX_C GAG_STEAM_SETPOINT_MAX_C
 #define PUMP_MODE_MIN 0.0f
 #define PUMP_MODE_MAX 2.0f
 #define STEAM_STATE_CHANGED_FLAG 0x01u
@@ -1604,7 +1604,8 @@ static void ensure_espnow_started(void)
 
     if (!s_espnow_timer)
     {
-        s_espnow_timer = xTimerCreate("espnow_to", pdMS_TO_TICKS(ESPNOW_TIMEOUT_MS), pdFALSE, NULL, espnow_timeout_cb);
+        s_espnow_timer =
+            xTimerCreate("espnow_to", pdMS_TO_TICKS(GAG_ESPNOW_LINK_TIMEOUT_MS), pdFALSE, NULL, espnow_timeout_cb);
     }
     if (!s_espnow_ping_timer)
     {
