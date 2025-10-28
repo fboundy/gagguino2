@@ -70,10 +70,6 @@ static char TOPIC_PUMP_POWER_STATE[128];
 static char TOPIC_PUMP_POWER_CMD[128];
 static char TOPIC_PRESSURE_SETPOINT_STATE[128];
 static char TOPIC_PRESSURE_SETPOINT_CMD[128];
-static char TOPIC_PUMP_MODE_STATE[128];
-static char TOPIC_PUMP_MODE_CMD[128];
-static char TOPIC_PRESSURE_SETPOINT_STATE[128];
-static char TOPIC_PRESSURE_SETPOINT_CMD[128];
 static char TOPIC_PUMP_PRESSURE_MODE_STATE[128];
 static char TOPIC_PUMP_PRESSURE_MODE_CMD[128];
 
@@ -114,8 +110,6 @@ static inline void build_topics(void)
              GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_STATE, sizeof TOPIC_PUMP_POWER_STATE, "%s/%s/pump_power/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_CMD, sizeof TOPIC_PUMP_POWER_CMD, "%s/%s/pump_power/set", GAG_TOPIC_ROOT, GAGGIA_ID);
-    snprintf(TOPIC_PUMP_MODE_STATE, sizeof TOPIC_PUMP_MODE_STATE, "%s/%s/pump_mode/state", GAG_TOPIC_ROOT, GAGGIA_ID);
-    snprintf(TOPIC_PUMP_MODE_CMD, sizeof TOPIC_PUMP_MODE_CMD, "%s/%s/pump_mode/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PRESSURE_SETPOINT_STATE, sizeof TOPIC_PRESSURE_SETPOINT_STATE, "%s/%s/pressure_setpoint/state", GAG_TOPIC_ROOT,
              GAGGIA_ID);
     snprintf(TOPIC_PRESSURE_SETPOINT_CMD, sizeof TOPIC_PRESSURE_SETPOINT_CMD, "%s/%s/pressure_setpoint/set", GAG_TOPIC_ROOT,
@@ -148,7 +142,6 @@ typedef struct
     float dTau;
     float pumpPower;
     float pressureSetpoint;
-    uint8_t pumpMode;
     bool pumpPressureMode;
 } ControlState;
 
@@ -186,7 +179,6 @@ static float s_pid_d = NAN;
 static float s_pid_guard = NAN;
 static float s_dtau = NAN;
 static float s_pump_power = NAN;
-static uint8_t s_pump_mode = ESPNOW_PUMP_MODE_NORMAL;
 static float s_pressure_setpoint = NAN;
 static bool s_pump_pressure_mode = false;
 static bool s_heater = false;
@@ -240,10 +232,9 @@ typedef enum
     CONTROL_BOOT_PID_GUARD = 1u << 7,
     CONTROL_BOOT_DTAU = 1u << 8,
     CONTROL_BOOT_PUMP_POWER = 1u << 9,
-    CONTROL_BOOT_PUMP_MODE = 1u << 10,
-    CONTROL_BOOT_PRESSURE_SETPOINT = 1u << 11,
-    CONTROL_BOOT_PUMP_PRESSURE_MODE = 1u << 12,
-    CONTROL_BOOT_ALL = (1u << 13) - 1,
+    CONTROL_BOOT_PRESSURE_SETPOINT = 1u << 10,
+    CONTROL_BOOT_PUMP_PRESSURE_MODE = 1u << 11,
+    CONTROL_BOOT_ALL = (1u << 12) - 1,
 } ControlBootstrapBit;
 
 static bool s_control_bootstrap_active = false;
@@ -254,7 +245,6 @@ static void control_bootstrap_reset(void);
 static void control_bootstrap_complete(void);
 static bool control_bootstrap_ignore(ControlBootstrapBit bit, bool retained, bool matches);
 static bool control_bootstrap_ignore_float(ControlBootstrapBit bit, bool retained, float value, float current, float tolerance);
-static bool control_bootstrap_ignore_u8(ControlBootstrapBit bit, bool retained, uint8_t value, uint8_t current);
 static bool control_bootstrap_ignore_bool(ControlBootstrapBit bit, bool retained, bool value, bool current);
 static uint8_t apply_steam_request(bool steam);
 
@@ -322,7 +312,6 @@ static void control_apply_defaults(void)
     s_pid_guard = s_control.pidGuard;
     s_dtau = s_control.dTau,
     s_pump_power = s_control.pumpPower;
-    s_pump_mode = s_control.pumpMode;
     s_pressure_setpoint = s_control.pressureSetpoint;
     s_pump_pressure_mode = s_control.pumpPressureMode;
     s_set_temp = s_control.brewSetpoint;
@@ -373,11 +362,6 @@ static bool control_bootstrap_ignore(ControlBootstrapBit bit, bool retained, boo
 static bool control_bootstrap_ignore_float(ControlBootstrapBit bit, bool retained, float value, float current, float tolerance)
 {
     return control_bootstrap_ignore(bit, retained, float_equals(value, current, tolerance));
-}
-
-static bool control_bootstrap_ignore_u8(ControlBootstrapBit bit, bool retained, uint8_t value, uint8_t current)
-{
-    return control_bootstrap_ignore(bit, retained, value == current);
 }
 
 static bool control_bootstrap_ignore_bool(ControlBootstrapBit bit, bool retained, bool value, bool current)
@@ -600,7 +584,6 @@ static void mqtt_subscribe_all(void)
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_DTAU_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_POWER_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_CMD, 1);
-    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_MODE_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_CMD, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_PRESSURE_MODE_CMD, 1);
     // State mirrors for retained bootstrap
@@ -621,7 +604,6 @@ static void mqtt_subscribe_all(void)
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_DTAU_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_POWER_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_STATE, 1);
-    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_MODE_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PRESSURE_SETPOINT_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PUMP_PRESSURE_MODE_STATE, 1);
 }
@@ -708,7 +690,6 @@ static bool s_heater_switch_discovery_published = false;
 static bool s_steam_switch_discovery_published = false;
 static bool s_brew_setpoint_discovery_published = false;
 static bool s_steam_setpoint_discovery_published = false;
-static bool s_pump_mode_discovery_published = false;
 static bool s_current_temp_discovery_published = false;
 static bool s_set_temp_discovery_published = false;
 static bool s_pressure_discovery_published = false;
@@ -957,8 +938,6 @@ static void publish_all_discovery(void)
     publish_number_discovery("Steam Setpoint", "steam_setpoint", TOPIC_STEAM_SET_CMD, TOPIC_STEAM_STATE,
                              STEAM_SETPOINT_MIN_C, STEAM_SETPOINT_MAX_C, 0.5f, "°C",
                              &s_steam_setpoint_discovery_published);
-    publish_number_discovery("Pump Mode", "pump_mode", TOPIC_PUMP_MODE_CMD, TOPIC_PUMP_MODE_STATE, PUMP_MODE_MIN,
-                             PUMP_MODE_MAX, 1.0f, "", &s_pump_mode_discovery_published);
     publish_sensor_discovery("Boiler Temperature", "current_temp", TOPIC_CURTEMP, "temperature", "measurement", "°C", NULL,
                              &s_current_temp_discovery_published);
     publish_sensor_discovery("Active Setpoint", "set_temp", TOPIC_SETTEMP, "temperature", "measurement", "°C", NULL,
@@ -986,7 +965,6 @@ static void reset_discovery_flags(void)
     s_steam_switch_discovery_published = false;
     s_brew_setpoint_discovery_published = false;
     s_steam_setpoint_discovery_published = false;
-    s_pump_mode_discovery_published = false;
     s_current_temp_discovery_published = false;
     s_set_temp_discovery_published = false;
     s_pressure_discovery_published = false;
@@ -1028,10 +1006,6 @@ static bool publish_control_state(void)
     publish_float(TOPIC_DTAU_STATE, s_control.dTau, 2);
     publish_float(TOPIC_PUMP_POWER_STATE, s_control.pumpPower, 1);
     publish_float(TOPIC_PRESSURE_SETPOINT_STATE, s_control.pressureSetpoint, 1);
-    char buf[16];
-    snprintf(buf, sizeof buf, "%u", (unsigned)s_control.pumpMode);
-    esp_mqtt_client_publish(s_mqtt, TOPIC_PUMP_MODE_STATE, buf, 0, 1, true);
-    publish_float(TOPIC_PRESSURE_SETPOINT_STATE, s_control.pressureSetpoint, 1);
     publish_bool_topic(TOPIC_PUMP_PRESSURE_MODE_STATE, s_control.pumpPressureMode);
     return true;
 }
@@ -1053,11 +1027,6 @@ static void log_control_bool(const char *name, bool value)
 static void log_control_float(const char *name, float value, uint8_t precision)
 {
     ESP_LOGI(TAG_MQTT, "MQTT control %s -> %.*f", name, precision, (double)value);
-}
-
-static void log_control_u8(const char *name, uint8_t value)
-{
-    ESP_LOGI(TAG_MQTT, "MQTT control %s -> %u", name, (unsigned)value);
 }
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
@@ -1280,17 +1249,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             s_control.pressureSetpoint = v;
             s_pressure_setpoint = s_control.pressureSetpoint;
         }
-        else if (strcmp(topic, TOPIC_PUMP_MODE_STATE) == 0)
-        {
-            uint8_t v = (uint8_t)atoi(payload);
-            if (control_bootstrap_ignore_u8(CONTROL_BOOT_PUMP_MODE, event->retain, v, s_control.pumpMode))
-            {
-                ESP_LOGI(TAG_MQTT, "Bootstrap skip: pump_mode -> %s", payload);
-                break;
-            }
-            s_control.pumpMode = v;
-            s_pump_mode = s_control.pumpMode;
-        }
         else if (strcmp(topic, TOPIC_PRESSURE_SETPOINT_STATE) == 0)
         {
             float v = strtof(payload, NULL);
@@ -1448,28 +1406,6 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                 s_control.pumpPower = v;
                 s_pump_power = v;
                 log_control_float("pump_power", v, 1);
-                handle_control_change();
-            }
-        }
-        else if (strcmp(topic, TOPIC_PRESSURE_SETPOINT_CMD) == 0)
-        {
-            float v = strtof(payload, NULL);
-            control_bootstrap_complete();
-            if (!float_equals(v, s_control.pressureSetpoint, CONTROL_PRESSURE_TOLERANCE))
-            {
-                s_control.pressureSetpoint = v;
-                log_control_float("pressure_setpoint", v, 1);
-                handle_control_change();
-            }
-        }
-        else if (strcmp(topic, TOPIC_PUMP_MODE_CMD) == 0)
-        {
-            uint8_t v = (uint8_t)atoi(payload);
-            control_bootstrap_complete();
-            if (v != s_control.pumpMode)
-            {
-                s_control.pumpMode = v;
-                log_control_u8("pump_mode", v);
                 handle_control_change();
             }
         }
@@ -1705,8 +1641,6 @@ static void send_control_packet(void)
     EspNowControlPacket pkt = {
         .type = ESPNOW_CONTROL_PACKET,
         .flags = 0,
-        .pumpMode = s_control.pumpMode,
-        .reserved = 0,
         .revision = revision,
         .brewSetpointC = s_control.brewSetpoint,
         .steamSetpointC = s_control.steamSetpoint,
@@ -1735,12 +1669,12 @@ static void send_control_packet(void)
         s_control_dirty = false;
         ESP_LOGI(TAG_ESPNOW,
                  "Control sent rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f pidP=%.2f pidI=%.2f "
-                 "pidGuard=%.2f pidD=%.2f dTau=%0.2f pump=%.1f mode=%u pressSet=%.1f pressMode=%d",
+                 "pidGuard=%.2f pidD=%.2f dTau=%0.2f pump=%.1f pressSet=%.1f pressMode=%d",
                  (unsigned)revision, s_control.heater, s_control.steam,
                  (double)s_control.brewSetpoint, (double)s_control.steamSetpoint,
                  (double)s_control.pidP, (double)s_control.pidI, (double)s_control.pidGuard,
                  (double)s_control.pidD, (double)s_control.dTau, (double)s_control.pumpPower,
-                 (unsigned)s_control.pumpMode, (double)s_control.pressureSetpoint,
+                 (double)s_control.pressureSetpoint,
                  s_control.pumpPressureMode ? 1 : 0);
     }
 }

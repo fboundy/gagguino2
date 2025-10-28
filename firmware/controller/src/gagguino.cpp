@@ -251,7 +251,6 @@ static uint8_t g_displayMac[ESP_NOW_ETH_ALEN] = {0};
 static bool g_haveDisplayPeer = false;
 static uint32_t g_lastControlRevision = 0;
 static unsigned long g_lastDisplayAckMs = 0;
-static EspNowPumpMode pumpMode = ESPNOW_PUMP_MODE_NORMAL;
 static bool g_espnowCoreInit = false;
 static bool g_espnowBroadcastPeerAdded = false;
 static esp_now_peer_info_t g_broadcastPeerInfo{};
@@ -629,7 +628,6 @@ static void revertToSafeDefaults() {
     pumpPressurePidInitialized = false;
     pumpPressureISum = 0.0f;
     pumpPressurePvFilt = 0.0f;
-    pumpMode = ESPNOW_PUMP_MODE_NORMAL;
     steamDispFlag = false;
     steamResetPending = false;
     steamFlag = steamDispFlag || steamHwFlag;
@@ -671,11 +669,11 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
 
     LOG("ESP-NOW: Control received rev %u: heater=%d steam=%d brew=%.1f steamSet=%.1f "
         "pidP=%.2f pidI=%.2f pidGuard=%.2f "
-        "pidD=%.2f pump=%.1f mode=%u pressSet=%.1f pressMode=%d",
+        "pidD=%.2f pump=%.1f pressSet=%.1f pressMode=%d",
         static_cast<unsigned>(pkt.revision), (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0 ? 1 : 0,
         (pkt.flags & ESPNOW_CONTROL_FLAG_STEAM) != 0 ? 1 : 0, pkt.brewSetpointC, pkt.steamSetpointC,
         pkt.pidP, pkt.pidI, pkt.pidGuard, pkt.pidD, pkt.dTau, pkt.pumpPowerPercent,
-        static_cast<unsigned>(pkt.pumpMode), pkt.pressureSetpointBar,
+        pkt.pressureSetpointBar,
         (pkt.flags & ESPNOW_CONTROL_FLAG_PUMP_PRESSURE) ? 1 : 0);
 
     bool hv = (pkt.flags & ESPNOW_CONTROL_FLAG_HEATER) != 0;
@@ -742,8 +740,6 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     if (fabsf(newPressureSetpoint - pressureSetpointBar) > 0.1f) {
         pressureSetpointBar = newPressureSetpoint;
     }
-
-    pumpMode = static_cast<EspNowPumpMode>(pkt.pumpMode);
 
     float newPressureSet =
         clampf(pkt.pressureSetpointBar, PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX);
