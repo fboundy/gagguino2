@@ -35,7 +35,7 @@
 
 #include <cstdarg>
 
-#include "espnow_packet.h"
+#include "espnow_protocol.h"
 #include "secrets.h"  // WIFI_*
 #include "version.h"
 #define STARTUP_WAIT 1000
@@ -101,7 +101,7 @@ constexpr float RREF = 430.0f, RNOMINAL = 100.0f;
 // Ki: 0.3-0.5 [out/(degC*s)] -> start at 0.35
 // Kd: 50-70 [out*s/degC] -> start at 60
 // guard: +/-8-+/-12% integral clamp on 0-100% heater
-constexpr float P_GAIN_TEMP = 8.0f, I_GAIN_TEMP = 0.60f, D_GAIN_TEMP = 10.5f, DTAU_TEMP = 0.8f,
+constexpr float P_GAIN_TEMP = 8.0f, I_GAIN_TEMP = 0.40f, D_GAIN_TEMP = 17.0, DTAU_TEMP = 0.8f,
                 WINDUP_GUARD_TEMP = 25.0f;
 
 // Derivative filter time constant (seconds), exposed to HA
@@ -126,9 +126,16 @@ constexpr float PUMP_POWER_DEFAULT = 95.0f;
 constexpr float PRESSURE_SETPOINT_DEFAULT = 9.0f;
 constexpr float PRESSURE_SETPOINT_MIN = 0.0f;
 constexpr float PRESSURE_SETPOINT_MAX = 12.0f;
-constexpr float PRESSURE_LIMIT_TOL = 0.1f;
-constexpr float PUMP_PRESSURE_RAMP_RATE = 20.0f;    // % per second when ramping up in pressure mode
-constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;    // Max dt (s) considered for ramp calculations
+constexpr float PUMP_PRESSURE_RAMP_RATE = 20.0f;   // % per second when ramping up in pressure mode
+constexpr float PUMP_PRESSURE_RAMP_MAX_DT = 0.2f;  // Max dt (s) considered for ramp calculations
+constexpr float PUMP_PRESSURE_INITIAL_CLAMP = 40.0f;  // Max % for first second when pump engages
+constexpr unsigned long PUMP_PRESSURE_CLAMP_DURATION_MS = 1000;
+constexpr float PUMP_PRESSURE_KP = 5.0f;
+constexpr float PUMP_PRESSURE_KI = 1.0f;
+constexpr float PUMP_PRESSURE_KD = 10.0f;
+constexpr float PUMP_PRESSURE_I_GUARD = 25.0f;
+constexpr float PUMP_PRESSURE_OUTPUT_SCALE = 0.6f;
+constexpr float PUMP_PRESSURE_OUTPUT_OFFSET = 35.0f;
 
 const bool debugPrint = true;
 }  // namespace
@@ -191,14 +198,21 @@ float iStateTemp = 0.0f, heatPower = 0.0f;
 // Live-tunable PID parameters (default to constexprs above)
 float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
       dTauTemp = DTAU_TEMP, windupGuardTemp = WINDUP_GUARD_TEMP;
+float pidPTerm = 0.0f, pidITerm = 0.0f, pidDTerm = 0.0f;
 int heatCycles = 0;
 bool heaterState = false;
 bool heaterEnabled = true;             // HA switch default ON at boot
-float pumpPower = PUMP_POWER_DEFAULT;  // Default pump power (%), overridden by display
+float pumpPowerCommand = PUMP_POWER_DEFAULT;  // Requested pump power (%), overridden by display
+float pumpPower = PUMP_POWER_DEFAULT;         // Last applied pump power (%) reported to sensors
 float pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;  // Target brew pressure in bar
 bool pumpPressureModeEnabled = false;  // When true limit pump power to pressure setpoint
 float lastPumpApplied = 0.0f;          // Actual power sent to dimmer after ramp/limits
-unsigned long lastPumpApplyMs = 0;     // Timestamp of last pump power application
+float lastPumpRequested = 0.0f;        // Last requested pump power
+unsigned long pumpPressureClampUntilMs = 0;
+unsigned long lastPumpApplyMs = 0;       // Timestamp of last pump power application
+float pumpPressurePvFilt = 0.0f;
+float pumpPressureISum = 0.0f;
+bool pumpPressurePidInitialized = false;
 
 // Pressure
 int rawPress = 0;
@@ -286,7 +300,11 @@ static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
     float err = sp - pv;
 
     // 2) Integral
-    iSum += err * dt;
+    if (err > 0) {
+        iSum += err * dt;
+    } else {
+        iSum = 0;
+    }
 
     // 3) Derivative on measurement with 1st-order filter (dirty derivative)
     //    LPF on pv: pvFilt' = (pv - pvFilt)/dTau
@@ -315,6 +333,9 @@ static float calcPID(float Kp, float Ki, float Kd, float sp, float pv,
         if (iTerm < -guard) iTerm = -guard;
         u = pTerm + iTerm + dTerm;
     }
+    pidPTerm = pTerm;
+    pidITerm = iTerm;
+    pidDTerm = dTerm;
     return u;
 }
 
@@ -356,6 +377,9 @@ static void updateTempPID() {
         // Pause PID calculations when heater is disabled
         heatPower = 0.0f;
         heatCycles = PWM_CYCLE;
+        pidPTerm = 0.0f;
+        pidITerm = 0.0f;
+        pidDTerm = 0.0f;
         return;
     }
 
@@ -369,12 +393,11 @@ static void updateTempPID() {
     if (currentTemp > setTemp) {
         effectivePGain = 0.0f;
         effectiveIGain = 0.0f;
-        effectiveDGain = 0.0f;
+        // effectiveDGain = 0.0f;
     }
 
-    heatPower =
-        calcPID(effectivePGain, effectiveIGain, effectiveDGain, setTemp, currentTemp, dt,
-                 pvFiltTemp, iStateTemp, windupGuardTemp, dTauTemp);
+    heatPower = calcPID(effectivePGain, effectiveIGain, effectiveDGain, setTemp, currentTemp, dt,
+                        pvFiltTemp, iStateTemp, windupGuardTemp, dTauTemp);
 
     if (heatPower > 100.0f) heatPower = 100.0f;
     if (heatPower < 0.0f) heatPower = 0.0f;
@@ -389,18 +412,27 @@ static void updateTempPWM() {
     if (!heaterEnabled) {
         digitalWrite(HEAT_PIN, LOW);
         heaterState = false;
-        return;
-    }
-    if (currentTime - lastPwmTime >= (unsigned long)heatCycles) {
-        digitalWrite(HEAT_PIN, HIGH);
-        heaterState = true;
-    }
-    if (currentTime - lastPwmTime >= PWM_CYCLE) {
-        digitalWrite(HEAT_PIN, LOW);
-        heaterState = false;
         lastPwmTime = currentTime;
         nLoop = 0;
+        return;
     }
+    unsigned long elapsed = currentTime - lastPwmTime;
+    if (elapsed >= PWM_CYCLE) {
+        unsigned long cyclesElapsed = elapsed / PWM_CYCLE;
+        lastPwmTime += cyclesElapsed * PWM_CYCLE;
+        elapsed = currentTime - lastPwmTime;
+        nLoop = 0;
+    }
+
+    float clampedPower = heatPower;
+    if (clampedPower < 0.0f) clampedPower = 0.0f;
+    if (clampedPower > 100.0f) clampedPower = 100.0f;
+    unsigned long onWindow = (unsigned long)(clampedPower * PWM_CYCLE / 100.0f);
+    if (onWindow > PWM_CYCLE) onWindow = PWM_CYCLE;
+
+    bool shouldHeat = elapsed < onWindow && onWindow > 0;
+    digitalWrite(HEAT_PIN, shouldHeat ? HIGH : LOW);
+    heaterState = shouldHeat;
     nLoop++;
 }
 
@@ -411,38 +443,60 @@ static inline float clampf(float v, float lo, float hi) {
 }
 
 /**
- * @brief Apply PWM to the pump triac dimmer based on `pumpPower`.
+ * @brief Apply PWM to the pump triac dimmer based on the requested pump power.
  */
 static void applyPumpPower() {
-    float requested = clampf(pumpPower, 0.0f, 100.0f);
+    float requested = clampf(pumpPowerCommand, 0.0f, 100.0f);
     float applied = requested;
+
+    unsigned long nowMs = millis();
+    float dtSec = 0.0f;
+
+    if (!pumpPressureModeEnabled) {
+        pumpPressureClampUntilMs = 0;
+        pumpPressurePidInitialized = false;
+        pumpPressureISum = 0.0f;
+    } else {
+        if (requested > 0.0f && lastPumpRequested <= 0.0f) {
+            pumpPressureClampUntilMs = nowMs + PUMP_PRESSURE_CLAMP_DURATION_MS;
+        } else if (requested <= 0.0f) {
+            pumpPressureClampUntilMs = 0;
+            pumpPressurePidInitialized = false;
+            pumpPressureISum = 0.0f;
+        }
+        if (lastPumpApplyMs == 0) {
+            dtSec = PRESS_CYCLE / 1000.0f;
+        } else {
+            dtSec = (nowMs - lastPumpApplyMs) / 1000.0f;
+        }
+        dtSec = clampf(dtSec, 0.0f, PUMP_PRESSURE_RAMP_MAX_DT);
+    }
 
     if (pumpPressureModeEnabled) {
         float limit = clampf(pressureSetpointBar, PRESSURE_SETPOINT_MIN, PRESSURE_SETPOINT_MAX);
-        float sensed = lastPress;
-        if (limit <= 0.0f) {
-            applied = 0.0f;
-        } else if (sensed > (limit + PRESSURE_LIMIT_TOL)) {
-            if (sensed > 0.1f) {
-                float ratio = (limit + PRESSURE_LIMIT_TOL) / sensed;
-                ratio = clampf(ratio, 0.0f, 1.0f);
-                applied = requested * ratio;
-            } else {
-                applied = 0.0f;
-            }
+        float sensed = pressNow;
+        if (!pumpPressurePidInitialized) {
+            pumpPressurePvFilt = sensed;
+            pumpPressureISum = 0.0f;
+            pumpPressurePidInitialized = true;
         }
-    }
 
-    unsigned long nowMs = millis();
-    if (pumpPressureModeEnabled) {
-        float dt = 0.0f;
-        if (lastPumpApplyMs == 0) {
-            dt = PRESS_CYCLE / 1000.0f;  // assume at least one pressure cycle
+        if (limit <= 0.0f || requested <= 0.0f) {
+            applied = 0.0f;
+            pumpPressureISum = 0.0f;
+            pumpPressurePidInitialized = false;
+        } else if (dtSec > 0.0f) {
+            float pidOut =
+                calcPID(PUMP_PRESSURE_KP, PUMP_PRESSURE_KI, PUMP_PRESSURE_KD, limit, sensed, dtSec,
+                        pumpPressurePvFilt, pumpPressureISum, PUMP_PRESSURE_I_GUARD);
+            if (pidOut > 100.0f) pidOut = 100.0f;
+            if (pidOut < 0.0f) pidOut = 0.0f;
+            applied = pidOut * PUMP_PRESSURE_OUTPUT_SCALE + PUMP_PRESSURE_OUTPUT_OFFSET;
         } else {
-            dt = (nowMs - lastPumpApplyMs) / 1000.0f;
+            applied = lastPumpApplied;
         }
-        dt = clampf(dt, 0.0f, PUMP_PRESSURE_RAMP_MAX_DT);
-        float maxIncrease = PUMP_PRESSURE_RAMP_RATE * dt;
+
+        float maxIncrease = PUMP_PRESSURE_RAMP_RATE * dtSec;
         float allowed = lastPumpApplied + maxIncrease;
         if (applied > allowed) {
             applied = allowed;
@@ -451,8 +505,21 @@ static void applyPumpPower() {
 
     applied = clampf(applied, 0.0f, 100.0f);
 
+    if (pumpPressureModeEnabled && pumpPressureClampUntilMs != 0) {
+        if (nowMs < pumpPressureClampUntilMs) {
+            if (applied > PUMP_PRESSURE_INITIAL_CLAMP) {
+                applied = PUMP_PRESSURE_INITIAL_CLAMP;
+            }
+        } else {
+            pumpPressureClampUntilMs = 0;
+        }
+    }
+
     lastPumpApplyMs = nowMs;
     lastPumpApplied = applied;
+    lastPumpRequested = requested;
+    // Surface the PID-derived power when pressure control is active so the HA sensor follows the actual output.
+    pumpPower = pumpPressureModeEnabled ? applied : requested;
 
     int percent = static_cast<int>(lroundf(applied));
     pumpDimmer.setPower(percent);
@@ -553,10 +620,13 @@ static void revertToSafeDefaults() {
         heaterEnabled = true;
         LOG("ESP-NOW: Heater default -> ON");
     }
-    pumpPower = PUMP_POWER_DEFAULT;
+    pumpPowerCommand = PUMP_POWER_DEFAULT;
     pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;
     pumpPressureModeEnabled = false;
     applyPumpPower();
+    pumpPressurePidInitialized = false;
+    pumpPressureISum = 0.0f;
+    pumpPressurePvFilt = 0.0f;
     pumpMode = ESPNOW_PUMP_MODE_NORMAL;
     steamDispFlag = false;
     steamResetPending = false;
@@ -578,6 +648,13 @@ static void sendEspNowPacket() {
     pkt.brewSetpointC = brewSetpoint;
     pkt.pressureSetpointBar = pressureSetpointBar;
     pkt.pumpPressureMode = pumpPressureModeEnabled ? 1 : 0;
+    pkt.pumpPowerPercent = pumpPower;
+    pkt.pidPTerm = pidPTerm;
+    pkt.pidITerm = pidITerm;
+    pkt.pidDTerm = pidDTerm;
+    pkt.zcCount = zcCount;
+    pkt.pulseCount = pulseCount;
+    pkt.acCount = static_cast<uint32_t>(acCount);
     const uint8_t* dest = g_haveDisplayPeer ? g_displayMac : nullptr;
     esp_err_t err = esp_now_send(dest, reinterpret_cast<uint8_t*>(&pkt), sizeof(pkt));
     if (err != ESP_OK) {
@@ -654,8 +731,8 @@ static void applyControlPacket(const EspNowControlPacket& pkt, const uint8_t* ma
     }
 
     float newPump = clampf(pkt.pumpPowerPercent, 0.0f, 100.0f);
-    if (fabsf(newPump - pumpPower) > 0.1f) {
-        pumpPower = newPump;
+    if (fabsf(newPump - pumpPowerCommand) > 0.1f) {
+        pumpPowerCommand = newPump;
         applyPumpPower();
     }
 

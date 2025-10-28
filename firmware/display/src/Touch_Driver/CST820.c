@@ -8,6 +8,10 @@
 #define TOUCH_POSITION (0x03)
 
 static const char *TAG = "cst820";
+static inline bool is_transient_i2c_err(esp_err_t err)
+{
+    return err == ESP_ERR_TIMEOUT || err == ESP_FAIL;
+}
 
 static esp_err_t read_data(esp_lcd_touch_handle_t tp);
 static bool get_xy(esp_lcd_touch_handle_t tp, uint16_t *x, uint16_t *y, uint16_t *strength, uint8_t *point_num, uint8_t max_point_num);
@@ -95,12 +99,29 @@ static esp_err_t read_data(esp_lcd_touch_handle_t tp)
     assert(tp != NULL);
 
     uint8_t write_buf = 0x01;
-    i2c_master_write_to_device(0, DATA_START_REG, &write_buf, 1, 1000 / portTICK_PERIOD_MS);
+    err = I2C_Write(ESP_LCD_TOUCH_IO_I2C_CST820_ADDRESS, DATA_START_REG, &write_buf, 1);
+    if (err != ESP_OK)
+    {
+        if (is_transient_i2c_err(err))
+        {
+            return ESP_OK;
+        }
+        ESP_LOGE(TAG, "I2C write failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
     touch_cst820_i2c_write(tp, 0xFE, &close, 1);
 
     err = i2c_read_bytes(tp, TOUCH_NUM, buf, 1);
-    ESP_RETURN_ON_ERROR(err, TAG, "I2C read error!");
+    if (err != ESP_OK)
+    {
+        if (is_transient_i2c_err(err))
+        {
+            return ESP_OK;
+        }
+        ESP_LOGE(TAG, "I2C read failed: %s", esp_err_to_name(err));
+        return err;
+    }
     touch_cst820_i2c_write(tp, TOUCH_POSITION, &Over, 1);
 
     if ((buf[0] & 0x0F) == 0x00)
@@ -119,7 +140,15 @@ static esp_err_t read_data(esp_lcd_touch_handle_t tp)
 
         /* Read all points */
         err = i2c_read_bytes(tp, TOUCH_POSITION, &buf[0], touch_cnt * 6);
-        ESP_RETURN_ON_ERROR(err, TAG, "I2C read error!");
+        if (err != ESP_OK)
+        {
+            if (is_transient_i2c_err(err))
+            {
+                return ESP_OK;
+            }
+            ESP_LOGE(TAG, "I2C read failed: %s", esp_err_to_name(err));
+            return err;
+        }
         touch_cst820_i2c_write(tp, TOUCH_POSITION, &Over, 1);
 
         /* Clear all */
@@ -212,18 +241,14 @@ static esp_err_t i2c_read_bytes(esp_lcd_touch_handle_t tp, uint16_t reg, uint8_t
     assert(tp != NULL);
     assert(data != NULL);
 
-    /* Read data */
-    return esp_lcd_panel_io_rx_param(tp->io, reg, data, len);
+    return I2C_Read(ESP_LCD_TOUCH_IO_I2C_CST820_ADDRESS, (uint8_t)reg, data, len);
 }
 
 static esp_err_t touch_cst820_i2c_write(esp_lcd_touch_handle_t tp, uint16_t reg, uint8_t *data, uint8_t len)
 {
     assert(tp != NULL);
 
-    // *INDENT-OFF*
-    /* Write data */
-    return esp_lcd_panel_io_tx_param(tp->io, reg, data, len);
-    // *INDENT-ON*
+    return I2C_Write(ESP_LCD_TOUCH_IO_I2C_CST820_ADDRESS, (uint8_t)reg, data, len);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

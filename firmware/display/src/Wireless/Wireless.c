@@ -46,6 +46,8 @@ static char TOPIC_SHOTVOL[128];
 static char TOPIC_SHOT[128];
 static char TOPIC_SHOT_TIME[128];
 static char TOPIC_ZC_COUNT_STATE[128];
+static char TOPIC_AC_COUNT_STATE[128];
+static char TOPIC_PULSE_COUNT_STATE[128];
 static char TOPIC_BREW_STATE[128];
 static char TOPIC_BREW_SET_CMD[128];
 static char TOPIC_STEAM_STATE[128];
@@ -60,6 +62,9 @@ static char TOPIC_PIDG_STATE[128];
 static char TOPIC_PIDG_CMD[128];
 static char TOPIC_DTAU_STATE[128];
 static char TOPIC_DTAU_CMD[128];
+static char TOPIC_PID_P_TERM_STATE[128];
+static char TOPIC_PID_I_TERM_STATE[128];
+static char TOPIC_PID_D_TERM_STATE[128];
 
 static char TOPIC_PUMP_POWER_STATE[128];
 static char TOPIC_PUMP_POWER_CMD[128];
@@ -85,6 +90,8 @@ static inline void build_topics(void)
     snprintf(TOPIC_SHOT, sizeof TOPIC_SHOT, "%s/%s/shot/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_SHOT_TIME, sizeof TOPIC_SHOT_TIME, "%s/%s/shot_time/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_ZC_COUNT_STATE, sizeof TOPIC_ZC_COUNT_STATE, "%s/%s/zc_count/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_AC_COUNT_STATE, sizeof TOPIC_AC_COUNT_STATE, "%s/%s/ac_count/state", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PULSE_COUNT_STATE, sizeof TOPIC_PULSE_COUNT_STATE, "%s/%s/pulse_count/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_BREW_STATE, sizeof TOPIC_BREW_STATE, "%s/%s/brew_setpoint/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_BREW_SET_CMD, sizeof TOPIC_BREW_SET_CMD, "%s/%s/brew_setpoint/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_STEAM_STATE, sizeof TOPIC_STEAM_STATE, "%s/%s/steam_setpoint/state", GAG_TOPIC_ROOT, GAGGIA_ID);
@@ -99,6 +106,12 @@ static inline void build_topics(void)
     snprintf(TOPIC_PIDG_CMD, sizeof TOPIC_PIDG_CMD, "%s/%s/pid_guard/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_DTAU_STATE, sizeof TOPIC_DTAU_STATE, "%s/%s/pid_dtau/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_DTAU_CMD, sizeof TOPIC_DTAU_CMD, "%s/%s/pid_dtau/set", GAG_TOPIC_ROOT, GAGGIA_ID);
+    snprintf(TOPIC_PID_P_TERM_STATE, sizeof TOPIC_PID_P_TERM_STATE, "%s/%s/pid_p_term/state", GAG_TOPIC_ROOT,
+             GAGGIA_ID);
+    snprintf(TOPIC_PID_I_TERM_STATE, sizeof TOPIC_PID_I_TERM_STATE, "%s/%s/pid_i_term/state", GAG_TOPIC_ROOT,
+             GAGGIA_ID);
+    snprintf(TOPIC_PID_D_TERM_STATE, sizeof TOPIC_PID_D_TERM_STATE, "%s/%s/pid_d_term/state", GAG_TOPIC_ROOT,
+             GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_STATE, sizeof TOPIC_PUMP_POWER_STATE, "%s/%s/pump_power/state", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_POWER_CMD, sizeof TOPIC_PUMP_POWER_CMD, "%s/%s/pump_power/set", GAG_TOPIC_ROOT, GAGGIA_ID);
     snprintf(TOPIC_PUMP_MODE_STATE, sizeof TOPIC_PUMP_MODE_STATE, "%s/%s/pump_mode/state", GAG_TOPIC_ROOT, GAGGIA_ID);
@@ -145,8 +158,8 @@ static const ControlState CONTROL_DEFAULTS = {
     .brewSetpoint = 92.0f,
     .steamSetpoint = 152.0f,
     .pidP = 8.0f,
-    .pidI = 0.6,
-    .pidD = 10.0f,
+    .pidI = 0.4,
+    .pidD = 17.0f,
     .pidGuard = 25.0f,
     .dTau = 0.8f,
     .pumpPower = 95.0f,
@@ -164,6 +177,8 @@ static float s_shot_time = 0.0f;
 static float s_shot_volume = 0.0f;
 static float s_brew_setpoint = NAN;
 static uint32_t s_zc_count = 0;
+static uint32_t s_ac_count = 0;
+static uint32_t s_pulse_count = 0;
 static float s_steam_setpoint = NAN;
 static float s_pid_p = NAN;
 static float s_pid_i = NAN;
@@ -192,12 +207,20 @@ static char s_pub_shot_time_legacy[32];
 static bool s_pub_shot_time_legacy_valid = false;
 static char s_pub_shot_time[32];
 static bool s_pub_shot_time_valid = false;
+static char s_pub_zc_count[16];
+static bool s_pub_zc_count_valid = false;
+static char s_pub_ac_count[16];
+static bool s_pub_ac_count_valid = false;
+static char s_pub_pulse_count[16];
+static bool s_pub_pulse_count_valid = false;
 static char s_pub_brew_setpoint[32];
 static bool s_pub_brew_setpoint_valid = false;
 static char s_pub_steam_setpoint[32];
 static bool s_pub_steam_setpoint_valid = false;
 static char s_pub_pressure_setpoint_payload[32];
 static bool s_pub_pressure_setpoint_valid = false;
+static char s_pub_pump_power[32];
+static bool s_pub_pump_power_valid = false;
 static bool s_pub_heater = false;
 static bool s_pub_heater_valid = false;
 static bool s_pub_steam = false;
@@ -253,7 +276,6 @@ static bool s_use_espnow = false;
 static time_t s_espnow_last_rx = 0;
 static uint32_t s_control_revision = 0;
 static bool s_control_dirty = false;
-static uint8_t s_last_espnow_channel = 0;
 
 static esp_now_peer_info_t s_broadcast_peer = {0};
 static esp_now_peer_info_t s_controller_peer = {0};
@@ -272,6 +294,12 @@ static const uint8_t s_broadcast_addr[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xF
 #define CONTROL_PRESSURE_TOLERANCE 0.05f
 #define CONTROL_PRESSURE_MIN 0.0f
 #define CONTROL_PRESSURE_MAX 12.0f
+#define BREW_SETPOINT_MIN_C 87.0f
+#define BREW_SETPOINT_MAX_C 97.0f
+#define STEAM_SETPOINT_MIN_C 145.0f
+#define STEAM_SETPOINT_MAX_C 155.0f
+#define PUMP_MODE_MIN 0.0f
+#define PUMP_MODE_MAX 2.0f
 #define STEAM_STATE_CHANGED_FLAG 0x01u
 #define HEATER_STATE_CHANGED_FLAG 0x02u
 
@@ -490,19 +518,20 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         {
             s_sta_channel = event->channel;
         }
-        s_last_espnow_channel = s_sta_channel;
         ensure_espnow_started();
         break;
     }
     case WIFI_EVENT_STA_DISCONNECTED:
-        ESP_LOGW(TAG_WIFI, "STA disconnected");
+    {
+        wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)data;
+        ESP_LOGW(TAG_WIFI, "STA disconnected (reason=%u)", (unsigned)event->reason);
         s_wifi_ready = false;
         s_sta_channel_valid = false;
-        s_last_espnow_channel = 0;
         stop_mdns_service();
         stop_espnow();
         esp_wifi_connect();
         break;
+    }
     default:
         break;
     }
@@ -583,6 +612,8 @@ static void mqtt_subscribe_all(void)
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_BREW_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_STEAM_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_ZC_COUNT_STATE, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_PULSE_COUNT_STATE, 1);
+    esp_mqtt_client_subscribe(s_mqtt, TOPIC_AC_COUNT_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDP_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDI_STATE, 1);
     esp_mqtt_client_subscribe(s_mqtt, TOPIC_PIDD_STATE, 1);
@@ -626,6 +657,21 @@ static void publish_float_if_changed(const char *topic, float value, uint8_t dec
     *valid = true;
 }
 
+static void publish_u32_if_changed(const char *topic, uint32_t value, char *last_payload, size_t payload_len,
+                                   bool *valid)
+{
+    if (!s_mqtt)
+        return;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%u", (unsigned)value);
+    if (*valid && strncmp(buf, last_payload, payload_len) == 0)
+        return;
+    esp_mqtt_client_publish(s_mqtt, topic, buf, 0, 1, true);
+    strncpy(last_payload, buf, payload_len);
+    last_payload[payload_len - 1] = '\0';
+    *valid = true;
+}
+
 static void publish_bool_topic_if_changed(const char *topic, bool value, bool *last, bool *valid)
 {
     if (!s_mqtt)
@@ -645,15 +691,33 @@ static void reset_sensor_publish_cache(void)
     s_pub_shot_volume_valid = false;
     s_pub_shot_time_legacy_valid = false;
     s_pub_shot_time_valid = false;
+    s_pub_zc_count_valid = false;
+    s_pub_ac_count_valid = false;
+    s_pub_pulse_count_valid = false;
     s_pub_brew_setpoint_valid = false;
     s_pub_steam_setpoint_valid = false;
     s_pub_pressure_setpoint_valid = false;
+    s_pub_pump_power_valid = false;
     s_pub_heater_valid = false;
     s_pub_steam_valid = false;
     s_pub_pump_pressure_mode_valid = false;
 }
 
 #if defined(MQTT_STATUS) && defined(GAGGIA_ID)
+static bool s_heater_switch_discovery_published = false;
+static bool s_steam_switch_discovery_published = false;
+static bool s_brew_setpoint_discovery_published = false;
+static bool s_steam_setpoint_discovery_published = false;
+static bool s_pump_mode_discovery_published = false;
+static bool s_current_temp_discovery_published = false;
+static bool s_set_temp_discovery_published = false;
+static bool s_pressure_discovery_published = false;
+static bool s_shot_volume_discovery_published = false;
+static bool s_shot_time_discovery_published = false;
+static bool s_shot_legacy_discovery_published = false;
+static bool s_zc_count_discovery_published = false;
+static bool s_ac_count_discovery_published = false;
+static bool s_pulse_count_discovery_published = false;
 static bool s_pid_p_discovery_published = false;
 static bool s_pid_i_discovery_published = false;
 static bool s_pid_d_discovery_published = false;
@@ -662,10 +726,13 @@ static bool s_dtau_discovery_published = false;
 static bool s_pressure_setpoint_discovery_published = false;
 static bool s_pump_power_discovery_published = false;
 static bool s_pump_pressure_mode_discovery_published = false;
+static bool s_pid_p_term_discovery_published = false;
+static bool s_pid_i_term_discovery_published = false;
+static bool s_pid_d_term_discovery_published = false;
 
-static bool publish_pid_number_discovery(const char *name, const char *suffix, const char *cmd_topic,
-                                         const char *state_topic, float min, float max, float step,
-                                         bool *published_flag)
+static bool publish_number_discovery(const char *name, const char *suffix, const char *cmd_topic,
+                                     const char *state_topic, float min, float max, float step,
+                                     const char *unit, bool *published_flag)
 {
     if (!s_mqtt || *published_flag)
         return false;
@@ -681,14 +748,30 @@ static bool publish_pid_number_discovery(const char *name, const char *suffix, c
 
     char payload[512];
     int written = snprintf(payload, sizeof payload,
-                           "{\"name\":\"%s\",\"uniq_id\":\"%s_%s\","
-                           "\"cmd_t\":\"%s\",\"stat_t\":\"%s\",\"min\":%.3g,\"max\":%.3g,"
-                           "\"step\":%.3g,\"mode\":\"auto\",\"avty_t\":\"%s\","
-                           "\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\","
-                           "\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\","
-                           "\"manufacturer\":\"Custom\",\"model\":\"Gagguino\",\"sw_version\":\"%s\"}}",
-                           name, dev_id, suffix, cmd_topic, state_topic, min, max, step, availability, dev_id, version);
+                           "{\"name\":\"%s\",\"uniq_id\":\"%s_%s\",\"cmd_t\":\"%s\",\"stat_t\":\"%s\","\
+                           "\"min\":%.3g,\"max\":%.3g,\"step\":%.3g,\"mode\":\"auto\",",
+                           name, dev_id, suffix, cmd_topic, state_topic, min, max, step);
+    if (written <= 0 || written >= (int)sizeof(payload))
+    {
+        ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+        return false;
+    }
 
+    if (unit && unit[0])
+    {
+        written += snprintf(payload + written, sizeof(payload) - written, "\"unit_of_meas\":\"%s\",", unit);
+        if (written <= 0 || written >= (int)sizeof(payload))
+        {
+            ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+            return false;
+        }
+    }
+
+    written += snprintf(payload + written, sizeof(payload) - written,
+                        "\"avty_t\":\"%s\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\","\
+                        "\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\",\"manufacturer\":\"Custom\","\
+                        "\"model\":\"Gagguino\",\"sw_version\":\"%s\"}}",
+                        availability, dev_id, version);
     if (written > 0 && written < (int)sizeof(payload))
     {
         int res = esp_mqtt_client_publish(s_mqtt, topic, payload, 0, 1, true);
@@ -696,6 +779,93 @@ static bool publish_pid_number_discovery(const char *name, const char *suffix, c
         {
             *published_flag = true;
             ESP_LOGI(TAG_MQTT, "Published %s discovery with min=%.3g max=%.3g", name, min, max);
+            return true;
+        }
+        ESP_LOGW(TAG_MQTT, "Failed to publish %s discovery: %d", name, res);
+    }
+    else
+    {
+        ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+    }
+
+    return false;
+}
+
+static bool publish_sensor_discovery(const char *name, const char *suffix, const char *state_topic,
+                                     const char *device_class, const char *state_class, const char *unit,
+                                     const char *icon, bool *published_flag)
+{
+    if (!s_mqtt || *published_flag)
+        return false;
+
+    char dev_id[64];
+    snprintf(dev_id, sizeof dev_id, "%s-%s", GAG_TOPIC_ROOT, GAGGIA_ID);
+
+    char topic[128];
+    snprintf(topic, sizeof topic, "homeassistant/sensor/%s_%s/config", dev_id, suffix);
+
+    const char *availability = MQTT_STATUS;
+    const char *version = VERSION;
+
+    char payload[512];
+    int written = snprintf(payload, sizeof payload,
+                           "{\"name\":\"%s\",\"uniq_id\":\"%s_%s\",\"stat_t\":\"%s\",",
+                           name, dev_id, suffix, state_topic);
+    if (written <= 0 || written >= (int)sizeof(payload))
+    {
+        ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+        return false;
+    }
+
+    if (device_class && device_class[0])
+    {
+        written += snprintf(payload + written, sizeof(payload) - written, "\"dev_cla\":\"%s\",", device_class);
+        if (written <= 0 || written >= (int)sizeof(payload))
+        {
+            ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+            return false;
+        }
+    }
+    if (unit && unit[0])
+    {
+        written += snprintf(payload + written, sizeof(payload) - written, "\"unit_of_meas\":\"%s\",", unit);
+        if (written <= 0 || written >= (int)sizeof(payload))
+        {
+            ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+            return false;
+        }
+    }
+    if (state_class && state_class[0])
+    {
+        written += snprintf(payload + written, sizeof(payload) - written, "\"stat_cla\":\"%s\",", state_class);
+        if (written <= 0 || written >= (int)sizeof(payload))
+        {
+            ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+            return false;
+        }
+    }
+    if (icon && icon[0])
+    {
+        written += snprintf(payload + written, sizeof(payload) - written, "\"icon\":\"%s\",", icon);
+        if (written <= 0 || written >= (int)sizeof(payload))
+        {
+            ESP_LOGW(TAG_MQTT, "%s discovery payload truncated", name);
+            return false;
+        }
+    }
+
+    written += snprintf(payload + written, sizeof(payload) - written,
+                        "\"avty_t\":\"%s\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\","\
+                        "\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\",\"manufacturer\":\"Custom\","\
+                        "\"model\":\"Gagguino\",\"sw_version\":\"%s\"}}",
+                        availability, dev_id, version);
+    if (written > 0 && written < (int)sizeof(payload))
+    {
+        int res = esp_mqtt_client_publish(s_mqtt, topic, payload, 0, 1, true);
+        if (res >= 0)
+        {
+            *published_flag = true;
+            ESP_LOGI(TAG_MQTT, "Published %s discovery", name);
             return true;
         }
         ESP_LOGW(TAG_MQTT, "Failed to publish %s discovery: %d", name, res);
@@ -725,10 +895,10 @@ static bool publish_switch_discovery(const char *name, const char *suffix, const
 
     char payload[512];
     int written = snprintf(payload, sizeof payload,
-                           "{\"name\":\"%s\",\"uniq_id\":\"%s_%s\",\"cmd_t\":\"%s\",\"stat_t\":\"%s\","
-                           "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"%s\",\"pl_avail\":\"online\","
-                           "\"pl_not_avail\":\"offline\",\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\","
-                           "\"manufacturer\":\"Custom\",\"model\":\"Gagguino\",\"sw_version\":\"%s\"}}",
+                           "{\"name\":\"%s\",\"uniq_id\":\"%s_%s\",\"cmd_t\":\"%s\",\"stat_t\":\"%s\","\
+                           "\"pl_on\":\"ON\",\"pl_off\":\"OFF\",\"avty_t\":\"%s\",\"pl_avail\":\"online\","\
+                           "\"pl_not_avail\":\"offline\",\"dev\":{\"identifiers\":[\"%s\"],\"name\":\"Gaggia Classic\",\"manufacturer\":\"Custom\","\
+                           "\"model\":\"Gagguino\",\"sw_version\":\"%s\"}}",
                            name, dev_id, suffix, cmd_topic, state_topic, availability, dev_id, version);
 
     if (written > 0 && written < (int)sizeof(payload))
@@ -752,27 +922,80 @@ static bool publish_switch_discovery(const char *name, const char *suffix, const
 
 static void publish_pid_discovery(void)
 {
-    publish_pid_number_discovery("PID P", "pid_p", TOPIC_PIDP_CMD, TOPIC_PIDP_STATE, 0.0f, 100.0f, 0.1f,
-                                 &s_pid_p_discovery_published);
-    publish_pid_number_discovery("PID I", "pid_i", TOPIC_PIDI_CMD, TOPIC_PIDI_STATE, 0.0f, 2.0f, 0.01f,
-                                 &s_pid_i_discovery_published);
-    publish_pid_number_discovery("PID D", "pid_d", TOPIC_PIDD_CMD, TOPIC_PIDD_STATE, 0.0f, 500.0f, 0.5f,
-                                 &s_pid_d_discovery_published);
-    publish_pid_number_discovery("PID Guard", "pid_guard", TOPIC_PIDG_CMD, TOPIC_PIDG_STATE, 0.0f, 100.0f, 0.5f,
-                                 &s_pid_g_discovery_published);
-    publish_pid_number_discovery("PID dTau", "pid_dtau", TOPIC_DTAU_CMD, TOPIC_DTAU_STATE, 0.0f, 2.0f, 0.05f,
-                                 &s_dtau_discovery_published);
-    publish_pid_number_discovery("Pressure Setpoint", "pressure_setpoint", TOPIC_PRESSURE_SETPOINT_CMD,
-                                 TOPIC_PRESSURE_SETPOINT_STATE, CONTROL_PRESSURE_MIN, CONTROL_PRESSURE_MAX, 0.5f,
-                                 &s_pressure_setpoint_discovery_published);
-    publish_pid_number_discovery("Pump Power", "pump_power", TOPIC_PUMP_POWER_CMD, TOPIC_PUMP_POWER_STATE, 40.0f, 95.0f,
-                                 5.0f, &s_pump_power_discovery_published);
+    publish_number_discovery("PID P", "pid_p", TOPIC_PIDP_CMD, TOPIC_PIDP_STATE, 0.0f, 100.0f, 0.1f, "",
+                             &s_pid_p_discovery_published);
+    publish_number_discovery("PID I", "pid_i", TOPIC_PIDI_CMD, TOPIC_PIDI_STATE, 0.0f, 2.0f, 0.01f, "",
+                             &s_pid_i_discovery_published);
+    publish_number_discovery("PID D", "pid_d", TOPIC_PIDD_CMD, TOPIC_PIDD_STATE, 0.0f, 500.0f, 0.5f, "",
+                             &s_pid_d_discovery_published);
+    publish_number_discovery("PID Guard", "pid_guard", TOPIC_PIDG_CMD, TOPIC_PIDG_STATE, 0.0f, 100.0f, 0.5f, "",
+                             &s_pid_g_discovery_published);
+    publish_number_discovery("PID dTau", "pid_dtau", TOPIC_DTAU_CMD, TOPIC_DTAU_STATE, 0.0f, 2.0f, 0.05f, "",
+                             &s_dtau_discovery_published);
+    publish_sensor_discovery("PID P Term", "pid_p_term", TOPIC_PID_P_TERM_STATE, "temperature", "measurement", "°C", NULL,
+                             &s_pid_p_term_discovery_published);
+    publish_sensor_discovery("PID I Term", "pid_i_term", TOPIC_PID_I_TERM_STATE, "temperature", "measurement", "°C", NULL,
+                             &s_pid_i_term_discovery_published);
+    publish_sensor_discovery("PID D Term", "pid_d_term", TOPIC_PID_D_TERM_STATE, "temperature", "measurement", "°C", NULL,
+                             &s_pid_d_term_discovery_published);
+    publish_number_discovery("Pressure Setpoint", "pressure_setpoint", TOPIC_PRESSURE_SETPOINT_CMD,
+                             TOPIC_PRESSURE_SETPOINT_STATE, CONTROL_PRESSURE_MIN, CONTROL_PRESSURE_MAX, 0.5f, "bar",
+                             &s_pressure_setpoint_discovery_published);
+    publish_number_discovery("Pump Power", "pump_power", TOPIC_PUMP_POWER_CMD, TOPIC_PUMP_POWER_STATE, 40.0f, 95.0f, 5.0f,
+                             "%", &s_pump_power_discovery_published);
     publish_switch_discovery("Pump Pressure Mode", "pump_pressure_mode", TOPIC_PUMP_PRESSURE_MODE_CMD,
                              TOPIC_PUMP_PRESSURE_MODE_STATE, &s_pump_pressure_mode_discovery_published);
 }
 
-static inline void reset_pid_discovery_flags(void)
+static void publish_all_discovery(void)
 {
+    publish_switch_discovery("Heater", "heater", TOPIC_HEATER_SET, TOPIC_HEATER, &s_heater_switch_discovery_published);
+    publish_switch_discovery("Steam", "steam", TOPIC_STEAM_SET, TOPIC_STEAM, &s_steam_switch_discovery_published);
+    publish_number_discovery("Brew Setpoint", "brew_setpoint", TOPIC_BREW_SET_CMD, TOPIC_BREW_STATE,
+                             BREW_SETPOINT_MIN_C, BREW_SETPOINT_MAX_C, 0.5f, "°C",
+                             &s_brew_setpoint_discovery_published);
+    publish_number_discovery("Steam Setpoint", "steam_setpoint", TOPIC_STEAM_SET_CMD, TOPIC_STEAM_STATE,
+                             STEAM_SETPOINT_MIN_C, STEAM_SETPOINT_MAX_C, 0.5f, "°C",
+                             &s_steam_setpoint_discovery_published);
+    publish_number_discovery("Pump Mode", "pump_mode", TOPIC_PUMP_MODE_CMD, TOPIC_PUMP_MODE_STATE, PUMP_MODE_MIN,
+                             PUMP_MODE_MAX, 1.0f, "", &s_pump_mode_discovery_published);
+    publish_sensor_discovery("Boiler Temperature", "current_temp", TOPIC_CURTEMP, "temperature", "measurement", "°C", NULL,
+                             &s_current_temp_discovery_published);
+    publish_sensor_discovery("Active Setpoint", "set_temp", TOPIC_SETTEMP, "temperature", "measurement", "°C", NULL,
+                             &s_set_temp_discovery_published);
+    publish_sensor_discovery("Brew Pressure", "pressure", TOPIC_PRESSURE, "pressure", "measurement", "bar", NULL,
+                             &s_pressure_discovery_published);
+    publish_sensor_discovery("Shot Volume", "shot_volume", TOPIC_SHOTVOL, "", "measurement", "mL", "mdi:coffee",
+                             &s_shot_volume_discovery_published);
+    publish_sensor_discovery("Shot Duration (Legacy)", "shot", TOPIC_SHOT, "duration", "measurement", "s",
+                             "mdi:timer-sand", &s_shot_legacy_discovery_published);
+    publish_sensor_discovery("Shot Duration", "shot_time", TOPIC_SHOT_TIME, "duration", "measurement", "s", "mdi:timer",
+                             &s_shot_time_discovery_published);
+    publish_sensor_discovery("Zero Cross Count", "zc_count", TOPIC_ZC_COUNT_STATE, "", "measurement", "count",
+                             "mdi:counter", &s_zc_count_discovery_published);
+    publish_sensor_discovery("Flow Pulse Count", "pulse_count", TOPIC_PULSE_COUNT_STATE, "", "measurement", "count",
+                             "mdi:counter", &s_pulse_count_discovery_published);
+    publish_sensor_discovery("Steam AC Count", "ac_count", TOPIC_AC_COUNT_STATE, "", "measurement", "count", "mdi:flash",
+                             &s_ac_count_discovery_published);
+    publish_pid_discovery();
+}
+
+static void reset_discovery_flags(void)
+{
+    s_heater_switch_discovery_published = false;
+    s_steam_switch_discovery_published = false;
+    s_brew_setpoint_discovery_published = false;
+    s_steam_setpoint_discovery_published = false;
+    s_pump_mode_discovery_published = false;
+    s_current_temp_discovery_published = false;
+    s_set_temp_discovery_published = false;
+    s_pressure_discovery_published = false;
+    s_shot_volume_discovery_published = false;
+    s_shot_time_discovery_published = false;
+    s_shot_legacy_discovery_published = false;
+    s_zc_count_discovery_published = false;
+    s_ac_count_discovery_published = false;
+    s_pulse_count_discovery_published = false;
     s_pid_p_discovery_published = false;
     s_pid_i_discovery_published = false;
     s_pid_d_discovery_published = false;
@@ -781,10 +1004,13 @@ static inline void reset_pid_discovery_flags(void)
     s_pressure_setpoint_discovery_published = false;
     s_pump_power_discovery_published = false;
     s_pump_pressure_mode_discovery_published = false;
+    s_pid_p_term_discovery_published = false;
+    s_pid_i_term_discovery_published = false;
+    s_pid_d_term_discovery_published = false;
 }
 #else
-static inline void publish_pid_discovery(void) {}
-static inline void reset_pid_discovery_flags(void) {}
+static inline void publish_all_discovery(void) {}
+static inline void reset_discovery_flags(void) {}
 #endif
 
 static bool publish_control_state(void)
@@ -848,7 +1074,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 #ifdef MQTT_STATUS
         esp_mqtt_client_publish(event->client, MQTT_STATUS, "online", 0, 1, true);
 #endif
-        publish_pid_discovery();
+        publish_all_discovery();
         if (s_control_publish_pending && publish_control_state())
         {
             s_control_publish_pending = false;
@@ -857,7 +1083,7 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     case MQTT_EVENT_DISCONNECTED:
         ESP_LOGW(TAG_MQTT, "Disconnected");
         s_mqtt_connected = false;
-        reset_pid_discovery_flags();
+        reset_discovery_flags();
         reset_sensor_publish_cache();
         break;
     case MQTT_EVENT_DATA:
@@ -894,6 +1120,14 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
         else if (strcmp(topic, TOPIC_ZC_COUNT_STATE) == 0)
         {
             s_zc_count = (uint32_t)strtoul(payload, NULL, 10);
+        }
+        else if (strcmp(topic, TOPIC_AC_COUNT_STATE) == 0)
+        {
+            s_ac_count = (uint32_t)strtoul(payload, NULL, 10);
+        }
+        else if (strcmp(topic, TOPIC_PULSE_COUNT_STATE) == 0)
+        {
+            s_pulse_count = (uint32_t)strtoul(payload, NULL, 10);
         }
         else if (strcmp(topic, TOPIC_HEATER) == 0)
         {
@@ -1324,7 +1558,7 @@ void MQTT_Stop(void)
     esp_mqtt_client_destroy(s_mqtt);
     s_mqtt = NULL;
     s_mqtt_connected = false;
-    reset_pid_discovery_flags();
+    reset_discovery_flags();
 #endif
 }
 
@@ -1352,16 +1586,6 @@ static void ensure_espnow_started(void)
     }
 
     esp_now_register_recv_cb(espnow_recv_cb);
-
-    if (s_last_espnow_channel != s_sta_channel)
-    {
-        esp_err_t err = esp_wifi_set_channel(s_sta_channel, WIFI_SECOND_CHAN_NONE);
-        if (err != ESP_OK)
-        {
-            ESP_LOGW(TAG_ESPNOW, "Failed to set channel %u: %d", (unsigned)s_sta_channel, err);
-        }
-        s_last_espnow_channel = s_sta_channel;
-    }
 
     memset(&s_broadcast_peer, 0, sizeof(s_broadcast_peer));
     memcpy(s_broadcast_peer.peer_addr, s_broadcast_addr, ESP_NOW_ETH_ALEN);
@@ -1550,8 +1774,16 @@ static void publish_sensor_to_mqtt(const EspNowPacket *pkt)
     publish_float_if_changed(TOPIC_PRESSURE_SETPOINT_STATE, pkt->pressureSetpointBar, 1,
                              s_pub_pressure_setpoint_payload, sizeof(s_pub_pressure_setpoint_payload),
                              &s_pub_pressure_setpoint_valid);
+    publish_float_if_changed(TOPIC_PUMP_POWER_STATE, pkt->pumpPowerPercent, 1, s_pub_pump_power,
+                             sizeof(s_pub_pump_power), &s_pub_pump_power_valid);
     publish_bool_topic_if_changed(TOPIC_PUMP_PRESSURE_MODE_STATE, pkt->pumpPressureMode != 0,
                                   &s_pub_pump_pressure_mode, &s_pub_pump_pressure_mode_valid);
+    publish_u32_if_changed(TOPIC_ZC_COUNT_STATE, pkt->zcCount, s_pub_zc_count, sizeof(s_pub_zc_count),
+                           &s_pub_zc_count_valid);
+    publish_u32_if_changed(TOPIC_PULSE_COUNT_STATE, pkt->pulseCount, s_pub_pulse_count, sizeof(s_pub_pulse_count),
+                           &s_pub_pulse_count_valid);
+    publish_u32_if_changed(TOPIC_AC_COUNT_STATE, pkt->acCount, s_pub_ac_count, sizeof(s_pub_ac_count),
+                           &s_pub_ac_count_valid);
 }
 
 static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int data_len)
@@ -1591,6 +1823,10 @@ static void espnow_recv_cb(const esp_now_recv_info_t *info, const uint8_t *data,
         s_steam_setpoint = pkt->steamSetpointC;
         s_pressure_setpoint = pkt->pressureSetpointBar;
         s_pump_pressure_mode = pkt->pumpPressureMode != 0;
+        s_pump_power = pkt->pumpPowerPercent;
+        s_zc_count = pkt->zcCount;
+        s_pulse_count = pkt->pulseCount;
+        s_ac_count = pkt->acCount;
         publish_sensor_to_mqtt(pkt);
         if (info)
         {
@@ -1693,6 +1929,8 @@ float MQTT_GetPumpPower(void) { return s_pump_power; }
 float MQTT_GetShotTime(void) { return s_shot_time; }
 float MQTT_GetShotVolume(void) { return s_shot_volume; }
 uint32_t MQTT_GetZcCount(void) { return s_zc_count; }
+uint32_t MQTT_GetPulseCount(void) { return s_pulse_count; }
+uint32_t MQTT_GetAcCount(void) { return s_ac_count; }
 bool MQTT_GetHeaterState(void) { return s_heater; }
 
 void MQTT_SetHeaterState(bool heater, bool force_publish)

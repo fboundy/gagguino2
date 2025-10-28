@@ -52,6 +52,13 @@ typedef struct __attribute__((packed)) EspNowPacket
     float pressureSetpointBar; //!< Target brew pressure in bar
     uint8_t pumpPressureMode;  //!< 1 if pressure limiting mode is active
     uint8_t reserved[3];       //!< Reserved for future use / alignment
+    float pumpPowerPercent;    //!< Current pump power output in percent
+    float pidPTerm;            //!< Proportional contribution of the temperature PID
+    float pidITerm;            //!< Integral contribution of the temperature PID
+    float pidDTerm;            //!< Derivative contribution of the temperature PID
+    uint32_t zcCount;          //!< Zero-cross count since boot
+    uint32_t pulseCount;       //!< Flow meter pulse count since boot
+    uint32_t acCount;          //!< AC sense count accumulated while steaming
 } EspNowPacket;
 
 // Control payload mirrored between Home Assistant, the display and the
@@ -73,3 +80,21 @@ typedef struct __attribute__((packed)) EspNowControlPacket
     float pumpPowerPercent;
     float pressureSetpointBar;
 } EspNowControlPacket;
+
+// Expected packed structure sizes so both firmware images agree on layout.
+enum
+{
+    ESPNOW_PACKET_SIZE = 67,
+    ESPNOW_CONTROL_PACKET_SIZE = 44,
+};
+
+#ifdef __cplusplus
+static_assert(sizeof(EspNowPacket) == ESPNOW_PACKET_SIZE,
+              "EspNowPacket size mismatch - check shared espnow_protocol.h");
+static_assert(sizeof(EspNowControlPacket) == ESPNOW_CONTROL_PACKET_SIZE,
+              "EspNowControlPacket size mismatch - check shared espnow_protocol.h");
+#else
+typedef char espnow_packet_size_mismatch[(sizeof(EspNowPacket) == ESPNOW_PACKET_SIZE) ? 1 : -1];
+typedef char espnow_control_packet_size_mismatch[
+    (sizeof(EspNowControlPacket) == ESPNOW_CONTROL_PACKET_SIZE) ? 1 : -1];
+#endif

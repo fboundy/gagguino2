@@ -28,6 +28,8 @@ float MQTT_GetPumpPower(void);
 float MQTT_GetShotTime(void);
 float MQTT_GetShotVolume(void);
 uint32_t MQTT_GetZcCount(void);
+uint32_t MQTT_GetPulseCount(void);
+uint32_t MQTT_GetAcCount(void);
 bool MQTT_GetHeaterState(void);
 void MQTT_SetHeaterState(bool state, bool force_publish);
 bool MQTT_GetSteamState(void);
