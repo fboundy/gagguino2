@@ -17,6 +17,36 @@
  * - AC_SENS (14)    : Steam switch sense (digital input)
  * - MAX_CS (16)     : MAX31865 SPI chip-select
  * - PRESS_PIN (35)  : Analog pressure sensor input
+ * - BREW_PIN (13)   : Pump control relay (bypass h/w pump switch)
+ * - VALVE_PIN (12)  : 3-way valve control relay
+ *
+ * SPI default pins:
+ * - MOSI:23
+ * - MISO:19
+ * - CLK: 18
+ *
+ *                ESP32-C                                        D1 R32
+ *               +-------+                                 +-----------------+
+ *         3v3 - |       | - GND                           |                 | - 22 SCL
+ *          EN - |       | - 23 MOSI                       |                 | - 21 SDA
+ *    (Inp) 36 - |       | - 22 (SCL)                      |                 | - RST
+ *    (Inp) 39 - |       | - 01 (TX0)                     -|                 | - GND
+ *    (Inp) 34 - |       | - 03 (RX0)           (Boot) 00 -|                 | - 18 CLK
+ *    PRESS 35 - |       | - 21 (SDA)                  5V -|                 | - 19 MISO
+ *        * 32 - |       | - GND                      RST -|                 | - 23 MOSI
+ *        * 33 - |       | - 19 MISO                  3V3 -|                 | - 05
+ *       ZC 25 - |       | - 18 CLK                    5V -|                 | - 13 BREW
+ *     FLOW 26 - |       | - 05                       GND -|                 | - 12 VALVE
+ *     HEAT 27 - |       | - 17 PUMP                  GND -|                 |
+ *       AC 14 - |       | - 16 MAX_CS                Vin -|                 | - 14 AC
+ *    VALVE 12 - |       | - 04                            |                 | - 27 HEAT
+ *         GND - |       | - 00 (Boot)           (LED) 02 -|                 | - 16 MAX_CS
+ *     BREW 13 - |       | - 02 (LED)                  04 -|                 | - 17 PUMP
+ *  (Flash) 09 - |       | - 15 (Low on Boot)    (Inp) 35 -|                 | - 25 ZC
+ *  (Flash) 10 - |       | - 08 (Flash)          (Inp) 34 -|                 | - 26 FLOW
+ *  (Flash) 11 - |       | - 07 (Flash)          (Inp) 36 -|                 | - 01 TX0
+ *          5v - |       | - 06 (Flash)          (Inp) 39 -|                 | - 03 RX0
+ *               +-------+                                 +-----------------+
  */
 #include "gagguino.h"
 
@@ -67,13 +97,14 @@ static inline void LOG(const char* fmt, ...) {
  */
 
 namespace {
-constexpr int FLOW_PIN = 26;  // Flowmeter Pulses (Arduino D2)
-constexpr int ZC_PIN = 25;    // Triac Zero Crossing output (Arduino D3)
-constexpr int PUMP_PIN = 17;  // Triac PWM output (Arduino D4)
-constexpr int MAX_CS = 16;    // MAX31865 CS (Arduino D5)
-constexpr int HEAT_PIN = 27;  // Heater SSR control (Arduino D6)
-constexpr int AC_SENS = 14;   // Steam AC sense (Arduino D7)
-
+constexpr int VALVE_PIN = 12;  // 3-way valve relay
+constexpr int BREW_PIN = 13;   // Brew pump relay
+constexpr int AC_SENS = 14;    // Steam AC sense (Arduino D7)
+constexpr int MAX_CS = 16;     // MAX31865 CS (Arduino D5)
+constexpr int PUMP_PIN = 17;   // Triac PWM output (Arduino D4)
+constexpr int ZC_PIN = 25;     // Triac Zero Crossing output (Arduino D3)
+constexpr int FLOW_PIN = 26;   // Flowmeter Pulses (Arduino D2)
+constexpr int HEAT_PIN = 27;   // Heater SSR control (Arduino D6)
 constexpr int PRESS_PIN = 35;
 
 constexpr unsigned long PRESS_CYCLE = 100, PID_CYCLE = 250, PWM_CYCLE = 250, ESP_CYCLE = 500,
@@ -114,7 +145,7 @@ constexpr int PRESS_BUFF_SIZE = 14;
 constexpr float PRESS_THRESHOLD = 9.0f;
 
 // FLOW_CAL in mL per pulse (1 cc == 1 mL)
-constexpr float FLOW_CAL = 0.246f;
+constexpr float FLOW_CAL = 0.2f;
 constexpr unsigned long PULSE_MIN = 3;  // ms debounce (bounce + double-edges)
 
 constexpr unsigned ZC_MIN = 4;
@@ -201,7 +232,7 @@ float pGainTemp = P_GAIN_TEMP, iGainTemp = I_GAIN_TEMP, dGainTemp = D_GAIN_TEMP,
 float pidPTerm = 0.0f, pidITerm = 0.0f, pidDTerm = 0.0f;
 int heatCycles = 0;
 bool heaterState = false;
-bool heaterEnabled = true;             // HA switch default ON at boot
+bool heaterEnabled = true;                    // HA switch default ON at boot
 float pumpPowerCommand = PUMP_POWER_DEFAULT;  // Requested pump power (%), overridden by display
 float pumpPower = PUMP_POWER_DEFAULT;         // Last applied pump power (%) reported to sensors
 float pressureSetpointBar = PRESSURE_SETPOINT_DEFAULT;  // Target brew pressure in bar
@@ -209,7 +240,7 @@ bool pumpPressureModeEnabled = false;  // When true limit pump power to pressure
 float lastPumpApplied = 0.0f;          // Actual power sent to dimmer after ramp/limits
 float lastPumpRequested = 0.0f;        // Last requested pump power
 unsigned long pumpPressureClampUntilMs = 0;
-unsigned long lastPumpApplyMs = 0;       // Timestamp of last pump power application
+unsigned long lastPumpApplyMs = 0;  // Timestamp of last pump power application
 float pumpPressurePvFilt = 0.0f;
 float pumpPressureISum = 0.0f;
 bool pumpPressurePidInitialized = false;
@@ -518,7 +549,8 @@ static void applyPumpPower() {
     lastPumpApplyMs = nowMs;
     lastPumpApplied = applied;
     lastPumpRequested = requested;
-    // Surface the PID-derived power when pressure control is active so the HA sensor follows the actual output.
+    // Surface the PID-derived power when pressure control is active so the HA sensor follows the
+    // actual output.
     pumpPower = pumpPressureModeEnabled ? applied : requested;
 
     int percent = static_cast<int>(lroundf(applied));
